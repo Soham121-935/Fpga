@@ -1,95 +1,128 @@
-# SV-16 Rev A — Memory Map & Address Decoding
+# SV-16 Rev B — Memory Map and Address Decoding
+
+The SV-16 bus is **word addressed**: every address is a 16-bit word index, and
+transfers are 16 bits wide. "Byte address" appears only where a byte-oriented
+device is involved (SPI flash, the image format, the monitor's flash commands).
 
 ---
 
-## 1. Address Space Overview
+## 1. Top-level map
 
-The SV-16 Rev A processor utilizes a unified 16-bit word-addressed memory map providing direct access to 64K words (`0x0000` to `0xFFFF`).
+| Range (word) | Size | Region | Decoded by | Access |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x0000-0x3FFF` | 16 K words (32 KB) | **SRAM** — code, data, stack, interrupt vector table | `sv16_ram` | 1-cycle, no wait states |
+| `0x4000-0xDFFF` | 40 K words | unmapped | — | read returns `0x0000`, still acknowledged (no fault) |
+| `0xE000-0xE7FF` | 2 K words (4 KB) | **Boot ROM** — the resident monitor | `sv16_rom` | 1-cycle read, writes ignored |
+| `0xE800-0xEFFF` | 2 K words | unmapped | — | as above |
+| `0xF000-0xF0FF` | 256 words | **MMIO** — 16 blocks × 16 registers | `sv16_bus_interconnect` + peripherals | 2 cycles minimum, more with wait states |
+| `0xF100-0xFFFF` | 3840 words | unmapped / reserved for future peripherals | — | as above |
 
-```text
-0x0000 ┌────────────────────────────────────────┐
-       │ Vector Table & Program / Code RAM       │
-       │ (4K Words: 0x0000 - 0x0FFF)             │
-0x1000 ├────────────────────────────────────────┤
-       │ Data RAM & Stack Space                  │
-       │ (4K Words: 0x1000 - 0x1FFF)             │
-0x2000 ├────────────────────────────────────────┤
-       │ Expansion Memory / Unmapped             │
-       │ (0x2000 - 0xEFFF)                       │
-0xF000 ├────────────────────────────────────────┤
-       │ Memory-Mapped I/O Peripherals           │
-       │ (4K Words: 0xF000 - 0xFFFF)             │
-0xFFFF └────────────────────────────────────────┘
-```
+Programs run **from SRAM**, not from flash: the hardware boot loader copies the
+image into SRAM before the CPU is released, so instruction fetch is always a
+single-cycle RAM access. The boot ROM is executed only when flash has no valid
+image (or when the monitor is explicitly requested).
 
----
-
-## 2. On-Chip BRAM Allocation for Lattice ECP5-12F
-
-The **Lattice ECP5 LFE5U-12F** contains 32 sysMEM DP16KD block RAMs (each 18 Kbit = 16K data bits + 2K parity bits), providing a total of 576 Kbits (~36K 16-bit words).
-
-For Rev A baseline implementation:
-- **Program & Data RAM**: Initialized to 8K words (16 KB) internal dual-port / single-port BRAM (`0x0000`–`0x1FFF`).
-  - `0x0000`–`0x0FFF` (4K words): Code & Read-Only Constants
-  - `0x1000`–`0x1FFE` (4K words): General Data RAM
-  - `0x1FFF` down to `0x1A00`: System Call & Return Stack (Full-descending stack, default initial `SP = 0x1FFE`)
+`SYS_MEMCFG` (`0xF00D`) reports the sizes the bitstream was built with:
+`[7:4]` = SRAM address width (14 → 16 K words), `[3:0]` = ROM address width
+(11 → 2 K words).
 
 ---
 
-## 3. Peripheral Memory Map (`0xF000` to `0xFFFF`)
+## 2. MMIO block map (`0xF000-0xF0FF`)
 
-Peripherals are mapped into individual 64-word blocks (`0x0040` words per peripheral):
+Each block owns 16 word addresses. `MMIO_PRESENT = 0x06FF` marks which blocks
+actually have a slave behind them — the interconnect acknowledges unmapped
+registers with `0x0000` so probing never hangs.
 
-| Base Address | Peripheral | Description | Registers Defined |
+| Blk | Base | Present | Peripheral | Documented in |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x0` | `0xF000` | yes | System control, reset cause, debug, timers | section 3 |
+| `0x1` | `0xF010` | yes | GPIO port A (16 pins, `gpio_a[15:0]`) | [PERIPHERALS](PERIPHERALS.md#gpio-0xf010-0xf070) |
+| `0x2` | `0xF020` | yes | Timer 0 (compare interrupt) | [PERIPHERALS](PERIPHERALS.md#timer-0-0xf020) |
+| `0x3` | `0xF030` | yes | PWM 0 (fault input) | [PERIPHERALS](PERIPHERALS.md#pwm-0-0xf030) |
+| `0x4` | `0xF040` | yes | UART 0 (console / firmware upload) | [PERIPHERALS](PERIPHERALS.md#uart-0-0xf040) |
+| `0x5` | `0xF050` | yes | SPI 0 (generic master, expansion bus) | [PERIPHERALS](PERIPHERALS.md#spi-0-0xf050) |
+| `0x6` | `0xF060` | yes | SPI flash controller | [PERIPHERALS](PERIPHERALS.md#flash-controller-0xf060) |
+| `0x7` | `0xF070` | yes | GPIO port B (16 pins, `gpio_b[15:0]`) | as GPIO A |
+| `0x8` | `0xF080` | **no** | Watchdog — RTL exists (`sv16_wdt.sv`), not instantiated | [MCU_READINESS](MCU_READINESS.md#4-gap-list-to-a-production-grade-mcu-experience) |
+| `0x9` | `0xF090` | yes | Interrupt controller | [PERIPHERALS](PERIPHERALS.md#interrupt-controller-0xf090) |
+| `0xA` | `0xF0A0` | yes | Boot loader engine | [BOOT_AND_PROGRAMMING](BOOT_AND_PROGRAMMING.md#5-the-boot-engine-register-block-0xf0a0) |
+| `0xB-0xF` | `0xF0B0-0xF0F0` | no | reserved for future peripherals | — |
+
+Adding a peripheral means: a block constant and `MMIO_PRESENT` bit in
+`rtl/sv16_pkg.sv`, a request/ack/read-data leg in `sv16_bus_interconnect.sv`,
+the instance and its top-level ports in `sv16_top.sv`, and a `LOCATE` in the
+pin constraints if it reaches a pin.
+
+---
+
+## 3. System control block (`0xF000`, block 0)
+
+| Off | Name | Access | Contents |
 | :--- | :--- | :--- | :--- |
-| `0xF000` | **System Control / Core** | CPU status, clocks, reset flags | `SYS_STATUS`, `SYS_CTRL` |
-| `0xF010` | **GPIO Controller** | 16-bit General Purpose I/O | `GPIO_DATA`, `GPIO_DIR`, `GPIO_SET`, `GPIO_CLR` |
-| `0xF020` | **Timer 0** | 16-bit hardware periodic timer | `TMR0_CNT`, `TMR0_CMP`, `TMR0_CTRL`, `TMR0_STAT` |
-| `0xF030` | **PWM Controller 0** | Motor/LED pulse width modulation | `PWM0_PERIOD`, `PWM0_DUTY`, `PWM0_CTRL` |
-| `0xF040` | **UART 0** | Asynchronous serial transceiver | `UART0_DATA`, `UART0_STATUS`, `UART0_BAUD`, `UART0_CTRL` |
-| `0xF050` | **SPI Controller 0**| Synchronous serial peripheral | `SPI0_DATA`, `SPI0_STATUS`, `SPI0_CTRL`, `SPI0_CLKDIV` |
-| `0xF060` | **I2C Controller 0**| Inter-Integrated Circuit master | `I2C0_DATA`, `I2C0_STATUS`, `I2C0_CTRL`, `I2C0_CLKDIV` |
-| `0xF070`–`0xFFFF` | Reserved | Reserved for Rev B / future peripherals | - |
+| `0x0` | `SYS_ID` | RO | `0x1602` — family `0x16`, major 0, minor 2 |
+| `0x1` | `SYS_CTRL` | RW | `[0]` SOFTRST (restart the boot sequence), `[1]` HALT, `[2]` STEP, `[3]` IRQEN (global interrupt enable), `[4]` RAMREMAP (defined, unused). Unkeyed writes may only touch bits `[3:0]`; bits `[15:8]` must be `0xA5` to change `[15:4]` |
+| `0x2` | `SYS_STAT` | RO | `[0]` HALTED, `[1]` STEP_TAKEN, `[2]` IMAGE_OK, `[3]` BOOT_FAIL, `[4]` ROM_MONITOR, `[5]` FLASH_OK, `[6]` FAULT_HALT, `[7]` ILLEGAL_SEEN |
+| `0x3` | `SYS_RSTCAUSE` | RW1C | `[0]` pin, `[1]` software, `[2]` CPU fault/illegal opcode, `[3]` watchdog, `[4]` no valid image, `[5]` image loaded |
+| `0x4-0x7` | `SYS_DBG_PC/SP/SR/IR` | RO | CPU program counter, stack pointer, status register, instruction register |
+| `0x8` | `SYS_FAULT_ADDR` | RO | address of the last illegal instruction |
+| `0x9` | `SYS_FAULT_CNT` | RW | count of illegal instructions (write clears) |
+| `0xA/B` | `SYS_TICKS_LO/HI` | RO | free-running 32-bit cycle counter |
+| `0xC` | `SYS_CPU_STATE` | RO | `{core FSM state, halted}` |
+| `0xD` | `SYS_MEMCFG` | RO | RAM/ROM size codes |
+| `0xE/F` | `SYS_SCRATCH0/1` | RW | general purpose, **survive a soft reset** (the reset logic never clears them) — the ARM-style "boot reason mailbox" |
+
+The CPU-side debug registers are what makes the monitor able to diagnose a
+locked-up application: `SYS_DBG_PC` shows where it stopped, `SYS_FAULT_ADDR`
+shows the offending instruction address after an illegal-opcode trap, and
+`SYS_RSTCAUSE` says whether that trap caused a restart.
 
 ---
 
-## 4. Detailed Peripheral Register Offsets
+## 4. Where code, data and the stack live
 
-### GPIO Controller (`0xF010`)
-- `0xF010`: `GPIO_DATA` — Read: Pin input state. Write: Output latch value.
-- `0xF011`: `GPIO_DIR`  — Direction: `1` = Output, `0` = Input.
-- `0xF012`: `GPIO_SET`  — Atomic pin set (writing `1` sets corresponding pin high).
-- `0xF013`: `GPIO_CLR`  — Atomic pin clear (writing `1` clears corresponding pin low).
+| Thing | Location | Notes |
+| :--- | :--- | :--- |
+| Application code | SRAM, from `0x0000` by convention | `entry` field in the image header; `make app` links at 0 |
+| Application data / `.bss` | SRAM, above the code | no linker; the assembler lets you place data with `.org` |
+| Stack | SRAM, top | reset value `0x3FFE` (grows down); the image may override it via its header |
+| Interrupt vector table | SRAM `0x0020-0x0027` | 8 words, one 16-bit handler address per source (see below); populated by firmware |
+| Monitor | Boot ROM `0xE000-0xE399` | 922 words; the rest of the 2 K-word ROM reads as `0x0000` |
+| Monitor stack | SRAM | the monitor runs on the same stack; it is reset to `0x3FFE` by the startup sequencer |
 
-### Timer 0 Controller (`0xF020`)
-- `0xF020`: `TMR0_CNT`  — Current 16-bit counter value (R/W).
-- `0xF021`: `TMR0_CMP`  — 16-bit compare match register (R/W).
-- `0xF022`: `TMR0_CTRL` — Control register:
-  - Bit 0: `EN` (Timer enable)
-  - Bit 1: `AUTO_RELOAD` (Reset counter to 0 on match)
-  - Bit 2: `IE` (Interrupt enable on match)
-  - Bits 7-4: Prescaler division select (1, 2, 4, 8, 16, 64, 256, 1024)
-- `0xF023`: `TMR0_STAT` — Status register:
-  - Bit 0: `MATCH` (Set when `CNT == CMP`, write 1 to clear)
+### Interrupt vector indices
 
-### PWM Controller 0 (`0xF030`)
-- `0xF030`: `PWM0_PERIOD` — 16-bit period value (sets PWM frequency).
-- `0xF031`: `PWM0_DUTY`   — 16-bit duty cycle threshold (high when `counter < duty`).
-- `0xF032`: `PWM0_CTRL`   — Control:
-  - Bit 0: `EN` (PWM output enable)
-  - Bit 1: `POL` (0 = active high, 1 = active low)
-  - Bit 2: `FAULT` (Emergency motor brake / shutdown state)
+| Index | Source | Vector address |
+| :--- | :--- | :--- |
+| 0 | Timer 0 compare | `0x0020` |
+| 1 | UART 0 RX (byte received) | `0x0021` |
+| 2 | UART 0 TX (FIFO room) | `0x0022` |
+| 3 | SPI 0 transfer complete | `0x0023` |
+| 4 | Flash controller | `0x0024` |
+| 5 | GPIO (port A/B edge) | `0x0025` |
+| 6 | Watchdog (not instantiated in Rev B) | `0x0026` |
+| 7 | **TRAP** — illegal opcode / exception | `0x0027` |
 
-### UART 0 Controller (`0xF040`)
-- `0xF040`: `UART0_DATA`   — Read: RX byte [7:0]. Write: TX byte [7:0].
-- `0xF041`: `UART0_STATUS` — Status:
-  - Bit 0: `TX_READY` (1 = Ready to accept new transmit byte)
-  - Bit 1: `RX_VALID` (1 = Receive byte waiting in buffer)
-  - Bit 2: `OVERRUN_ERR` (1 = Receive overflow error)
-  - Bit 3: `FRAME_ERR` (1 = Framing error)
-- `0xF042`: `UART0_BAUD`   — 16-bit baud rate clock divisor (`clk_freq / baud_rate`).
-- `0xF043`: `UART0_CTRL`   — Control:
-  - Bit 0: `TX_EN`
-  - Bit 1: `RX_EN`
-  - Bit 2: `TX_IE` (TX interrupt enable)
-  - Bit 3: `RX_IE` (RX interrupt enable)
+The CPU takes an interrupt only when `SR.IE = 1` and `SYS_CTRL.IRQEN = 1`. The
+sequence pushes `SR` and `PC` on the stack, then loads the handler address from
+the vector table; `RETI` restores `SR` (and therefore `IE`) and returns.
+
+> **Important for applications:** the vector table lives in the *application
+> image's* first 64 bytes. An image that uses interrupts must fill
+> `0x0020-0x0027` with real handler addresses — a trap taken with an
+> unpopulated table will jump to whatever word is there (usually `0x0000`).
+
+---
+
+## 5. Rev A → Rev B changes
+
+| Item | Rev A | Rev B |
+| :--- | :--- | :--- |
+| SRAM | 8 K words @ `0x0000-0x1FFF` | **16 K words @ `0x0000-0x3FFF`** |
+| Boot ROM | none (or `firmware/bootrom.hex` loaded by hand) | **2 K words @ `0xE000-0xE7FF`, monitor baked into the bitstream** |
+| MMIO | 4 blocks (GPIO, timer, PWM, UART) | **11 blocks present** of 16: adds SPI, flash controller, GPIO1, IRQ controller, boot engine, system control |
+| Interrupts | core lines wired ad hoc | IRQ controller with enable/pending/priority + 8-entry vector table |
+| Program store | none (JTAG-loaded init file) | **external SPI flash + hardware boot loader** |
+
+The ISA is unchanged (see [ISA.md](ISA.md)); Rev B is an address-map and
+peripheral change only.

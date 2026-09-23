@@ -1,11 +1,55 @@
-# Makefile for SV-16 Rev A Microcontroller
-# Target FPGA: Lattice ECP5 LFE5U-12F-6TG144C
-# Supports simulation, testing, firmware assembly, and open-source FPGA toolchain flow (Yosys + nextpnr-ecp5)
+# ---------------------------------------------------------------------------
+# SV-16 Rev B — build system
+# Target FPGA: Lattice ECP5 LFE5U-12F-6TG144C (12K LUT, TQFP-144, speed 6)
+#
+#   make firmware    boot ROM image (the monitor) + the example application image
+#   make sim         build and run every Verilator testbench
+#   make lint        RTL lint
+#   make bitstream   Yosys -> nextpnr-ecp5 -> ecppack   (build/sv16_top.bit)
+#   make prog        program the device over JTAG
+#   make upload      program the *firmware* over the serial port (needs pyserial)
+#   make iss         run the instruction-set simulator on the example firmware
+#
+# Toolchain (either install Verilator/Yosys/nextpnr/ecppack yourself, or let the
+# repository fetch self-contained builds of all of them):
+#
+#   source scripts/sv16_venv.sh
+#   make test
+#
+# See docs/SYNTHESIS_AND_DEPLOYMENT.md for the full flow and
+# docs/BOOT_AND_PROGRAMMING.md for how firmware gets into the part.
+# ---------------------------------------------------------------------------
 
-PROJECT   = sv16_top
-FPGA_PKG  = TQFP144
-FPGA_TYPE = 12k
-DEVICE    = LFE5U-12F-6TG144C
+PROJECT     = sv16_top
+FPGA_DEVICE = LFE5U-12F-6TG144C
+FPGA_FAMILY = ecp5
+FPGA_TYPE   = 12k
+FPGA_PKG    = TQFP144
+FPGA_SPEED  = 6
+# System clock = 25 MHz oscillator / CLKDIV.  CLKDIV=2 (12.5 MHz) is the
+# shipped default because it is the fastest configuration that closes timing
+# on an LFE5U-12F-6; CLKDIV=1 asks for the full 25 MHz and nextpnr will report
+# the resulting timing failure (see docs/SYNTHESIS_AND_DEPLOYMENT.md).
+CLKDIV      = 2
+FPGA_FREQ   = 12.5
+
+BUILD       = build
+ROM_DIR     = $(BUILD)/rom
+ROM_HEX     = $(ROM_DIR)/monitor.hex
+ROM_LST     = $(ROM_DIR)/monitor.lst
+FW_DIR      = $(BUILD)/fw
+APP         = $(FW_DIR)/motor_test
+APP_IMG     = $(APP)_img.hex
+
+CONSTRAINTS = constraints/ecp5_144tqfp.lpf
+
+PY   = python3
+AS   = $(PY) scripts/sv16_as.py
+PACK = $(PY) scripts/sv16_fwpack.py
+
+MONITOR_SRC = firmware/monitor/monitor.s
+APP_SRC     = firmware/examples/motor_test.s
+BOOTROM_HEX = firmware/bootrom.hex
 
 RTL_SRCS = \
 	rtl/sv16_pkg.sv \
@@ -17,50 +61,122 @@ RTL_SRCS = \
 	rtl/sv16_control_unit.sv \
 	rtl/sv16_core.sv \
 	rtl/sv16_ram.sv \
+	rtl/sv16_rom.sv \
+	rtl/sv16_crc16.sv \
+	rtl/sv16_uart.sv \
+	rtl/sv16_spi_master.sv \
+	rtl/sv16_spi.sv \
+	rtl/sv16_flash_ctrl.sv \
+	rtl/sv16_boot.sv \
+	rtl/sv16_startup.sv \
+	rtl/sv16_sys.sv \
+	rtl/sv16_irq_ctrl.sv \
 	rtl/sv16_gpio.sv \
 	rtl/sv16_timer.sv \
 	rtl/sv16_pwm.sv \
-	rtl/sv16_uart.sv \
 	rtl/sv16_bus_interconnect.sv \
 	rtl/sv16_top.sv
 
-CONSTRAINTS = constraints/ecp5_144tqfp.lpf
+# name:source pairs for `make sim` (add new testbenches here)
+TESTBENCHES = \
+	flash_ctrl_tb:simulation/unit/flash_ctrl_tb.sv \
+	boot_tb:simulation/unit/boot_tb.sv \
+	soc_boot_tb:simulation/regression/soc_boot_tb.sv \
+	monitor_tb:simulation/regression/monitor_tb.sv
 
-.PHONY: all test asm sim lint clean bitstream prog
+.PHONY: all firmware rom app lint vlint test sim iss bitstream synth prog \
+	upload mon-verify mon-boot mon-term clean help
 
-all: test asm
+all: firmware lint
 
-# Run direct SystemVerilog hardware simulation testbenches
-sv-sim:
-	@python3 scripts/run_sv_sim.py
+help:
+	@sed -n '2,20p' Makefile
 
-# Run all testbenches, verification suites, and syntax checks
-test: sv-sim
-	@python3 scripts/run_tests.py
+# --------------------------------------------------------------- firmware
+firmware: rom app
 
-# Assemble boot firmware from assembly to hex
-asm:
-	@python3 scripts/sv16_as.py firmware/examples/motor_test.s firmware/bootrom.hex
+rom: $(ROM_HEX)
 
-# Run software emulator
-sim: asm
-	@python3 scripts/sv16_sim.py firmware/bootrom.hex 200
+app: $(APP_IMG)
 
-# Open-source Yosys + nextpnr-ecp5 flow (if installed on workstation)
-bitstream: $(PROJECT).bit
+$(ROM_HEX): $(MONITOR_SRC) scripts/sv16_as.py
+	@mkdir -p $(ROM_DIR)
+	$(AS) $< $@ --listing $(ROM_LST)
 
-$(PROJECT).json: $(RTL_SRCS) firmware/bootrom.hex
-	yosys -p "verilog_defines -DSYNTHESIS; read_verilog -sv $(RTL_SRCS); synth_ecp5 -top $(PROJECT) -json $(PROJECT).json"
+$(APP_IMG): $(APP_SRC) scripts/sv16_as.py scripts/sv16_fwpack.py
+	@mkdir -p $(FW_DIR)
+	$(AS) $(APP_SRC) $(APP).hex --listing $(APP).lst
+	$(PACK) $(APP).hex -o $(APP) --name MOTORTST
 
-$(PROJECT)_out.config: $(PROJECT).json $(CONSTRAINTS)
-	nextpnr-ecp5 --$(FPGA_TYPE) --package $(FPGA_PKG) --speed 6 --json $(PROJECT).json --lpf $(CONSTRAINTS) --textcfg $(PROJECT)_out.config
+# --------------------------------------------------------------- checks
+lint:
+	$(PY) scripts/sv16_rtl_lint.py $(RTL_SRCS)
 
-$(PROJECT).bit: $(PROJECT)_out.config
-	ecppack --compress $(PROJECT)_out.config $(PROJECT).bit
+# Verilator testbenches (TB=<name> to run just one)
+sim: firmware
+	@fail=0; \
+	for entry in $(TESTBENCHES); do \
+	    name=$${entry%%:*}; src=$${entry##*:}; \
+	    if [ -n "$(TB)" ] && [ "$(TB)" != "$$name" ]; then continue; fi; \
+	    echo "===== $$name"; \
+	    scripts/sv16_run_tb.sh $$src $$name || fail=1; \
+	done; \
+	exit $$fail
 
-# Program Lattice ECP5 development board via openFPGALoader
-prog: $(PROJECT).bit
-	openFPGALoader -b ecp5 $(PROJECT).bit
+# Verilator lint of every RTL file (needs verilator-cli on PATH)
+vlint:
+	@verilator-cli --lint-only -Wno-fatal -Wno-WIDTHEXPAND -Wno-UNUSEDSIGNAL \
+	    -Wno-UNUSEDPARAM -Wno-IMPORTSTAR -Wno-CASEINCOMPLETE -Irtl \
+	    $$(ls rtl/*.sv | grep -v 'sv16_top\.sv$$') rtl/sv16_top.sv \
+	    --top-module $(PROJECT) && echo "verilator lint: clean"
+
+test: lint firmware sim
+
+# ------------------------------------------------------- instruction set sim
+iss: $(BOOTROM_HEX)
+	$(PY) scripts/sv16_sim.py $(BOOTROM_HEX) 200
+
+# --------------------------------------------------------------- bitstream
+bitstream: firmware $(BUILD)/$(PROJECT).bit
+
+$(BUILD)/$(PROJECT).bit: $(RTL_SRCS) $(ROM_HEX) $(CONSTRAINTS) scripts/sv16_synth.sh
+	@scripts/sv16_synth.sh --out $(BUILD) --rom $(ROM_HEX) --lpf $(CONSTRAINTS) \
+	    --freq $(FPGA_FREQ) --clkdiv $(CLKDIV) --speed $(FPGA_SPEED) \
+	    --top $(PROJECT)
+
+# Synthesis only (fast check that the RTL is synthesizable for this device)
+synth: $(ROM_HEX)
+	@scripts/sv16_synth.sh --out $(BUILD) --rom $(ROM_HEX) --freq $(FPGA_FREQ) \
+	    --clkdiv $(CLKDIV) --speed $(FPGA_SPEED) --top $(PROJECT) --yosys-only
+
+# Program the device (openFPGALoader; BOARD/CABLE can be overridden)
+OPENFPGALOADER ?= openFPGALoader
+BOARD           ?=
+CABLE           ?=
+FPGA_PART       ?= LFE5U-12F
+
+prog: $(BUILD)/$(PROJECT).bit
+	$(OPENFPGALOADER) $(if $(BOARD),-b $(BOARD),) $(if $(CABLE),-c $(CABLE),) \
+	    --fpga-part $(FPGA_PART) $(BUILD)/$(PROJECT).bit
+
+# ------------------------------------------------------- serial programming
+# Talks to the ROM monitor: erase + upload + verify (see
+# docs/BOOT_AND_PROGRAMMING.md).  Requires pyserial on the host.
+PORT ?= /dev/ttyUSB0
+IMG  ?= $(if $(FILE),$(FILE),$(APP_IMG))
+
+upload: $(APP_IMG)
+	$(PY) scripts/sv16_mon.py upload $(IMG) --port $(PORT)
+
+mon-verify:
+	$(PY) scripts/sv16_mon.py verify --port $(PORT)
+
+mon-boot:
+	$(PY) scripts/sv16_mon.py boot --port $(PORT)
+
+mon-term:
+	$(PY) scripts/sv16_mon.py term --port $(PORT)
 
 clean:
+	rm -rf $(BUILD)
 	rm -f $(PROJECT).json $(PROJECT)_out.config $(PROJECT).bit

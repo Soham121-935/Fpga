@@ -1,4 +1,4 @@
-// SV-16 Rev A — Instruction Register & Decoder
+// SV-16 Rev B — Instruction Register & Decoder
 // Module: sv16_decoder
 //
 // Formats decoded:
@@ -7,11 +7,21 @@
 //   Format I (Immediate ALU):
 //     [15:12] Opcode | [11:9] Rd | [8:0] Imm9 (signed)
 //   Format M (Memory LOAD / STORE):
-//     [15:12] Opcode | [11:9] Rd/Rs | [8:6] Rb | [5:0] Offset6 (signed)
+//     [15:12] Opcode | [11:9] Rd/Rs (data) | [8:6] Rb (base) | [5:0] Offset6 (signed)
 //   Format B (Branch):
 //     [15:12] Opcode | [11:8] Cond | [7:0] Offset8 (signed)
 //   Format S (Special: LDI, JMP, CALL, RET, PUSH, POP, CTRL):
 //     [15:12] Opcode | [11:9] Rx | [8:0] SubOp9
+//
+// Register read-port mapping (fixed in Rev B):
+//   rs1 -> register file read port 1, rs2 -> read port 2.
+//   * Format M (LOAD):  port1 = base register Rb, destination = Rd
+//   * Format M (STORE): port1 = base register Rb, port2 = data register Rd
+//   * PUSH Rx:          port1 = Rx (data to push)
+//   * CMP Rs1, Rs2:     port1 = Rs1, port2 = Rs2
+//   Rev A mis-mapped STORE data (used the offset field) and PUSH (used bits
+//   [8:6] which are zero for PUSH), so stores and pushes never wrote the
+//   intended register value. See docs/ARCHITECTURE_DECISIONS.md ADR-015.
 
 `timescale 1ns / 1ps
 
@@ -25,6 +35,7 @@ module sv16_decoder (
     output logic [2:0]  rs2,
     output logic [2:0]  subop,
     output logic [3:0]  cond,
+    output logic [8:0]  ctrl_subop,
     output logic [15:0] imm9_ext,
     output logic [15:0] offset6_ext,
     output logic [7:0]  branch_offset,
@@ -44,21 +55,35 @@ module sv16_decoder (
     output logic        is_pop,
     output logic        is_cmp,
     output logic        is_two_word,     // Requires 2nd 16-bit immediate word
-    output logic        is_illegal
+    output logic        is_illegal,
+
+    // Decoded CTRL opcodes (opcode 0x0)
+    output logic        is_nop,
+    output logic        is_halt,
+    output logic        is_ei,
+    output logic        is_di,
+    output logic        is_reti
 );
 
-    assign opcode = instr[15:12];
+    assign opcode     = instr[15:12];
+    assign rd         = instr[11:9];
+    assign subop      = instr[2:0];
+    assign cond       = instr[11:8];
+    assign ctrl_subop = instr[8:0];
 
-    // Standard field extractions
-    assign rd    = instr[11:9];
-    assign rs1   = (opcode == 4'h7) ? instr[8:6] :          // MOV: Rs1 in [8:6]
-                   (opcode == 4'h6) ? instr[8:6] :          // STORE: Rb in [8:6]
-                   (opcode == 4'h5) ? instr[8:6] :          // LOAD: Rb in [8:6]
-                   (opcode == 4'hE) ? instr[11:9] :         // CMP: Rs1 in [11:9]
-                   instr[8:6];
-    assign rs2   = (opcode == 4'hE) ? instr[8:6] : instr[5:3];
-    assign subop = instr[2:0];
-    assign cond  = instr[11:8];
+    // Read port 1: base register for LOAD/STORE, pushed register for PUSH,
+    // first compare operand for CMP, otherwise the format-R/I source.
+    assign rs1 = (opcode == 4'h5) ? instr[8:6] :   // LOAD   : base Rb
+                 (opcode == 4'h6) ? instr[8:6] :   // STORE  : base Rb
+                 (opcode == 4'hC) ? instr[11:9] :  // PUSH   : data Rx
+                 (opcode == 4'hE) ? instr[11:9] :  // CMP    : Rs1
+                 instr[8:6];
+
+    // Read port 2: store data register for STORE, second compare operand for
+    // CMP, otherwise the format-R source.
+    assign rs2 = (opcode == 4'h6) ? instr[11:9] :  // STORE  : data Rd
+                 (opcode == 4'hE) ? instr[8:6] :   // CMP    : Rs2
+                 instr[5:3];
 
     // Immediate & Offset Sign Extensions
     assign imm9_ext      = {{7{instr[8]}}, instr[8:0]};
@@ -82,9 +107,22 @@ module sv16_decoder (
         is_two_word = 1'b0;
         is_illegal  = 1'b0;
 
+        is_nop      = 1'b0;
+        is_halt     = 1'b0;
+        is_ei       = 1'b0;
+        is_di       = 1'b0;
+        is_reti     = 1'b0;
+
         case (opcode)
-            4'h0: begin // CTRL (NOP, HALT, EI, DI, RETI)
-                // Sub-opcode determines specific control
+            4'h0: begin // CTRL (NOP, HALT, EI, DI, RETI) — sub-op in [8:0]
+                case (instr[8:0])
+                    9'h000: is_nop  = 1'b1;
+                    9'h001: is_halt = 1'b1;
+                    9'h002: is_ei   = 1'b1;
+                    9'h003: is_di   = 1'b1;
+                    9'h004: is_reti = 1'b1;
+                    default: is_illegal = 1'b1; // reserved CTRL sub-opcode
+                endcase
             end
 
             4'h1: is_alu_rr = 1'b1; // Standard ALU R-format
@@ -97,7 +135,7 @@ module sv16_decoder (
             end
 
             4'h5: is_load = 1'b1;  // LOAD Rd, [Rb + offset]
-            4'h6: is_store = 1'b1; // STORE Rd, [Rb + offset]
+            4'h6: is_store = 1'b1; // STORE Rd, [Rb + offset]  (Rd = data)
             4'h7: is_mov = 1'b1;   // MOV Rd, Rs1
             4'h8: is_branch = 1'b1;// BRANCH Cond, Offset8
 

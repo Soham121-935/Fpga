@@ -148,3 +148,37 @@ SV-16 uses 16-bit baseline instruction words. Certain instructions (e.g. 16-bit 
 Any undefined opcode or sub-opcode (such as reserved condition codes or reserved ALU operations) will:
 1. Trigger an illegal instruction exception (if interrupt vector initialized), OR
 2. Treat the instruction as a `NOP` without modifying architectural registers or flags, asserting an `illegal_instr` debug flag on the CPU core interface.
+
+---
+
+## 7. Rev B notes (the ISA itself is unchanged)
+
+Rev B did **not** change the ISA: the encodings in sections 1-6 are exactly what
+Rev A defined, and every application written for Rev A executes unchanged. What
+changed around it is how a program gets *started* and how it talks to the new
+hardware:
+
+* **Execution entry.** At power-up the CPU is released by the boot sequencer
+  (`rtl/sv16_startup.sv`), not by a hard-wired reset vector. It enters either the
+  boot ROM monitor at `0xE000`, or the application's own `entry` address (with the
+  application's own `SP`, taken from the flash image header). Programs are
+  therefore assembled for the address they will run at — `make app` links at
+  `0x0000` because the loader copies payloads to SRAM address 0.
+* **Interrupts.** The vector table is 8 words at `0x0020-0x0027`, one 16-bit
+  handler address per source ([MEMORY_MAP.md](MEMORY_MAP.md#interrupt-vector-indices)).
+  The CPU still pushes `SR` and `PC` before the vector fetch and `RETI` restores
+  them; enabling an interrupt now also requires the per-source bit in `IRQ_EN`
+  (`0xF090`) and the global bit `SYS_CTRL.IRQEN` (`0xF001`).
+* **Trap.** An illegal opcode takes vector 7 and, in addition, latches the
+  offending address in `SYS_FAULT_ADDR` and increments `SYS_FAULT_CNT` so a
+  monitor or the application itself can diagnose the fault.
+* **Memory map.** SRAM is 16 K words at `0x0000`, the boot ROM is at `0xE000`,
+  peripherals are at `0xF000-0xF0FF`; see [MEMORY_MAP.md](MEMORY_MAP.md). Rev A's
+  map (8 K words of SRAM, four peripherals) is superseded.
+* **No new instructions.** In particular there is still **no register-indirect
+  jump or call**: `JMP` and `CALL` take a 16-bit immediate, and returns use `RET`
+  through the stack. That is enough for handlers (the CPU fetches the handler
+  address from the vector table itself) and for the monitor's dispatcher
+  (compare-and-branch trampolines), but it is the main obstacle to a C compiler —
+  a function-pointer call has no encoding. Adding one is an ISA extension that
+  would need its own ADR ([OPEN_QUESTIONS.md](OPEN_QUESTIONS.md), OQ-16).

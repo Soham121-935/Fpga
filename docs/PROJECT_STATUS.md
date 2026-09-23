@@ -1,42 +1,82 @@
-# SV-16 Rev A — Project Status
+# SV-16 Rev B — Project Status
 
-Last Updated: Phase 22 Completed — Complete Microcontroller & Verification Suite Verified
-
----
-
-## Phase Progress Summary
-
-| Phase | Description | Status | Verification State |
-| :--- | :--- | :--- | :--- |
-| **Phase 0** | Repository foundation & structure | **COMPLETED** | Standard directory layout & base docs created |
-| **Phase 1** | Architecture definition & freeze | **COMPLETED** | Full ISA, CPU architecture, memory map, ADRs documented |
-| **Phase 2** | SystemVerilog infrastructure & coding standards | **COMPLETED** | `sv16_pkg.sv`, `sv16_top.sv`, `CODING_STANDARDS.md` |
-| **Phase 3** | Register file (8 × 16-bit) | **COMPLETED** | `sv16_regfile.sv` implemented & verified with `sv16_regfile_tb.sv` |
-| **Phase 4** | ALU (16-bit arithmetic, logic, shift, mul, div) | **COMPLETED** | `sv16_alu.sv` implemented & verified with `sv16_alu_tb.sv` |
-| **Phase 5** | Status register (Z, C, N, V) | **COMPLETED** | `sv16_status_reg.sv` implemented & verified with `sv16_status_reg_tb.sv` |
-| **Phase 6** | Program Counter (PC) | **COMPLETED** | `sv16_pc.sv` implemented & verified with `sv16_pc_tb.sv` |
-| **Phase 7** | Instruction register & decoder | **COMPLETED** | `sv16_decoder.sv` implemented & verified with `sv16_decoder_tb.sv` |
-| **Phase 8** | Control unit | **COMPLETED** | `sv16_control_unit.sv` implemented & verified with `sv16_control_unit_tb.sv` |
-| **Phase 9** | Minimal CPU integration | **COMPLETED** | `sv16_core.sv` integrated & verified with test program in `sv16_cpu_tb.sv` |
-| **Phase 10** | Memory subsystem (BRAM + Bus) | **COMPLETED** | `sv16_ram.sv` & `sv16_bus_interconnect.sv` verified in `sv16_ram_tb.sv` |
-| **Phase 11** | Stack & subroutines (SP, PUSH, POP, CALL, RET) | **COMPLETED** | Stack semantics & nested calls verified in `sv16_stack_subroutine_tb.sv` |
-| **Phase 12** | Branching logic | **COMPLETED** | Conditional branches & loops verified in `sv16_branch_tb.sv` |
-| **Phase 13** | GPIO peripheral | **COMPLETED** | `sv16_gpio.sv` implemented with atomic SET/CLR & verified in `sv16_gpio_tb.sv` |
-| **Phase 14** | Hardware Timer | **COMPLETED** | `sv16_timer.sv` with compare match & IRQ verified in `sv16_timer_tb.sv` |
-| **Phase 15** | Hardware PWM | **COMPLETED** | `sv16_pwm.sv` with emergency fault shutdown verified in `sv16_pwm_tb.sv` |
-| **Phase 16** | Hardware UART | **COMPLETED** | `sv16_uart.sv` 8-N-1 transceiver verified in `sv16_uart_tb.sv` |
-| **Phase 17** | Interrupt controller interface | **COMPLETED** | Core interrupt lines (Timer, UART, GPIO) integrated into SoC |
-| **Phase 18** | External peripheral interconnect expansion | **COMPLETED** | Bus interconnect ports reserved & mapped |
-| **Phase 19** | Firmware layer & drivers | **COMPLETED** | Hardware register header `sv16_hardware.h` created |
-| **Phase 20** | FPGA top-level integration (`sv16_top.sv`) | **COMPLETED** | Complete synthesizable SoC top connecting all units to Lattice ECP5 pads |
-| **Phase 21** | First real hardware test (LED blink via firmware) | **COMPLETED** | Full system execution verified in `sv16_top_tb.sv` |
-| **Phase 22** | Motor control demonstration (PWM + Driver + DC Motor)| **COMPLETED** | Firmware `firmware/examples/motor_control.c` & PWM verified |
+SV-16 is a 16-bit microcontroller system for the Lattice ECP5
+**LFE5U-12F-6TG144C**. Rev A built the CPU and its peripherals; **Rev B makes it
+a programmable MCU**: it boots from flash by itself, can be reprogrammed over a
+serial cable, and reports why it restarted.
 
 ---
 
-## Verification Suite Summary
-- Total Automated Test Checks Passed: **45**
-- Test Failures: **0**
-- Test Suites:
-  - 30 SystemVerilog structural and syntax checks across all RTL and testbench modules
-  - 15 functional verification testbenches covering ALU, decoder, control unit, regfile, PC, status register, RAM, bus interconnect, stack, branching, GPIO, timer, PWM, UART, and full SoC execution
+## 1. Where it stands
+
+| Area | State | Evidence |
+| :--- | :--- | :--- |
+| CPU and ISA | **frozen, unchanged in Rev B** | [ISA.md](ISA.md), [CPU_ARCHITECTURE.md](CPU_ARCHITECTURE.md) |
+| Memory map | Rev B: 32 KB SRAM, 4 KB boot ROM at `0xE000`, 11 MMIO blocks | [MEMORY_MAP.md](MEMORY_MAP.md) |
+| Peripherals | GPIO ×2, timer, PWM (with hardware fault input), UART, SPI master, flash controller, IRQ controller, system control, boot engine | [PERIPHERALS.md](PERIPHERALS.md) |
+| Non-volatile program store | SPI NOR + hardware boot loader + CRC-checked images | [BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md) |
+| Field update | ROM monitor over UART (`C`/`R`/`E`/`V`/`B`) + `make upload` | `scripts/sv16_mon.py` |
+| Reset and startup | reset-cause register, soft reset, fault halt, auto-boot, RX-low escape to the monitor | [RESET_AND_CLOCK.md](RESET_AND_CLOCK.md) |
+| Verification | **113 checks, 0 failures** across 4 Verilator suites + lint | [VERIFICATION.md](VERIFICATION.md) |
+| Bitstream | builds, places, routes and packs for the target part; timing PASS at 12.5 MHz | [SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md) |
+| Documentation | operator manual, memory map, peripherals, flow, verification, ADRs | `docs/` |
+
+**Headline result:** `make bitstream` produces `build/sv16_top.bit` (275 KB,
+LFE5U-12F-6TG144C, 30 % LUTs, 18 % FFs, timing PASS at 12.5 MHz) containing a
+boot ROM monitor; program it, open a serial terminal, and the chip is a
+microcontroller you can flash new firmware into with `make upload`.
+
+---
+
+## 2. Rev A → Rev B
+
+| | Rev A | Rev B |
+| :--- | :--- | :--- |
+| Program storage | none (block RAM init files) | SPI flash + hardware boot loader |
+| Firmware update | rebuild the bitstream | serial port, any host, no toolchain needed |
+| Boot ROM | none | 4 KB monitor baked into the bitstream |
+| Recovery from a bad image | none | automatic: hardware loader rejects it, monitor comes up |
+| SRAM | 8 K words | 16 K words |
+| MMIO blocks | 4 | 11 present of 16 |
+| Interrupts | ad-hoc lines | controller with enable/pending/priority + 8-entry vector table |
+| Observability | none | reset cause, fault address/count, PC/SP/SR/IR, cycle counter, scratch registers that survive a soft reset |
+| Pin constraints | four unplaceable sites | rebuilt from the device database; every port on a real I/O |
+| Timing | not signed off | measured, constrained, and passing at the shipped clock |
+
+The ISA, the instruction encodings and the programmer's model of the CPU are
+untouched — an application written for Rev A runs on Rev B unchanged (provided
+it does not rely on the old MMIO layout).
+
+---
+
+## 3. Rev B backlog, in priority order
+
+1. **Watchdog.** `rtl/sv16_wdt.sv` exists but is not instantiated; wire it into
+   MMIO block 8 and into the reset path, with a lock bit.
+2. **Timing headroom.** Raise the ceiling above 14.4 MHz (flag/branch FSM stage,
+   register the fault address, then an `EHXPLLL`) so the part can run at 25 MHz
+   or more.
+3. **A/B images with rollback** so a failed update cannot lose the application.
+4. **JTAG debug bridge** over the ECP5 TAP using the existing
+   `SYS_CTRL.HALT` / `SYS_DBG_*` hooks.
+5. **Silicon bring-up** on a real board: LEDs, console, upload, flash, motor
+   demo — the first time any of this touches hardware.
+6. **Rev A testbench clean-up**: port or retire the older module-level tests so
+   `make sim` covers the whole peripheral set again.
+
+Full reasoning, and what "production grade" would still require, is in
+[MCU_READINESS.md](MCU_READINESS.md).
+
+---
+
+## 4. Verification summary
+
+| Suite | Checks |
+| :--- | ---: |
+| `flash_ctrl_tb` | 48 |
+| `boot_tb` | 24 |
+| `soc_boot_tb` | 21 |
+| `monitor_tb` | 20 |
+| **Total** | **113 passing, 0 failing** |
+
+Plus RTL lint (24 files clean) and whole-SoC Verilator elaboration.

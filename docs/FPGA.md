@@ -1,44 +1,69 @@
-# SV-16 Rev A — Lattice ECP5 Target Specification
+# SV-16 Rev B — Lattice ECP5 Target
 
----
+## 1. Device
 
-## 1. Device Hardware Details
+| Item | Value |
+| :--- | :--- |
+| Part | `LFE5U-12F-6TG144C` |
+| Family | ECP5 (Lattice Semiconductor) |
+| Logic | 12K LUT4 (24,288 LUT4 + 1,376 carry positions in nextpnr's count) |
+| Block RAM | 56 × `DP16KD` (18 Kbit each → 126 Kbit) |
+| Multipliers | 28 × `MULT18X18D` |
+| PLLs | 2 × `EHXPLLL` (unused in Rev B) |
+| Package | TQFP-144, 197 usable I/O |
+| Speed grade | 6 (fastest) |
+| Supply | 1.1 V core, 3.3 V I/O (`LVCMOS33` on every pin) |
+| Configuration | SRAM-based — a bitstream must be loaded at every power-up |
 
-```text
-Manufacturer:    Lattice Semiconductor
-Family:          ECP5 (Low-Cost, High-Performance)
-Device:          LFE5U-12F
-Full Part Number:LFE5U-12F-6TG144C
-Package:         144-pin TQFP (0.5 mm pin pitch)
-Speed Grade:     -6 (Commercial Temperature Range: 0°C to 85°C)
-Core Voltage:    1.1V
-I/O Banks:       8 I/O Banks (3.3V LVCMOS capable)
-```
+## 2. How this design uses the device
 
----
+| Resource | Used | Where |
+| :--- | ---: | :--- |
+| LUT4 | 7,358 (30 %) | CPU datapath and control, boot loader, flash controller, monitor's ROM decoding |
+| Flip-flops | 4,448 (18 %) | CPU state, FIFOs, peripherals |
+| `DP16KD` | 18 (32 %) | 16 for the 32 KB SRAM, 2 for the 4 KB boot ROM |
+| `MULT18X18D` | 1 (3 %) | the ALU's single-cycle 16×16 multiply |
+| I/O | 52 (26 %) | UART, two SPI ports, GPIO A/B, PWM, motor control, LEDs, clock, reset |
+| `EHXPLLL` | 0 | clock is divided in fabric (see below) |
 
-## 2. On-Chip Resources
+## 3. Clocking and timing
 
-- **LUT4 Logic Elements**: 12,000 LUTs
-- **sysMEM Block RAM**: 32 DP16KD blocks (576 Kbits total)
-  - Configurable as True Dual-Port, Pseudo Dual-Port, or Single-Port RAM/ROM.
-  - Initialized with SV-16 boot firmware via `$readmemh` or bitstream initialization.
-- **sysDSP Slices**: 28 Multiplier (18×18) blocks, ideal for single-cycle 16-bit ALU `MUL` operation.
-- **sysCLOCK PLLs**: 2 General Purpose Phase-Locked Loops.
-- **General Purpose I/O Pins**: Up to 118 user I/O pins available in 144 TQFP package.
+* Input: `clk_25m` on pin 133 (25 MHz).
+* `SV16_CLKDIV` divides it in fabric to the SoC clock; **`CLKDIV=2` (12.5 MHz) is
+  the shipped configuration** because it is the fastest one that closes timing
+  on this speed grade.
+* Measured Fmax: 14.43 MHz (nextpnr, heap placer, speed grade 6). The 25 MHz
+  configuration is buildable but nextpnr flags the violation and the flow stops
+  before packing a bitstream.
+* An `EHXPLLL` would replace the fabric divider once the CPU critical path is
+  shortened (see [MCU_READINESS.md](MCU_READINESS.md#4-gap-list-to-a-production-grade-mcu-experience)).
 
----
+## 4. Pin constraints
 
-## 3. Physical Pin Constraints Overview
+`constraints/ecp5_144tqfp.lpf` — every port of `sv16_top`, all `LVCMOS33`. The
+full table with rationale lives in the LPF header and in
+[SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md#pin-constraints).
 
-Constraint definitions reside in `constraints/ecp5_144tqfp.lpf` (Lattice Preference Format):
-- Clock Pin: `25 MHz` dedicated primary clock input.
-- Reset Pin: Active-low push button input with internal pull-up.
-- UART Pins: `uart_tx` (output), `uart_rx` (input with pull-up).
-- Status LEDs: 4 to 8 dedicated active-low or active-high LEDs connected to GPIO.
-- Motor Control Pins:
-  - `pwm_out`: High-speed PWM switching pin to external gate driver / H-Bridge input.
-  - `motor_dir1`, `motor_dir2`: Direction control GPIO outputs.
-  - `motor_fault_n`: Emergency hardware shutdown input pin.
+Three points worth remembering when editing it:
 
-*Electrical Safety Warning*: Under no circumstances shall motor coils or inductive loads be connected directly to FPGA pins. An external driver stage (such as an L298N, DRV8833, or discrete MOSFET H-Bridge) with freewheeling flyback diodes and adequate decoupling capacitors must be used.
+1. **`SITE` names for TQFP packages are bare pin numbers** (`SITE "102"`, not
+   `SITE "P102"`). Both forms appear in the wild; only the bare number places.
+2. Four Rev A assignments were **not bonded I/O on this package at all** (`P63`
+   clock, `P60` reset, `P38` LED0, `P100` PWM). Validate any new pin against the
+   prjtrellis device database (`ECP5/LFE5U-12F/iodb.json`, `packages.TQFP144`)
+   before trusting it — a constraint file that places is not the same as a
+   constraint file that matches your board.
+3. Only the Rev A UART pins (73/74) survived; everything else was re-assigned
+   from the database. If you have a Rev A board, the LPF must be re-derived from
+   its schematic — the bitstream will not match it.
+
+## 5. Configuration and programming
+
+* FPGA configuration: `make prog` (openFPGALoader over JTAG). Volatile; the
+  device is blank at power-up unless the board has its own configuration flash
+  for the FPGA.
+* Application firmware: over UART, into the external SPI flash
+  ([BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md)).
+* External SPI flash for firmware: any W25Q-class part in the 64 KB-1 MB range;
+  the loader programs the first 64 KB window, and `FLASH_ID` should read
+  `0xEF4018`.

@@ -9,7 +9,9 @@ Supports:
                SHL, SHR, MUL, DIV, MOD, ADDI, SUBI, LDI, LOAD, STORE, MOV,
                BRANCH (BRA, BEQ, BNE, BC, BNC, BN, BP, BVS, BVC, BLT, BGE, BLE, BGT),
                JMP, CALL, RET, PUSH, POP, CMP
-- Directives: .org, .word, .space, .equ
+- Directives: .org, .word, .equ, .asciiz
+- Absolute origin support: the output file starts at the lowest .ORG address, so
+  ROM images (.org 0xE000) load 1:1 into sv16_rom's memory array.
 """
 
 import sys
@@ -78,6 +80,26 @@ def parse_num(token, symbols=None):
         return int(token, 2)
     return int(token)
 
+def ascii_words(literal):
+    """'TEXT' -> the list of 16-bit words for .ASCIIZ (one char per word + NUL)."""
+    text = literal.strip()
+    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+        text = text[1:-1]
+    if text.startswith('\\n'):
+        pass
+    escaped = text.replace('\\r', '\r').replace('\\n', '\n').replace('\\t', '\t')
+    return [ord(c) & 0xFFFF for c in escaped] + [0x0000]
+
+
+def split_asciiz(line):
+    """Return the .ASCIIZ prefix (label + directive) and the quoted literal."""
+    q1 = line.find('"')
+    q2 = line.rfind('"')
+    if q1 < 0 or q2 <= q1:
+        raise ValueError(f".ASCIIZ needs a quoted string: {line}")
+    return line[:q1].strip(), line[q1:q2 + 1]
+
+
 def assemble(lines):
     symbols = {}
     cleaned = []
@@ -93,8 +115,11 @@ def assemble(lines):
     curr_addr = 0
     instructions_pass1 = []
 
+    srcmap = []                       # (addr, word count, source text)
+
     for line in cleaned:
-        if ':' in line:
+        src = line
+        if ':' in line.split('"')[0]:
             parts = line.split(':', 1)
             lbl = parts[0].strip()
             symbols[lbl] = curr_addr
@@ -114,7 +139,15 @@ def assemble(lines):
             continue
         elif mnemonic == '.WORD':
             instructions_pass1.append((mnemonic, tokens[1:], curr_addr))
+            srcmap.append((curr_addr, 1, src))
             curr_addr += 1
+            continue
+        elif mnemonic == '.ASCIIZ':
+            head, literal = split_asciiz(line)
+            words = ascii_words(literal)
+            instructions_pass1.append((mnemonic, [head, literal], curr_addr))
+            srcmap.append((curr_addr, len(words), src))
+            curr_addr += len(words)
             continue
 
         if mnemonic not in OPCODES:
@@ -125,6 +158,7 @@ def assemble(lines):
         words = 2 if fmt in ('LDI', 'JMP', 'CALL') else 1
 
         instructions_pass1.append((mnemonic, tokens[1:], curr_addr))
+        srcmap.append((curr_addr, words, src))
         curr_addr += words
 
     # Pass 2: Generate machine code
@@ -138,6 +172,10 @@ def assemble(lines):
         elif mnemonic == '.WORD':
             val = parse_num(args[0], symbols) & 0xFFFF
             memory_words[curr_addr] = val
+            continue
+        elif mnemonic == '.ASCIIZ':
+            for i, w in enumerate(ascii_words(args[1])):
+                memory_words[curr_addr + i] = w
             continue
 
         entry = OPCODES[mnemonic]
@@ -203,7 +241,17 @@ def assemble(lines):
         elif fmt == 'B':
             cond = entry[2]
             target = parse_num(args[0], symbols)
-            rel_offset = (target - (curr_addr + 1)) & 0xFF
+            delta = target - (curr_addr + 1)     # the CPU adds the offset to
+                                                 # the already-incremented PC
+            # The branch offset is only eight bits wide and signed: a target
+            # further than 127 words away silently wrapped around in the past
+            # and sent the CPU into unmapped memory.  Refuse to assemble it.
+            if delta < -128 or delta > 127:
+                raise ValueError(
+                    f"branch out of range at 0x{curr_addr:04X}: {mnemonic} "
+                    f"{args[0]} is {delta:+d} words away (limit -128..+127); "
+                    f"use a near branch to a JMP trampoline instead")
+            rel_offset = delta & 0xFF
             code = (opcode << 12) | (cond << 8) | rel_offset
             memory_words[curr_addr] = code
 
@@ -224,31 +272,69 @@ def assemble(lines):
             memory_words[curr_addr] = code
 
         elif fmt == 'CMP':
-            rs1 = REGISTERS[args[0].upper()]
-            rs2 = REGISTERS[args[1].upper()]
-            code = (opcode << 12) | (rs1 << 11) | (rs2 << 8)
+            # CMP a, b  ->  A = Rd field, B = Rs1 field (see sv16_decoder.sv),
+            # result = a - b, so a is the minuend.
+            ra = REGISTERS[args[0].upper()]
+            rb = REGISTERS[args[1].upper()]
+            code = (opcode << 12) | (ra << 9) | (rb << 6)
             memory_words[curr_addr] = code
 
         elif fmt.startswith('S_'):
             code = 0x0000
             memory_words[curr_addr] = code
 
-    return memory_words
+    return memory_words, srcmap
+
+def write_listing(path, memory_words, srcmap):
+    """Text listing: address, encoded word(s) and the source line."""
+    by_line = {}
+    for addr, count, src in srcmap:
+        for i in range(count):
+            by_line[addr + i] = (src, i)
+    with open(path, 'w') as f:
+        f.write(f"; SV-16 assembler listing -- {len(memory_words)} words\n")
+        for addr in sorted(memory_words):
+            val = memory_words[addr]
+            src, idx = by_line.get(addr, ("", 0))
+            tag = src if idx == 0 else f"(cont) {src}"
+            f.write(f"{addr:04X}: {val:04X}  {tag}\n")
+
 
 def write_hex(memory_words, outpath, depth=4096):
+    """Write one hex word per line, starting at the lowest assembled address.
+
+    Programs that start at 0 (application images) are padded to `depth` words
+    as before.  Programs with a high origin (the ROM monitor at 0xE000) are
+    emitted from that origin, which is exactly what `$readmemh` into
+    sv16_rom's array expects.
+    """
     with open(outpath, 'w') as f:
+        base = min(memory_words.keys()) if memory_words else 0
         max_addr = max(memory_words.keys()) if memory_words else 0
-        limit = max(max_addr + 1, depth)
-        for a in range(limit):
+        if base == 0:
+            limit = max(max_addr + 1, depth)
+        else:
+            limit = max_addr + 1
+        for a in range(base, limit):
             val = memory_words.get(a, 0x0000)
             f.write(f"{val:04X}\n")
+    return base
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print("Usage: sv16_as.py <input.s> <output.hex>")
+        print("Usage: sv16_as.py <input.s> <output.hex> [--listing <file>]")
         sys.exit(1)
+    listing = None
+    if '--listing' in sys.argv:
+        i = sys.argv.index('--listing')
+        listing = sys.argv[i + 1]
+        del sys.argv[i:i + 2]
     with open(sys.argv[1], 'r') as f:
         lines = f.readlines()
-    words = assemble(lines)
-    write_hex(words, sys.argv[2])
-    print(f"[OK] Assembled {len(words)} words into {sys.argv[2]}")
+    words, srcmap = assemble(lines)
+    base = write_hex(words, sys.argv[2])
+    top = max(words.keys()) if words else 0
+    if listing:
+        write_listing(listing, words, srcmap)
+    print(f"[OK] Assembled {top - base + 1} words "
+          f"(0x{base:04X}..0x{top:04X}) into {sys.argv[2]}")

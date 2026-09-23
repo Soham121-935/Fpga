@@ -1,6 +1,15 @@
-# SV-16 Rev A — Architecture Decisions Record (ADR)
+# SV-16 — Architecture Decisions Record (ADR)
 
-This file tracks foundational architectural decisions made for the SV-16 Rev A microcontroller.
+This file tracks foundational architectural decisions for the SV-16
+microcontroller. ADR-001..005 are the Rev A foundation; ADR-012..016 are the
+Rev B decisions that turn the CPU into a programmable MCU (boot and program
+storage, field update, Rev B memory map, CPU fixes, interrupt controller).
+
+> Numbering note: ADR-006..011 were never written up; the decisions they were
+> reserved for (peripheral set, pin constraints, verification strategy, bus
+> arbitration sweep) ended up recorded in `PERIPHERALS.md`, `FPGA.md`,
+> `VERIFICATION.md` and `BUS_ARCHITECTURE.md` instead. The RTL references only
+> ADR-012..016, which are all present below.
 
 ---
 
@@ -61,3 +70,126 @@ This file tracks foundational architectural decisions made for the SV-16 Rev A m
   - `bus_req`: Bus access request strobe
   - `bus_ack`: Slave acknowledge (ready) signal
 - **Consequences**: Zero wait-state access for single-cycle on-chip BRAM (`ack = 1`), wait-state support for slower peripheral access or UART FIFOs.
+
+---
+
+## ADR-012: Program storage and boot — hardware loader + SPI NOR + resident monitor
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: Rev A had no non-volatile program store: firmware existed only as a
+  block-RAM init file, and "programming the device" meant rebuilding and
+  re-flashing the FPGA. Treating SV-16 as an MCU requires that a program survive
+  power cycles and that it can be replaced without touching the FPGA
+  configuration.
+- **Decision**:
+  - Applications are stored as CRC-checked images in an external **SPI NOR flash**
+    (see `docs/BOOT_AND_PROGRAMMING.md`, section 4 for the image format).
+  - The **boot loader is hardware**, not a CPU program: `rtl/sv16_boot.sv` is a
+    second bus master that reads flash, verifies magic/header CRC/payload CRC and
+    copies the payload into SRAM before the CPU is released. A CPU program cannot
+    do this, because the program that would do it is the one being replaced — and
+    because a broken image must not be able to prevent recovery.
+  - A **resident monitor** lives in the boot ROM (`0xE000`, 2 K words, compiled
+    into the bitstream) and is entered whenever no valid image is found, when the
+    loader fails, when software requests it, or when the serial RX line is held
+    low through reset.
+- **Consequences**: Programming the FPGA defines the machine; programming the
+  serial port defines the application. A board whose application is broken can
+  always be recovered with a serial cable. Cost: 18 block RAMs (SRAM + ROM) and
+  roughly 1.4 k LUTs for the loader; the boot ROM contents become a synthesis-time
+  macro (`SV16_ROM_INIT_FILE`) that the Makefile regenerates from assembly.
+
+---
+
+## ADR-013: Field reprogramming over UART with a framing protocol
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: The field-update path has to work with nothing but a serial
+  terminal, on a byte-oriented UART with a 4-byte FIFO and no flow control, and
+  it has to be verifiable end to end.
+- **Decision**:
+  - The monitor speaks a small **fixed-width ASCII protocol**:
+    `C<addr4><len4><crc4>` + payload, `R<addr4><len4>`, `E<addr4>`, `V<addr4>`,
+    `B`, `?`. Every command answers (`+OK`, `=crc4`, `.` per byte, `-E<n>`).
+  - The upload is **self-clocking**: the host sends one payload byte and waits for
+    the monitor's `.` before sending the next. That makes the exchange immune to
+    FIFO overrun no matter how fast the host writes, at the cost of throughput
+    (roughly 5 KB/s of payload at 115200 baud).
+  - Data integrity is a **CRC16-CCITT** over the uploaded bytes, checked by the
+    monitor *before* the image is trusted, plus the header and payload CRCs that
+    the loader re-checks at every boot.
+  - **All flash knowledge lives in `rtl/sv16_flash_ctrl.sv`** (command set, page
+    buffering, sector erase, `tPROG`/`tERASE` waits, CRC over a range). Neither
+    the monitor nor an application has to know NOR timing.
+- **Consequences**: A host tool (`scripts/sv16_mon.py`, `make upload`) is a
+  convenience, not a requirement — the protocol is human-typeable. Images are
+  verified twice (monitor + loader). Cost: hex text doubles the wire time versus a
+  binary protocol; there is no resume, no compression and no A/B slots yet.
+
+---
+
+## ADR-014: Rev B memory map and peripheral block organization
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: Rev A's map had 8 K words of SRAM, no ROM, four peripherals at
+  hand-picked addresses and spare ports wired "when a peripheral appears".
+  Adding flash, boot, system control and a second GPIO needed a scheme, not more
+  special cases.
+- **Decision**:
+  - SRAM grows to **16 K words** (`0x0000-0x3FFF`), the **boot ROM** occupies
+    `0xE000-0xE7FF`, and all peripherals live in a single **MMIO window**
+    `0xF000-0xF0FF` organized as **16 blocks × 16 registers**, with the block
+    selected by `addr[7:4]` and the register by `addr[3:0]`.
+  - `MMIO_PRESENT` marks which of the 16 blocks have a slave; unmapped addresses
+    (including unimplemented blocks) are acknowledged and read as `0x0000`, so
+    probing the map cannot hang the bus.
+  - The block numbers are fixed by `rtl/sv16_pkg.sv`: 0 system, 1 GPIO A,
+    2 timer, 3 PWM, 4 UART, 5 SPI, 6 flash, 7 GPIO B, 8 watchdog (reserved),
+    9 interrupt controller, 0xA boot, 0xB-0xF reserved.
+- **Consequences**: A new peripheral is a 16-register block plus a `MMIO_PRESENT`
+  bit; the decoder is a shift/mask instead of a tree of comparators, which keeps
+  the top level readable and the decode timing shallow. The interrupt vector table
+  lives at `0x0020` in SRAM (8 words), which keeps it inside the application's own
+  image.
+
+---
+
+## ADR-015: CPU fixes — register selection, two-word LDI, and the held-request bus contract
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: Bringing up the monitor exposed three CPU-side defects: Rev A
+  mis-mapped the `STORE` data field and the `PUSH` register field in the decoder,
+  `LDI` needed an explicit write-back state, and the control unit dropped bus
+  requests when a slave withheld its ack.
+- **Decision**:
+  - Decoder port assignment is fixed (`docs/ISA.md` is authoritative): `STORE`
+    takes its data from `Rs2`, `PUSH` from its explicit register field;
+    `CMP` uses `Rs1`/`Rs2`.
+  - `LDI` (two-word immediate) is routed through `S_WRITEBACK` like any other
+    register write, so one write path exists for all register writes.
+  - The CPU **holds** `bus_addr`/`bus_we`/`bus_wdata`/`bus_req` until `bus_ack`
+    arrives, and does not advance its FSM on a cycle without an ack. Load data is
+    captured only on the ack of the load's own transfer.
+- **Consequences**: Slow peripherals and bus contention become invisible to
+  instruction semantics — an access takes longer instead of returning the wrong
+  value. This is the change that made the loader, the flash controller and the
+  monitor coexist; it is also why the whole regression (113 checks) is the
+  gate for any further bus work.
+
+---
+
+## ADR-016: Interrupt controller with enable/pending/priority and a RAM vector table
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: Rev A wired peripheral interrupt lines directly to the core, with
+  no way to mask, prioritize or observe them, and no handler dispatch mechanism.
+- **Decision**:
+  - A dedicated controller (`0xF090`) provides per-source **enable**, **pending**
+    (with write-1-to-clear), raw **lines**, and the index of the source being
+    served; eight sources are defined (timer, UART RX/TX, SPI, flash, GPIO,
+    watchdog, TRAP) in `sv16_pkg.sv`.
+  - The handler address is fetched from an **8-entry vector table in SRAM at
+    `0x0020`**, one word per source, populated by the application image. The CPU
+    pushes `SR` and `PC` before the vector fetch and `RETI` restores `SR`.
+  - Global gating is two-level: `SYS_CTRL.IRQEN` (system) and `SR.IE` (CPU), so
+    both the system writer and the interrupt-disabled code path can inhibit
+    interrupts.
+- **Consequences**: Handlers can be written in assembly with a plain address
+  table; an unpopulated table is visible (a trap jumps to whatever word is there),
+  so images that use interrupts must fill `0x0020-0x0027`. Priority is fixed by
+  index; there is no nesting control and no interrupt latency specification yet.

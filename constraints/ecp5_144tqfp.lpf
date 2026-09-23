@@ -1,42 +1,157 @@
-# Lattice LPF Constraint File for SV-16 Rev A
-# Target Device: Lattice ECP5 LFE5U-12F-6TG144C
-# Package: 144-pin TQFP (TQFP144)
-# Speed Grade: -6
+# ---------------------------------------------------------------------------
+# Lattice LPF constraints — SV-16 Rev B
+# Device:  Lattice ECP5 LFE5U-12F-6TG144C (12K LUT, TQFP-144, speed grade 6)
+#
+# Every port of rtl/sv16_top.sv is located here, and every site below is a real
+# IO site of this package (checked against the prjtrellis device database, and
+# the whole design is placed and routed by `make bitstream`).  For TQFP packages
+# the SITE name is the pin number, so pin 102 is written as "102".
+#
+# The pins marked "existing board wiring" come from the Rev A constraint file;
+# the Rev A file also located clk P63, ext_rst_n P60, led[0] P38, pwm_out P100
+# and motor_dir1 P101, none of which are IO sites on this package, so they
+# could never have been placed.  They are re-assigned here.
+#
+# >>> BOARD WIRING: the pins that are not "existing board wiring" are a
+# >>> documented, placeable default.  Change the SITE of a port to match your
+# >>> board; nothing else in the design depends on the pin numbers.
+#
+# All ports are LVCMOS33, so every bank you use must have VCCIO = 3.3 V.
+# ---------------------------------------------------------------------------
 
 BLOCK RESETPATHS;
 BLOCK ASYNCPATHS;
 
-# Master System Clock (25.0 MHz onboard oscillator)
-LOCATE COMP "clk_25m" SITE "P63"; # Primary clock pin input
+# --------------------------------------------------------------- clock / reset
+# 25 MHz board oscillator.  This is the only clock in the design: the UART baud
+# generator, timers, PWM and the SPI clock divider all derive from it, and the
+# bus/interconnect logic is single-cycle at this clock.
+LOCATE COMP "clk_25m" SITE "133";
 IOBUF PORT "clk_25m" IO_TYPE=LVCMOS33;
 FREQUENCY PORT "clk_25m" 25.000000 MHz;
 
-# Active-Low System Reset Push Button
-LOCATE COMP "ext_rst_n" SITE "P60";
+# Active-low reset push button (also the hard reset of the MCU).
+LOCATE COMP "ext_rst_n" SITE "134";
 IOBUF PORT "ext_rst_n" IO_TYPE=LVCMOS33 PULLMODE=UP;
 
-# UART Interface (FTDI / USB-to-UART Bridge)
-LOCATE COMP "uart_rx" SITE "P73";
+# ------------------------------------------- console UART (existing board wiring)
+# The ROM monitor / bootloader console and the firmware upload interface.
+LOCATE COMP "uart_rx" SITE "73";
 IOBUF PORT "uart_rx" IO_TYPE=LVCMOS33 PULLMODE=UP;
-LOCATE COMP "uart_tx" SITE "P74";
+LOCATE COMP "uart_tx" SITE "74";
 IOBUF PORT "uart_tx" IO_TYPE=LVCMOS33;
 
-# Status LEDs (Active-Low)
-LOCATE COMP "led[0]" SITE "P38";
+# ---------------------------------------------- SPI configuration flash (program store)
+# Persistent program storage: the monitor and the user images live here, and
+# sv16_boot streams them into SRAM at power-on or on the B command.  If your
+# board already has a configuration flash wired to the ECP5 CFG pins, either
+# share that part bus (see docs/BOOT_AND_PROGRAMMING.md) or move these four
+# ports onto the spare IO next to it.
+LOCATE COMP "flash_sck"  SITE "110";
+IOBUF PORT "flash_sck"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "flash_cs_n" SITE "111";
+IOBUF PORT "flash_cs_n" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "flash_mosi" SITE "112";
+IOBUF PORT "flash_mosi" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "flash_miso" SITE "113";
+IOBUF PORT "flash_miso" IO_TYPE=LVCMOS33 PULLMODE=UP;
+
+# ------------------------------------------------------- SPI0 expansion bus (MMIO 0xF050)
+LOCATE COMP "spi0_sck"  SITE "114";
+IOBUF PORT "spi0_sck"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "spi0_cs_n" SITE "115";
+IOBUF PORT "spi0_cs_n" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "spi0_mosi" SITE "116";
+IOBUF PORT "spi0_mosi" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "spi0_miso" SITE "117";
+IOBUF PORT "spi0_miso" IO_TYPE=LVCMOS33 PULLMODE=UP;
+
+# ------------------------------------------- status LEDs (active low, mirror GPIOA[3:0])
+LOCATE COMP "led[0]" SITE "39";
 IOBUF PORT "led[0]" IO_TYPE=LVCMOS33 DRIVE=8;
-LOCATE COMP "led[1]" SITE "P39";
+LOCATE COMP "led[1]" SITE "40";
 IOBUF PORT "led[1]" IO_TYPE=LVCMOS33 DRIVE=8;
-LOCATE COMP "led[2]" SITE "P40";
+LOCATE COMP "led[2]" SITE "41";
 IOBUF PORT "led[2]" IO_TYPE=LVCMOS33 DRIVE=8;
-LOCATE COMP "led[3]" SITE "P41";
+LOCATE COMP "led[3]" SITE "44";
 IOBUF PORT "led[3]" IO_TYPE=LVCMOS33 DRIVE=8;
 
-# Motor Control Interface (External Gate Driver / H-Bridge inputs)
-LOCATE COMP "pwm_out" SITE "P100";
+# ---------------------------------------------------- GPIO port A (MMIO 0xF010)
+# 16-bit bidirectional port with per-pin direction (GPIO_DIR).  Bits 3:0 also
+# drive the status LEDs, which is what the example firmware uses as heartbeat.
+LOCATE COMP "gpio_a[0]"  SITE "45";
+IOBUF PORT "gpio_a[0]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[1]"  SITE "46";
+IOBUF PORT "gpio_a[1]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[2]"  SITE "47";
+IOBUF PORT "gpio_a[2]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[3]"  SITE "48";
+IOBUF PORT "gpio_a[3]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[4]"  SITE "49";
+IOBUF PORT "gpio_a[4]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[5]"  SITE "50";
+IOBUF PORT "gpio_a[5]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[6]"  SITE "51";
+IOBUF PORT "gpio_a[6]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[7]"  SITE "52";
+IOBUF PORT "gpio_a[7]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[8]"  SITE "97";
+IOBUF PORT "gpio_a[8]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[9]"  SITE "98";
+IOBUF PORT "gpio_a[9]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[10]" SITE "99";
+IOBUF PORT "gpio_a[10]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[11]" SITE "104";
+IOBUF PORT "gpio_a[11]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[12]" SITE "105";
+IOBUF PORT "gpio_a[12]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[13]" SITE "106";
+IOBUF PORT "gpio_a[13]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[14]" SITE "107";
+IOBUF PORT "gpio_a[14]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_a[15]" SITE "108";
+IOBUF PORT "gpio_a[15]" IO_TYPE=LVCMOS33 DRIVE=8;
+
+# ---------------------------------------------------- GPIO port B (MMIO 0xF070)
+LOCATE COMP "gpio_b[0]"  SITE "135";
+IOBUF PORT "gpio_b[0]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[1]"  SITE "136";
+IOBUF PORT "gpio_b[1]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[2]"  SITE "139";
+IOBUF PORT "gpio_b[2]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[3]"  SITE "140";
+IOBUF PORT "gpio_b[3]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[4]"  SITE "141";
+IOBUF PORT "gpio_b[4]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[5]"  SITE "142";
+IOBUF PORT "gpio_b[5]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[6]"  SITE "143";
+IOBUF PORT "gpio_b[6]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[7]"  SITE "128";
+IOBUF PORT "gpio_b[7]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[8]"  SITE "124";
+IOBUF PORT "gpio_b[8]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[9]"  SITE "125";
+IOBUF PORT "gpio_b[9]"  IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[10]" SITE "126";
+IOBUF PORT "gpio_b[10]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[11]" SITE "127";
+IOBUF PORT "gpio_b[11]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[12]" SITE "1";
+IOBUF PORT "gpio_b[12]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[13]" SITE "2";
+IOBUF PORT "gpio_b[13]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[14]" SITE "3";
+IOBUF PORT "gpio_b[14]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "gpio_b[15]" SITE "4";
+IOBUF PORT "gpio_b[15]" IO_TYPE=LVCMOS33 DRIVE=8;
+
+# ------------------------------------------- PWM / motor interface (MMIO 0xF030)
+LOCATE COMP "pwm_out" SITE "88";
 IOBUF PORT "pwm_out" IO_TYPE=LVCMOS33 DRIVE=16;
-LOCATE COMP "motor_dir1" SITE "P101";
+LOCATE COMP "motor_dir1" SITE "89";
 IOBUF PORT "motor_dir1" IO_TYPE=LVCMOS33 DRIVE=8;
-LOCATE COMP "motor_dir2" SITE "P102";
+LOCATE COMP "motor_dir2" SITE "102";
 IOBUF PORT "motor_dir2" IO_TYPE=LVCMOS33 DRIVE=8;
-LOCATE COMP "motor_fault_n" SITE "P103";
+LOCATE COMP "motor_fault_n" SITE "103";
 IOBUF PORT "motor_fault_n" IO_TYPE=LVCMOS33 PULLMODE=UP;

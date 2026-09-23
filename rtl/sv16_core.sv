@@ -1,14 +1,23 @@
-// SV-16 Rev A — Minimal CPU Core
+// SV-16 Rev B — CPU Core
 // Module: sv16_core
 //
 // Integrates:
-// - sv16_pc           (Program Counter)
+// - sv16_pc           (Program Counter, boot-vector capable)
 // - sv16_decoder      (Instruction Decoder)
 // - sv16_regfile      (8 x 16-bit Register File)
 // - sv16_alu          (16-bit ALU)
 // - sv16_status_reg   (Status Register Z, C, N, V, IE)
-// - sv16_control_unit (Multi-cycle execution FSM)
+// - sv16_control_unit (Multi-cycle execution FSM, interrupt sequencer)
 // - System Bus Master Interface
+// - Hardware interrupt entry (push SR + PC, vector fetch) and RETI
+// - Debug port: halt / single-step, PC / SP / SR read-modify access
+//
+// Rev B changes (see docs/ARCHITECTURE_DECISIONS.md):
+// - Fixed register read-port mapping for STORE / PUSH (Rev A wrote the wrong
+//   register value; peripheral stores never reached memory).
+// - LDI writeback path fixed (Rev A never wrote the destination register).
+// - reset_n now releases the core to an arbitrary boot vector with a
+//   configurable initial stack pointer (used by the SPI-flash boot engine).
 
 `timescale 1ns / 1ps
 
@@ -24,24 +33,57 @@ module sv16_core (
     output logic        bus_we,
     input  logic        bus_ack,
 
+    // Interrupt interface
+    input  logic        irq_req,       // level: at least one enabled source
+    input  logic [2:0]  irq_index,     // highest priority pending source index
+    input  logic [15:0] irq_vec_base,  // vector table base (word address)
+    output logic        irq_ack,       // pulse: interrupt accepted
+
+    // System / boot control
+    input  logic        halt_req,      // debug hold or boot-loader hold
+    input  logic        step_en,       // single-step while halted
+    input  logic        boot_load,     // pulse: load PC/SP from boot vector
+    input  logic [15:0] boot_vec,      // entry address for boot_load
+    input  logic [15:0] boot_sp,       // initial stack pointer for boot_load
+    output logic        halted,        // core is stopped
+    output logic        step_taken,    // pulse: one instruction stepped
+    output logic        fault_halt,    // stopped because a vector was zero
+    output logic        illegal_irq,   // pulse: illegal opcode trapped
+    output logic [15:0] illegal_pc,    // address of the illegal instruction
+
+    // Debug port (write access is only honoured while halted)
+    input  logic        dbg_pc_wr,
+    input  logic [15:0] dbg_pc_val,
+    input  logic        dbg_sp_wr,
+    input  logic [15:0] dbg_sp_val,
+    input  logic        dbg_sr_wr,
+    input  logic [15:0] dbg_sr_val,
+
     // Core Debug & Observability
     output logic [15:0] dbg_pc,
     output logic [15:0] dbg_ir,
     output logic [15:0] dbg_sr,
     output logic [15:0] dbg_sp,
-    output logic [2:0]  dbg_state
+    output logic [4:0]  dbg_state
 );
 
     // Internal Registers
     logic [15:0] ir_reg;
     logic [15:0] imm_reg;
     logic [15:0] sp_reg;
+    logic [15:0] vec_reg;      // latched interrupt/exception handler address
+    logic [15:0] ret_pc_reg;   // RETI: popped return address
+    logic [15:0] rd_data_reg;  // LOAD/POP data latched on the bus acknowledge
+    logic [15:0] ret_sr_reg;   // RETI: popped status register
+    logic        vector_zero;  // latched handler address is 0 (unhandled)
 
     // Interconnect wires
     logic [15:0] pc_val;
     assign dbg_pc = pc_val;
     assign dbg_ir = ir_reg;
     assign dbg_sp = sp_reg;
+    assign illegal_pc = pc_val - 16'd1;
+    assign vector_zero = (vec_reg == 16'h0000);
 
     // Decoder outputs
     logic [3:0]  opcode;
@@ -50,6 +92,7 @@ module sv16_core (
     logic [2:0]  dec_rs2;
     logic [2:0]  subop;
     logic [3:0]  cond;
+    logic [8:0]  ctrl_subop;
     logic [15:0] imm9_ext;
     logic [15:0] offset6_ext;
     logic [7:0]  branch_offset;
@@ -68,9 +111,16 @@ module sv16_core (
     logic        is_cmp;
     logic        is_two_word;
     logic        is_illegal;
+    logic        is_nop;
+    logic        is_halt;
+    logic        is_ei;
+    logic        is_di;
+    logic        is_reti;
 
     // Control Unit outputs
-    logic        bus_addr_sel;
+    logic [1:0]  bus_addr_sel;
+    logic [1:0]  bus_wdata_sel;
+    logic [1:0]  pc_sel;
     logic        pc_inc;
     logic        pc_load;
     logic        pc_branch;
@@ -82,7 +132,14 @@ module sv16_core (
     logic        alu_src_b_sel;
     logic        sp_dec;
     logic        sp_inc;
-    logic [2:0]  fsm_state;
+    logic        ie_set;
+    logic        ie_clr;
+    logic        sr_write_en;
+    logic        vec_latch_en;
+    logic        ret_latch_en;
+    logic        rd_data_latch_en;
+    logic        sr_latch_en;
+    logic [4:0]  fsm_state;
 
     assign dbg_state = fsm_state;
 
@@ -113,10 +170,20 @@ module sv16_core (
     logic [15:0] effective_addr;
     assign effective_addr = reg_rdata1 + offset6_ext;
 
-    // Stack Pointer register
+    // Debug writes are only honoured while the core is held.
+    logic dbg_pc_wr_eff, dbg_sp_wr_eff, dbg_sr_wr_eff;
+    assign dbg_pc_wr_eff = dbg_pc_wr && halt_req;
+    assign dbg_sp_wr_eff = dbg_sp_wr && halt_req;
+    assign dbg_sr_wr_eff = dbg_sr_wr && halt_req;
+
+    // ------------------------------------------------------- Stack Pointer
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            sp_reg <= 16'h1FFE; // Top of internal data RAM per ADR-007
+            sp_reg <= 16'h3FFE; // top of the Rev B SRAM (32 KB, 16K words)
+        end else if (boot_load) begin
+            sp_reg <= boot_sp;
+        end else if (dbg_sp_wr_eff) begin
+            sp_reg <= dbg_sp_val;
         end else if (sp_dec) begin
             sp_reg <= sp_reg - 16'd1;
         end else if (sp_inc) begin
@@ -124,37 +191,80 @@ module sv16_core (
         end
     end
 
-    // Instruction Register and Immediate Register
+    // ------------------------------------------- Instruction / Immediate /
+    //                              interrupt vector / RETI frame registers
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            ir_reg  <= 16'h0000; // NOP
-            imm_reg <= 16'h0000;
+            ir_reg     <= 16'h0000; // NOP
+            imm_reg    <= 16'h0000;
+            vec_reg    <= 16'h0000;
+            ret_pc_reg <= 16'h0000;
+            ret_sr_reg <= 16'h0000;
         end else begin
-            if (ir_load)  ir_reg  <= bus_rdata;
-            if (imm_load) imm_reg <= bus_rdata;
+            if (ir_load)       ir_reg     <= bus_rdata;
+            if (imm_load)      imm_reg    <= bus_rdata;
+            if (vec_latch_en)  vec_reg    <= bus_rdata;
+            if (ret_latch_en)  ret_pc_reg <= bus_rdata;
+            if (rd_data_latch_en) rd_data_reg <= bus_rdata;
+            if (sr_latch_en)   ret_sr_reg <= bus_rdata;
         end
     end
 
-    // Bus address multiplexer
-    assign bus_addr = (bus_addr_sel == 1'b0) ? pc_val :
-                      (is_push || is_pop || is_call || is_ret) ? sp_reg : effective_addr;
+    //------------------------------------------------------ Bus address mux
+    logic [15:0] vec_addr;
+    assign vec_addr = irq_vec_base + {{13{1'b0}}, irq_index};
 
-    // Bus write data multiplexer
-    assign bus_wdata = (is_call) ? pc_val : (is_push) ? reg_rdata1 : reg_rdata2;
+    always_comb begin
+        case (bus_addr_sel)
+            2'b00:   bus_addr = pc_val;        // instruction / immediate fetch
+            2'b01:   bus_addr = sp_reg;        // stack frame access
+            2'b10:   bus_addr = effective_addr;// LOAD/STORE data address
+            2'b11:   bus_addr = vec_addr;      // interrupt vector table
+            default: bus_addr = effective_addr;
+        endcase
+    end
 
-    // Target address for PC direct load
+    // --------------------------------------------------- Bus write data mux
+    always_comb begin
+        case (bus_wdata_sel)
+            2'b00:   bus_wdata = reg_rdata2;  // format-R source / STORE data
+            2'b01:   bus_wdata = reg_rdata1;  // PUSH source
+            2'b10:   bus_wdata = pc_val;      // CALL return address
+            2'b11:   bus_wdata = sr_val;      // interrupt entry: saved SR
+            default: bus_wdata = reg_rdata2;
+        endcase
+    end
+
+    // --------------------------------------------------- PC target address
     logic [15:0] pc_target;
-    assign pc_target = (is_ret) ? bus_rdata : imm_reg;
+    logic        pc_load_eff;
+    assign pc_load_eff = pc_load || boot_load || dbg_pc_wr_eff;
+
+    always_comb begin
+        if (dbg_pc_wr_eff)          pc_target = dbg_pc_val;
+        else if (boot_load)         pc_target = boot_vec;
+        else begin
+            case (pc_sel)
+                2'b00:   pc_target = imm_reg;
+                2'b01:   pc_target = bus_rdata;
+                2'b10:   pc_target = vec_reg;
+                2'b11:   pc_target = ret_pc_reg;
+                default: pc_target = imm_reg;
+            endcase
+        end
+    end
 
     // Program Counter Instance
     sv16_pc u_pc (
         .clk(clk),
         .rst_n(rst_n),
         .pc_inc(pc_inc),
-        .pc_load(pc_load),
+        .pc_load(pc_load_eff),
         .pc_branch(pc_branch),
+        .pc_boot(boot_load),
         .target_addr(pc_target),
         .branch_offset(branch_offset),
+        .boot_addr(boot_vec),
         .pc(pc_val)
     );
 
@@ -167,6 +277,7 @@ module sv16_core (
         .rs2(dec_rs2),
         .subop(subop),
         .cond(cond),
+        .ctrl_subop(ctrl_subop),
         .imm9_ext(imm9_ext),
         .offset6_ext(offset6_ext),
         .branch_offset(branch_offset),
@@ -184,7 +295,12 @@ module sv16_core (
         .is_pop(is_pop),
         .is_cmp(is_cmp),
         .is_two_word(is_two_word),
-        .is_illegal(is_illegal)
+        .is_illegal(is_illegal),
+        .is_nop(is_nop),
+        .is_halt(is_halt),
+        .is_ei(is_ei),
+        .is_di(is_di),
+        .is_reti(is_reti)
     );
 
     // Register File Instance
@@ -206,7 +322,13 @@ module sv16_core (
 
     // ALU Sub-Opcode selection
     logic [2:0] effective_alu_op;
-    assign effective_alu_op = (is_alu_imm) ? ((opcode == 4'h2) ? 3'b000 : 3'b001) : subop;
+    // CMP is architecturally "Rs1 - Rs2" (docs/ISA.md), so the ALU operation
+    // is forced to SUB regardless of the SubOp field: Rev A/B left it to the
+    // encoder, which made CMP add instead of compare and left the Z flag
+    // unreachable -- every BEQ/BNE therefore mispredicted.
+    assign effective_alu_op = (is_cmp)   ? 3'b001 :
+                              (is_alu_imm) ? ((opcode == 4'h2) ? 3'b000 : 3'b001) :
+                                             subop;
 
     // ALU Instance
     sv16_alu u_alu (
@@ -222,6 +344,11 @@ module sv16_core (
     );
 
     // Status Register Instance
+    logic        sr_write_en_eff;
+    logic [15:0] sr_write_data_eff;
+    assign sr_write_en_eff   = sr_write_en || dbg_sr_wr_eff;
+    assign sr_write_data_eff = dbg_sr_wr_eff ? dbg_sr_val : ret_sr_reg;
+
     sv16_status_reg u_status_reg (
         .clk(clk),
         .rst_n(rst_n),
@@ -230,10 +357,10 @@ module sv16_core (
         .flag_n_in(alu_flag_n),
         .flag_v_in(alu_flag_v),
         .flag_update_en(flag_update_en),
-        .sr_write_en(1'b0),
-        .sr_write_data(16'h0000),
-        .ie_set(1'b0),
-        .ie_clr(1'b0),
+        .sr_write_en(sr_write_en_eff),
+        .sr_write_data(sr_write_data_eff),
+        .ie_set(ie_set),
+        .ie_clr(ie_clr),
         .sr_out(sr_val),
         .flag_z(flag_z),
         .flag_c(flag_c),
@@ -246,7 +373,7 @@ module sv16_core (
     always_comb begin
         case (reg_wdata_sel)
             2'b00: reg_wdata = (is_mov) ? reg_rdata1 : alu_result;
-            2'b01: reg_wdata = bus_rdata;
+            2'b01: reg_wdata = rd_data_reg;  // latched on the slave's ack
             2'b10: reg_wdata = imm_reg; // 16-bit immediate from LDI
             2'b11: reg_wdata = pc_val;
             default: reg_wdata = alu_result;
@@ -273,17 +400,32 @@ module sv16_core (
         .is_pop(is_pop),
         .is_cmp(is_cmp),
         .is_two_word(is_two_word),
+        .is_illegal(is_illegal),
+        .is_nop(is_nop),
+        .is_halt(is_halt),
+        .is_ei(is_ei),
+        .is_di(is_di),
+        .is_reti(is_reti),
         .flag_z(flag_z),
         .flag_c(flag_c),
         .flag_n(flag_n),
         .flag_v(flag_v),
+        .flag_ie(flag_ie),
+        .irq_req(irq_req),
+        .irq_index(irq_index),
+        .irq_vec_base(irq_vec_base),
+        .vector_zero(vector_zero),
+        .halt_req(halt_req),
+        .step_en(step_en),
         .bus_ack(bus_ack),
         .bus_req(bus_req),
         .bus_we(bus_we),
         .bus_addr_sel(bus_addr_sel),
+        .bus_wdata_sel(bus_wdata_sel),
         .pc_inc(pc_inc),
         .pc_load(pc_load),
         .pc_branch(pc_branch),
+        .pc_sel(pc_sel),
         .ir_load(ir_load),
         .imm_load(imm_load),
         .reg_wen(reg_wen),
@@ -292,6 +434,18 @@ module sv16_core (
         .alu_src_b_sel(alu_src_b_sel),
         .sp_dec(sp_dec),
         .sp_inc(sp_inc),
+        .ie_set(ie_set),
+        .ie_clr(ie_clr),
+        .sr_write_en(sr_write_en),
+        .irq_ack(irq_ack),
+        .illegal_irq(illegal_irq),
+        .fault_halt(fault_halt),
+        .step_taken(step_taken),
+        .vec_latch_en(vec_latch_en),
+        .ret_latch_en(ret_latch_en),
+        .rd_data_latch_en(rd_data_latch_en),
+        .sr_latch_en(sr_latch_en),
+        .halted(halted),
         .fsm_state(fsm_state)
     );
 

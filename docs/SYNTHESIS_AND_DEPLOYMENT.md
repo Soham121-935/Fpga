@@ -1,117 +1,204 @@
-# SV-16 Rev A — Synthesis, Implementation & Physical Deployment Guide
+# SV-16 Rev B — Synthesis, Timing and Deployment
 
-This guide details the complete procedure for synthesizing the SV-16 Rev A microcontroller, closing timing, and deploying the bitstream to the target **Lattice ECP5 LFE5U-12F-6TG144C** FPGA hardware.
-
----
-
-## 1. Hardware Target Specifications
-
-- **Device**: Lattice ECP5 `LFE5U-12F`
-- **Package**: 144-pin TQFP (`144TQFP`, 0.5 mm pitch)
-- **Speed Grade**: `-6`
-- **Operating Voltage**: 1.1V Core, 3.3V I/O Banks
-- **Primary Clock**: 25.0 MHz onboard oscillator connected to dedicated PCLK pin `P63`
-- **Physical Constraints**: `constraints/ecp5_144tqfp.lpf`
+Target: **Lattice ECP5 `LFE5U-12F-6TG144C`** (12K LUT, TQFP-144, speed grade 6).
+Everything in this document was executed against the tree in this repository; the
+numbers are measured, not estimated.
 
 ---
 
-## 2. FPGA Resource Utilization Estimates
+## 1. Toolchain
 
-The SV-16 Rev A design is optimized for high resource efficiency on the 12K LUT ECP5:
+Two ways to get a working flow:
 
-| Resource Type | Available on 12F | Estimated Used | Utilization (%) |
-| :--- | :--- | :--- | :--- |
-| **LUT4 Logic Elements** | 12,000 | ~1,650 | ~13.8% |
-| **Registers (Flip-Flops)**| 12,000 | ~780 | ~6.5% |
-| **sysMEM DP16KD Blocks**| 32 blocks (576 Kb) | 8 blocks (128 Kb) | 25.0% |
-| **sysDSP Multiplier Slices**| 28 slices | 1 slice (16×16 MUL) | 3.6% |
-| **I/O Pins** | Up to 118 | 12 pins | ~10.2% |
+**A. Let the repository fetch its own toolchain (recommended, fully scripted).**
 
-Ample FPGA resources remain available for further memory expansion or additional accelerators in Rev B.
+```sh
+source scripts/sv16_venv.sh      # Verilator + Yosys + nextpnr-ecp5 + ecppack
+make test                        # lint + 4 simulation suites
+make bitstream                   # Yosys -> nextpnr-ecp5 -> ecppack
+```
+
+`sv16_venv.sh` creates `/tmp/sv16-venv` with self-contained wheels
+(Verilator 5.49, Yosys 0.69, nextpnr-ecp5 0.11.1, ecppack, all via yowasp) and
+symlinks `yosys`, `nextpnr-ecp5` and `ecppack` into `/tmp/sv16-ccwrap`, which it
+puts on `PATH`. It must be sourced in the same shell as any build. Re-running it
+is cheap and idempotent; `/tmp` being wiped only costs one source.
+
+**B. Use system packages.** Yosys ≥ 0.4x with `synth_ecp5`, nextpnr-ecp5 ≥ 0.6,
+`ecppack` (prjtrellis), Verilator ≥ 5.x. The Makefile calls these by name.
 
 ---
 
-## 3. Toolchain Option A: Open-Source Flow (Project Trellis)
+## 2. Build targets
 
-The open-source flow uses **Yosys**, **nextpnr-ecp5**, and **Project Trellis**:
+| Command | What it does |
+| :--- | :--- |
+| `make firmware` | builds the boot ROM (`build/rom/monitor.hex`) and the example application image |
+| `make rom` | assembles `firmware/monitor/monitor.s` (+ `.lst` listing) |
+| `make app` | assembles + packs `firmware/examples/motor_test.s` |
+| `make lint` | repository RTL lint (`scripts/sv16_rtl_lint.py`, 24 files, no external tools) |
+| `make vlint` | Verilator lint of the whole SoC |
+| `make sim` | builds and runs all four Verilator testbenches (`TB=name` to pick one) |
+| `make test` | `lint` + `firmware` + `sim` |
+| `make bitstream` | synthesis + place & route + bitstream → `build/sv16_top.bit` |
+| `make synth` | Yosys only (fast "is it still synthesizable for this part?" check) |
+| `make prog` | program the device over JTAG (`openFPGALoader`) |
+| `make iss` | run the instruction-set simulator on the legacy Rev A ROM image |
 
-### Step 1: Synthesis with Yosys
-```bash
-yosys -p "read_verilog -sv rtl/*.sv; synth_ecp5 -top sv16_top -json sv16_top.json"
+Useful overrides: `CLKDIV=1|2`, `FPGA_FREQ=12.5`, `TB=boot_tb`,
+`PORT=/dev/ttyUSB0` (upload), `BOARD=`/`CABLE=` (programming).
+
+### How the boot ROM gets into the bitstream
+
+The ROM is a `$readmemh` initialisation in `rtl/sv16_rom.sv` driven by the macro
+`SV16_ROM_INIT_FILE`. `scripts/sv16_synth.sh` writes a one-line header,
+`build/sv16_defines.svh`, containing
+
+```verilog
+`define SV16_ROM_INIT_FILE "build/rom/monitor.hex"
+`define SV16_CLKDIV 2
 ```
 
-### Step 2: Place & Route with nextpnr-ecp5
-```bash
-nextpnr-ecp5 \
-    --12k \
-    --package TQFP144 \
-    --speed 6 \
-    --json sv16_top.json \
-    --lpf constraints/ecp5_144tqfp.lpf \
-    --textcfg sv16_top_out.config
-```
-
-### Step 3: Bitstream Packing with ecppack
-```bash
-ecppack --compress sv16_top_out.config sv16_top.bit
-```
-
-### Step 4: Programming the FPGA
-```bash
-openFPGALoader -b ecp5 sv16_top.bit
-```
-
-Or using `make`:
-```bash
-make bitstream
-make prog
-```
+and passes it as the first source file of `read_verilog`, so a bitstream always
+bakes in the monitor that was assembled from `firmware/monitor/monitor.s`. The
+same header carries the clock divider, which is why the console baud divisor
+(`sv16_top` → `sv16_uart.BAUD_DIV_RESET`) always matches the system clock.
+Building without a ROM (`--no-rom`) yields a chip that boots to nothing — useful
+only for synthesis experiments.
 
 ---
 
-## 4. Toolchain Option B: Commercial Flow (Lattice Diamond)
+## 3. Synthesis and place & route
 
-1. Launch **Lattice Diamond**.
-2. Open or create project `sv16_rev_a.ldf`.
-3. Select Part:
-   - Family: `ECP5U`
-   - Device: `LFE5U-12F`
-   - Performance Grade: `-6`
-   - Package: `TQFP144`
-4. Add all SystemVerilog files from `rtl/*.sv`.
-5. Add constraint file `constraints/ecp5_144tqfp.lpf`.
-6. Run **Synthesize Design** (Synplify Pro or LSE).
-7. Run **Translate Design**, **Map Design**, and **Place & Route Design**.
-8. Verify Static Timing Analysis (STA) reports zero timing violations against the 25.0 MHz constraint (Period = 40.0 ns, slack > +15.0 ns typical).
-9. Run **Export Files** to generate JEDEC / Bitstream (`sv16_top.bit`).
-10. Open **Lattice Diamond Programmer** and write the bitstream to internal SRAM or onboard SPI Flash.
+```sh
+make bitstream        # == scripts/sv16_synth.sh --clkdiv 2 --freq 12.5
+```
+
+1. **Yosys** (`synth_ecp5`, ABC9): 5,982 LUT4 + 1,376 carry cells, 4,448 FFs,
+   18 `DP16KD` block RAMs (16 for SRAM, 2 for the boot ROM), 1 `MULT18X18D` for
+   the ALU multiplier, 52 I/O buffers. The synthesis script, its log and the
+   netlist are kept: `build/sv16_synth.ys`, `build/sv16_yosys.log`,
+   `build/sv16_top.json`.
+2. **nextpnr-ecp5** `--12k --package TQFP144 --speed 6 --freq 12.5` with
+   `constraints/ecp5_144tqfp.lpf`. Report: `build/sv16_nextpnr.log`,
+   `build/sv16_top.timing.json`.
+3. **ecppack** `--compress` → `build/sv16_top.bit` (~275 KB, ~1.5 Mbit stream
+   for a 12F).
+
+### Device utilisation (measured)
+
+| Resource | Used | Available | % |
+| :--- | ---: | ---: | ---: |
+| LUT4 (incl. carry) | 7,358 | 24,288 | 30 % |
+| Flip-flops | 4,448 | 24,288 | 18 % |
+| `DP16KD` block RAM | 18 | 56 | 32 % |
+| `MULT18X18D` | 1 | 28 | 3 % |
+| I/O buffers | 52 | 197 | 26 % |
+| `EHXPLLL` | 0 | 2 | 0 % |
+
+Roughly two thirds of the part is still free, which is what funds the roadmap
+items in [MCU_READINESS.md](MCU_READINESS.md).
+
+### Timing
+
+The board oscillator is 25 MHz and there is **no PLL in the design**: the SoC
+clock is the oscillator divided by `SV16_CLKDIV` in fabric
+(`rtl/sv16_top.sv`), 50 % duty, promoted to a global clock network by nextpnr.
+That makes the achievable frequency a placement question, and it was measured
+three ways:
+
+| Placer configuration | Achieved Fmax | Result at 12.5 MHz |
+| :--- | ---: | :--- |
+| heap (default weights) | **14.43 MHz** | PASS |
+| heap, `--placer-heap-timingweight 50` | 13.15 / 14.18 MHz | PASS (worse) |
+| simulated annealing (`--placer sa`) | — | **fails to place** carry chains |
+
+So the shipped configuration is `CLKDIV=2` → a 12.5 MHz SoC with ~15 % margin
+over the measured Fmax, and `make bitstream` is expected to exit 0 with "PASS".
+`CLKDIV=1` (25 MHz) is available for experiments and is **not** timing clean on
+this speed grade: nextpnr reports the violation and `sv16_synth.sh` stops before
+packing a bitstream, so a broken build cannot silently ship.
+
+The critical path is inside the CPU, not in the peripherals: register file read
+→ ALU → flags → control-unit next-state, plus a secondary path through
+`u_sys.illegal_pc`'s decrement. Three concrete ways to raise the ceiling, in
+increasing order of effort: fold the flag/branch decision into an extra FSM
+state, register the fault address (one pipeline stage on the trap path), and
+instantiate an `EHXPLLL` to replace the fabric divider once the core can carry
+40–50 MHz.
+
+### Pin constraints
+
+`constraints/ecp5_144tqfp.lpf` locates every port of `sv16_top` on a real I/O
+site of this package (verified against the prjtrellis device database; for TQFP
+packages the `SITE` name is the bare pin number). Note that four of the Rev A
+pin assignments (`P63` clock, `P60` reset, `P38` LED0, `P100` PWM) were **not
+bonded I/O on the TQFP-144 part at all** — they could never have been placed.
+The Rev B map was rebuilt from the device database; only the Rev A UART pins
+were kept.
+
+| Signal | Pin | Notes |
+| :--- | :--- | :--- |
+| `clk_25m` | 133 | 25 MHz oscillator |
+| `ext_rst_n` | 134 | `PULLMODE=UP` — a floating reset pin means "not reset" |
+| `uart_rx` / `uart_tx` | 73 / 74 | kept from Rev A; console + firmware upload |
+| `flash_sck` / `cs_n` / `mosi` / `miso` | 110 / 111 / 112 / 113 | dedicated SPI port to the application flash |
+| `spi0_sck` / `cs_n` / `mosi` / `miso` | 114 / 115 / 116 / 117 | expansion bus |
+| `led[0..3]` | 39 / 40 / 41 / 44 | mirror GPIOA[3:0] |
+| `gpio_a[15:0]` | 45-52, 97-99, 104-108 | also the motor-control connector |
+| `gpio_b[15:0]` | 135, 136, 139-143, 128, 124-127, 1-4 | second, independent port |
+| `pwm_out` | 88 | `DRIVE=16` |
+| `motor_dir1` / `motor_dir2` | 89 / 102 | |
+| `motor_fault_n` | 103 | `PULLMODE=UP`; hardware PWM shutdown |
+
+All I/O is `LVCMOS33`. There is no pin muxing: each port has one function fixed
+at synthesis time, so changing a peripheral's pin means editing the LPF.
 
 ---
 
-## 5. Physical Electrical Hardware Connection (Bench Test)
+## 4. Programming the FPGA
 
-```text
- ┌─────────────────────────┐               ┌──────────────────────────┐
- │   Lattice ECP5 Board    │               │  External Motor Driver   │
- │   (LFE5U-12F TQFP144)   │               │   (e.g., L298N / DRV)    │
- │                         │               │                          │
- │  Pin P100 (PWM Out)     ├──────────────►│ IN1 / PWM (Speed)        │
- │  Pin P101 (DIR1)        ├──────────────►│ IN2 / DIR (Phase A)      │
- │  Pin P102 (DIR2)        ├──────────────►│ IN3 / DIR (Phase B)      │
- │  Pin P103 (FAULT_N)     │◄──────────────┤ Fault / Overtemp Out     │
- │                         │               │                          │
- │  GND                    ├───────────────┤ GND (Common Ground)      │
- └─────────────────────────┘               └────────────┬─────────────┘
-                                                        │
-                                                        ▼
-                                                ┌───────────────┐
-                                                │   DC Motor    │
-                                                │   (12V / 24V) │
-                                                └───────────────┘
+```sh
+make prog                                   # openFPGALoader, defaults
+make prog BOARD=ecp5-evn CABLE=ft2232       # board/cable overrides
+openFPGALoader --fpga-part LFE5U-12F build/sv16_top.bit   # equivalent
 ```
 
-### Critical Safety Precautions:
-1. **Common Ground**: Ensure the FPGA digital ground and motor driver ground are securely connected.
-2. **Flyback Diodes**: Ensure inductive kickback clamp diodes (flyback diodes) are present across motor terminals.
-3. **Power Isolation**: Never power the motor directly from the FPGA development board's 3.3V or 5V rail; use an isolated bench power supply for the motor driver stage.
-4. **Hardware Emergency Shutdown**: Verify that pulling pin `P103` (`motor_fault_n`) low immediately inhibits PWM output and halts motor rotation.
+The configuration is volatile (SRAM-based FPGA): the bitstream comes from JTAG
+on every power-up unless an external configuration flash for the FPGA is
+programmed separately (`openFPGALoader -f` writes the *FPGA's own* config flash
+on boards that have one — that is a different device from the SPI flash SV-16
+uses for firmware, and the two must not be confused).
+
+Application firmware is *not* programmed this way; it goes over the serial port
+(`make upload`, see
+[BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md)). That split is the point of
+Rev B: the FPGA configuration defines the machine, the serial port defines the
+program.
+
+---
+
+## 5. Reproducibility
+
+* Every generated artifact lands in `build/` (untracked) with a fixed name.
+* `build/sv16_synth.ys` and `build/sv16_defines.svh` are kept so a build can be
+  audited or replayed by hand: `yosys -s build/sv16_synth.ys`.
+* The ROM and the application image are rebuilt from source by `make bitstream`
+  (the bitstream target depends on `build/rom/monitor.hex`), so no binary blobs
+  can drift from the assembly.
+* Pin constraints, clock divider and timing constraint are all explicit inputs to
+  the flow (`constraints/ecp5_144tqfp.lpf`, `CLKDIV`, `FPGA_FREQ`).
+* Nothing in the flow downloads anything at build time except
+  `scripts/sv16_venv.sh`, which is pinned to specific wheel versions in PyPI.
+
+---
+
+## 6. Using another flow (Lattice Diamond)
+
+The RTL is plain SystemVerilog and the LPF syntax is shared with Diamond, so the
+same sources can be targeted there: add the 24 files of `rtl/` (package first),
+set `sv16_top` as the top, define `SV16_ROM_INIT_FILE` (a quoted path to
+`build/rom/monitor.hex`) and `SV16_CLKDIV 2` as Verilog macros, and use the same
+LPF. Diamond will report its own timing; the 12.5 MHz configuration is the one
+with margin. Nothing in `scripts/` other than `sv16_venv.sh` depends on the
+open-source toolchain.
