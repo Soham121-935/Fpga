@@ -87,7 +87,7 @@ shows the offending instruction address after an illegal-opcode trap, and
 | Application data / `.bss` | SRAM, above the code | no linker; the assembler lets you place data with `.org` |
 | Stack | SRAM, top | reset value `0x3FFE` (grows down); the image may override it via its header |
 | Interrupt vector table | SRAM `0x0020-0x0027` | 8 words, one 16-bit handler address per source (see below); populated by firmware |
-| Monitor | Boot ROM `0xE000-0xE399` | 922 words; the rest of the 2 K-word ROM reads as `0x0000` |
+| Monitor | Boot ROM `0xE000-0xE3A5` | 934 words; the rest of the 2 K-word ROM reads as `0x0000` |
 | Monitor stack | SRAM | the monitor runs on the same stack; it is reset to `0x3FFE` by the startup sequencer |
 
 ### Interrupt vector indices
