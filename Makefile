@@ -30,8 +30,12 @@ CONSTRAINTS = constraints/ecp5_144tqfp.lpf
 
 all: test asm
 
+# Run direct SystemVerilog hardware simulation testbenches
+sv-sim:
+	@python3 scripts/run_sv_sim.py
+
 # Run all testbenches, verification suites, and syntax checks
-test:
+test: sv-sim
 	@python3 scripts/run_tests.py
 
 # Assemble boot firmware from assembly to hex
