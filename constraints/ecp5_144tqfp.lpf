@@ -1,0 +1,42 @@
+# Lattice LPF Constraint File for SV-16 Rev A
+# Target Device: Lattice ECP5 LFE5U-12F-6TG144C
+# Package: 144-pin TQFP (TQFP144)
+# Speed Grade: -6
+
+BLOCK RESETPATHS;
+BLOCK ASYNCPATHS;
+
+# Master System Clock (25.0 MHz onboard oscillator)
+LOCATE COMP "clk_25m" SITE "P63"; # Primary clock pin input
+IOBUF PORT "clk_25m" IO_TYPE=LVCMOS33;
+FREQUENCY PORT "clk_25m" 25.000000 MHz;
+
+# Active-Low System Reset Push Button
+LOCATE COMP "ext_rst_n" SITE "P60";
+IOBUF PORT "ext_rst_n" IO_TYPE=LVCMOS33 PULLMODE=UP;
+
+# UART Interface (FTDI / USB-to-UART Bridge)
+LOCATE COMP "uart_rx" SITE "P73";
+IOBUF PORT "uart_rx" IO_TYPE=LVCMOS33 PULLMODE=UP;
+LOCATE COMP "uart_tx" SITE "P74";
+IOBUF PORT "uart_tx" IO_TYPE=LVCMOS33;
+
+# Status LEDs (Active-Low)
+LOCATE COMP "led[0]" SITE "P38";
+IOBUF PORT "led[0]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "led[1]" SITE "P39";
+IOBUF PORT "led[1]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "led[2]" SITE "P40";
+IOBUF PORT "led[2]" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "led[3]" SITE "P41";
+IOBUF PORT "led[3]" IO_TYPE=LVCMOS33 DRIVE=8;
+
+# Motor Control Interface (External Gate Driver / H-Bridge inputs)
+LOCATE COMP "pwm_out" SITE "P100";
+IOBUF PORT "pwm_out" IO_TYPE=LVCMOS33 DRIVE=16;
+LOCATE COMP "motor_dir1" SITE "P101";
+IOBUF PORT "motor_dir1" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "motor_dir2" SITE "P102";
+IOBUF PORT "motor_dir2" IO_TYPE=LVCMOS33 DRIVE=8;
+LOCATE COMP "motor_fault_n" SITE "P103";
+IOBUF PORT "motor_fault_n" IO_TYPE=LVCMOS33 PULLMODE=UP;
