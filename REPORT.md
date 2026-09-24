@@ -12,9 +12,9 @@ prototype* into a *practical, MCU-style programmable system* on the Lattice ECP5
 | | |
 | :--- | :--- |
 | Date of report | 2026-09-24 |
-| Branch | `arena/01a0ce9b-fpga` (this session) |
-| Commits | `ec3581b` "Rev B: turn SV-16 from a soft-core into a programmable MCU", `a07f62e` docs correction |
-| Remote state | The same work is on the branch **`arena/Rv2`** on `origin` (it appears the session branch was renamed there). `arena/01a0ce9b-fpga` is the branch this session pushes to. |
+| Branch | `arena/01a0ce9b-fpga` (this session), one commit ahead of `arena/Rv2` |
+| Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) |
+| Remote state | On GitHub this work stream was renamed **`arena/01a0ce9b-fpga` → `arena/Rv2`**, so `arena/Rv2` holds the Rev B work up to `a07f62e`. This session pushed `arena/01a0ce9b-fpga` again and it now sits at `b747fb3` — a direct descendant of `arena/Rv2`, so it can be fast-forwarded or merged without conflicts. |
 | Test status | **113 checks, 0 failures** across 4 suites; RTL lint 24/24 clean |
 | Bitstream | `make bitstream` → `build/sv16_top.bit`, 275,119 bytes, **timing PASS** at 12.5 MHz |
 | Silicon | **never run on hardware** — simulation + static timing only |
@@ -431,8 +431,11 @@ and ISA extension (OQ-16), update throughput (OQ-17), real board pin assignment
    `firmware/` documents intent, it does not compile.
 6. **Update path is intentionally simple.** ASCII, CRC16, per-byte ack, no
    compression, no resume, no flow control.
-7. **Two branches exist on the remote** (`arena/Rv2` = the work; this session
-   also pushes to `arena/01a0ce9b-fpga`). Make sure PRs target the one you intend.
+7. **The work exists under two branch names on the remote.** `arena/Rv2` is the
+   renamed session branch (Rev B up to `a07f62e`); `arena/01a0ce9b-fpga` is this
+   session's branch and is one commit ahead (`b747fb3`, this report). They are
+   not divergent — pick one and fast-forward the other, or open the PR from the
+   newer one.
 
 ---
 
