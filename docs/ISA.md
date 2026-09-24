@@ -175,6 +175,13 @@ hardware:
 * **Memory map.** SRAM is 16 K words at `0x0000`, the boot ROM is at `0xE000`,
   peripherals are at `0xF000-0xF0FF`; see [MEMORY_MAP.md](MEMORY_MAP.md). Rev A's
   map (8 K words of SRAM, four peripherals) is superseded.
+* **DIV and MOD are multi-cycle.** The ISA is unchanged — same encodings, same
+  results, same flags (including divide-by-zero: `V=1`, quotient `0xFFFF`,
+  remainder `0x0000`) — but the ALU serves them with one iterative restoring
+  divider instead of a combinational one, so they now take **18 cycles** rather
+  than 1 (ADR-018). Every other operation, including `MUL`, is still executed in
+  the single `S_EXECUTE` cycle. Firmware that counts cycles around a division
+  must allow for the extra 17; nothing else changes.
 * **No new instructions.** In particular there is still **no register-indirect
   jump or call**: `JMP` and `CALL` take a 16-bit immediate, and returns use `RET`
   through the stack. That is enough for handlers (the CPU fetches the handler

@@ -27,7 +27,7 @@ and can be reprogrammed over a plain serial port.
 
 ```sh
 source scripts/sv16_venv.sh    # fetches Verilator + Yosys + nextpnr + ecppack
-make test                      # lint + 6 simulation suites (176 checks)
+make test                      # lint + 7 simulation suites (217 checks)
 make bitstream                 # -> build/sv16_top.bit (boot ROM baked in)
 make prog                      # openFPGALoader over JTAG
 make app                       # build the example application image
@@ -76,16 +76,17 @@ SV-16 monitor v1
 
 | Command | Result |
 | :--- | :--- |
-| `make test` | lint + all four Verilator suites |
-| `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 12.5 MHz |
+| `make test` | lint + all seven Verilator suites (217 checks) |
+| `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 25 MHz |
 | `make synth` | Yosys only (fast synthesizability check) |
 | `make prog` | program the FPGA over JTAG |
 | `make upload PORT=...` | program the *firmware* over the serial port |
 | `make iss` | instruction-set simulator on the legacy ROM image |
 
-Clocking: the 25 MHz oscillator is divided by `CLKDIV` (default 2 → 12.5 MHz,
-the fastest configuration that closes timing on a speed-grade-6 part; the UART
-divisor follows automatically so the console is always 115200).
+Clocking: `CLKDIV` (default **1**) runs the SoC straight from the 25 MHz
+oscillator — no fabric divider at all — with ~86 % timing margin (measured Fmax
+46.58 MHz). `make bitstream CLKDIV=2` builds a 12.5 MHz fallback. The UART divisor
+follows the same constant automatically, so the console is always 115200.
 
 ## Repository layout
 
@@ -105,7 +106,7 @@ build/           generated: ROM image, firmware images, netlist, bitstream (untr
 | :--- | :--- |
 | Simulation | 113 checks, 0 failures (`flash_ctrl_tb`, `boot_tb`, `soc_boot_tb`, `monitor_tb`) |
 | Synthesis / P&R | places, routes, packs for the target part; 30 % LUTs, 18 % FFs |
-| Timing | 14.68 MHz Fmax measured; shipped at 12.5 MHz with margin; 25 MHz does not close |
+| Timing | 46.58 MHz Fmax measured; shipped at the full 25 MHz with ~86 % margin |
 | Silicon | **never run on hardware** — simulation and static timing only |
 
 What is still missing for a production-grade MCU (watchdog in the reset path,

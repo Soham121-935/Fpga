@@ -238,3 +238,50 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
   would then have to feed it too, and the monitor is the recovery path — it must
   not be able to be interrupted by the thing it is there to recover from. The
   cost is 1 block of MMIO, ~220 lines of RTL and 281 extra LUTs.
+
+---
+
+## ADR-018: DIV and MOD move to a multi-cycle divider (and the SoC ships at 25 MHz)
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: The SoC shipped at 12.5 MHz because 25 MHz did not close timing
+  (measured Fmax 14.68 MHz). The documented explanation was that the critical
+  path ran "register file → ALU → flags → control-unit next-state" and through
+  `u_sys.illegal_pc`, and the documented fix was to split the branch decision
+  with an extra FSM state. **Both were wrong.** The nextpnr critical-path report
+  and a one-line experiment settled it: replacing the ALU's `a / b` and `a % b`
+  with constants lifted Fmax from 14.68 MHz to 44.31 MHz in a single change.
+  A 16/16 combinational divider is a deep cascade of 16 conditional subtracts
+  (each a 16-bit carry chain), and every arithmetic instruction paid for it
+  because the divider sat inside the same combinational block as the adder.
+- **Decision**:
+  - `sv16_alu` keeps a **single iterative restoring divider** for both DIV and
+    MOD: `div_start` (one-cycle pulse, operands latched) → `div_busy` high for
+    exactly 16 clocks → quotient/remainder available in `result`, with the flags
+    valid in the same cycle `div_busy` falls.
+  - The control unit gets one new state, **`S_DIV_WAIT` (5'd16)**: S_EXECUTE
+    pulses `alu_div_start` for a DIV/MOD and hands over to S_DIV_WAIT, which
+    holds until `alu_div_busy` falls and only then raises `flag_update_en` (early
+    capture would latch a flag computed from an intermediate remainder) before
+    continuing to S_WRITEBACK.
+  - The ISA is unchanged: DIV/MOD still exist, with identical results and flags,
+    including the divide-by-zero behaviour of OQ-04 (`V=1`, quotient `0xFFFF`,
+    remainder `0x0000`). What changes is the cycle count: 18 cycles instead of 1.
+    This is exactly what a real MCU does with a hardware divider used by a rare
+    instruction — an instruction-level optimisation would have shortened it, a
+    machine-level one forbids a 68 ns path.
+  - With the divider out of the way, **the shipped clock becomes the full
+    25 MHz** (the oscillator, no fabric divider at all: `CLKDIV=1`), at a
+    measured Fmax of 46.58 MHz — ~86 % margin. The divided-clock option stays in
+    the build (`make bitstream CLKDIV=2`) as a fallback for a board that cannot
+    run at 25 MHz, and the clock divider RTL is unchanged.
+- **Consequences**: The CPU is twice as fast as the part shipped an hour earlier,
+  the bus and peripherals run at 25 MHz (UART divisor recomputes itself from
+  `CLK_HZ`: 217 clocks/bit at 25 MHz, 0.006 % baud error), the flash controller
+  is unaffected because it polls the device's WIP bit rather than counting
+  clocks, and the SPI master's divider is a register (SCLK = 3.125 MHz at reset).
+  Simulation now matches hardware exactly: the six testbenches have always driven
+  `clk_25m` at 25 MHz and assumed 217 cycles/bit, so the bitstream is finally
+  clocked like the thing that is verified. The cost is 25 RTL lines, one FSM
+  state, and 16 extra cycles for the two rarest instructions; ~1,150 LUTs were
+  freed (7,233 vs 6,147 logic LUTs is more, but the 4,448→4,631 FF and 18 BRAM
+  counts are unchanged and the part is still only 34 % full).

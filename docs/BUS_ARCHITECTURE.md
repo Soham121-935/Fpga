@@ -102,7 +102,7 @@ rdata      ──────────────<valid>──  (sampled on 
 
 The CPU core reads its instruction and its load data from the same bus, through
 the same protocol, using `bus_addr_sel` to choose PC / ALU result / stack. There
-is no separate instruction bus and no cache — at 12.5 MHz with single-cycle
+is no separate instruction bus and no cache — at 25 MHz with single-cycle
 SRAM, a Harvard split would buy nothing.
 
 ---

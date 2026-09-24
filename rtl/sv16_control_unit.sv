@@ -6,6 +6,7 @@
 //   S_DECODE     ( 1): Latch IR, decode, check for 2-word instruction
 //   S_FETCH_IMM  ( 2): Fetch 2nd 16-bit word if LDI, JMP, or CALL
 //   S_EXECUTE    ( 3): ALU operation, branch evaluation, compute effective addr
+//   S_DIV_WAIT   (16): wait for the ALU's iterative divider (DIV/MOD, ADR-018)
 //   S_MEMORY     ( 4): Bus access for LOAD, STORE, PUSH, POP, CALL, RET
 //   S_WRITEBACK  ( 5): Write register file / update status flags
 //   S_HALTED     ( 6): Core stopped (HALT, debug hold, unresolvable fault)
@@ -35,6 +36,10 @@
 //   * Illegal opcodes trap via vector index IRQ_TRAP (7); a zero vector halts
 //     the core instead of jumping to an arbitrary address.
 //   * Debug hold (halt_req) and single step (step_en) support.
+//   * DIV/MOD run on the ALU's iterative divider: S_EXECUTE pulses
+//     `alu_div_start`, S_DIV_WAIT holds until `alu_div_busy` falls, and only
+//     then are the flags updated (they would otherwise latch intermediate
+//     remainders) and the quotient/remainder written back.
 
 `timescale 1ns / 1ps
 
@@ -65,6 +70,11 @@ module sv16_control_unit (
     input  logic        is_ei,
     input  logic        is_di,
     input  logic        is_reti,
+
+    // Iterative divider handshake (ADR-018)
+    input  logic        ext_is_div,     // current EXT_ALU instruction is DIV/MOD
+    input  logic        alu_div_busy,
+    output logic        alu_div_start,
 
     // Status flags from Status Register
     input  logic        flag_z,
@@ -147,7 +157,8 @@ module sv16_control_unit (
         S_IRQ_JUMP   = 5'd12,
         S_RETI_PC    = 5'd13,
         S_RETI_SR    = 5'd14,
-        S_RETI_DONE  = 5'd15
+        S_RETI_DONE  = 5'd15,
+        S_DIV_WAIT   = 5'd16
     } state_e;
 
     state_e current_state, next_state;
@@ -285,6 +296,8 @@ module sv16_control_unit (
                 end
             end
 
+            S_DIV_WAIT:   if (!alu_div_busy) next_state = S_WRITEBACK;
+
             S_IRQ_DEC_SR: next_state = S_IRQ_WR_SR;
             S_IRQ_WR_SR:  if (access_done) next_state = S_IRQ_DEC_PC;
             S_IRQ_DEC_PC: next_state = S_IRQ_WR_PC;
@@ -342,6 +355,7 @@ module sv16_control_unit (
         ret_latch_en      = 1'b0;
         rd_data_latch_en  = 1'b0;
         sr_latch_en     = 1'b0;
+        alu_div_start   = 1'b0;
 
         case (current_state)
             S_FETCH: begin
@@ -376,8 +390,12 @@ module sv16_control_unit (
             S_EXECUTE: begin
                 alu_src_b_sel = is_alu_imm;
 
-                if (is_alu_rr || is_alu_imm || is_ext_alu || is_cmp) begin
+                if ((is_alu_rr || is_alu_imm || is_ext_alu || is_cmp) && !ext_is_div) begin
                     flag_update_en = 1'b1;
+                end
+
+                if (ext_is_div) begin
+                    alu_div_start = 1'b1;   // one-cycle pulse: S_EXECUTE exits next cycle
                 end
 
                 if (is_branch && branch_condition_met) begin
@@ -398,6 +416,14 @@ module sv16_control_unit (
 
                 if (is_call || is_push) begin
                     sp_dec = 1'b1; // Pre-decrement SP for the pending push
+                end
+            end
+
+            S_DIV_WAIT: begin
+                // Flags may only be captured once the divider has finished:
+                // before that they would reflect an intermediate remainder.
+                if (!alu_div_busy) begin
+                    flag_update_en = 1'b1;
                 end
             end
 

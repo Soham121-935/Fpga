@@ -220,13 +220,14 @@ things matter for programming:
   a sector erases, so firmware does not have to know the flash's `tPROG`/`tERASE`
   — it just waits for `FLASH_STAT.BUSY` to clear.
 
-The SoC clock is the 25 MHz oscillator divided by `SV16_CLKDIV`
-(`make bitstream CLKDIV=2` → 12.5 MHz, the shipped default). The UART divisor
+The SoC clock is the 25 MHz oscillator (by default `SV16_CLKDIV=1`, i.e. no
+divider at all; `make bitstream CLKDIV=2` halves it to 12.5 MHz). The UART divisor
 is derived from the same constant, so the console stays at 115200 and firmware
 is clock-rate agnostic. What *does* scale with the clock: timer counts, PWM
-frequency, SPI bit rate and instruction throughput. See
-[SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md#timing) for why 12.5 MHz
-is the default.
+frequency, SPI bit rate and instruction throughput — and the 18-cycle DIV/MOD
+(ADR-018). See
+[SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md#timing) for the
+measured Fmax and how the 25 MHz default came about.
 
 ---
 

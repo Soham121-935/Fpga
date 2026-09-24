@@ -26,12 +26,15 @@ FPGA_FAMILY = ecp5
 FPGA_TYPE   = 12k
 FPGA_PKG    = TQFP144
 FPGA_SPEED  = 6
-# System clock = 25 MHz oscillator / CLKDIV.  CLKDIV=2 (12.5 MHz) is the
-# shipped default because it is the fastest configuration that closes timing
-# on an LFE5U-12F-6; CLKDIV=1 asks for the full 25 MHz and nextpnr will report
-# the resulting timing failure (see docs/SYNTHESIS_AND_DEPLOYMENT.md).
-CLKDIV      = 2
-FPGA_FREQ   = 12.5
+# System clock = 25 MHz oscillator / CLKDIV.  CLKDIV=1 (the shipped default) runs
+# the SoC directly from the oscillator with no fabric divider, which is also the
+# configuration every testbench simulates (they drive clk_25m and assume 115200
+# at 217 clocks/bit).  Since the ALU's divider went multi-cycle (ADR-018) the
+# design closes at 25 MHz with ~86% margin (measured Fmax 46.6 MHz); set CLKDIV=2
+# only if a board turns out not to run at 25 MHz (see
+# docs/SYNTHESIS_AND_DEPLOYMENT.md#timing).
+CLKDIV      = 1
+FPGA_FREQ   = 25
 
 BUILD       = build
 ROM_DIR     = $(BUILD)/rom
@@ -84,6 +87,7 @@ RTL_SRCS = \
 # name:source pairs for `make sim` (add new testbenches here)
 TESTBENCHES = \
 	wdt_tb:simulation/unit/wdt_tb.sv \
+	div_tb:simulation/unit/div_tb.sv \
 	flash_ctrl_tb:simulation/unit/flash_ctrl_tb.sv \
 	boot_tb:simulation/unit/boot_tb.sv \
 	soc_boot_tb:simulation/regression/soc_boot_tb.sv \

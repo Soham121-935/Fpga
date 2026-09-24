@@ -15,11 +15,16 @@ every flip-flop in the SoC from one clock domain:
 clk_25m ──► divider (SV16_CLKDIV) ──► clk ──► CPU, RAM, ROM, all peripherals
 ```
 
-* `SV16_CLKDIV = 1` → 25 MHz nominal (does **not** close timing on an
-  LFE5U-12F-6: measured Fmax 14.68 MHz).
-* `SV16_CLKDIV = 2` → **12.5 MHz, the shipped default** (`make bitstream`),
-  ~15 % timing margin. `make bitstream CLKDIV=2` is what the Makefile does.
-* Larger values are legal (integer divide, 50 % duty) but slow the part down.
+* `SV16_CLKDIV = 1` → **the shipped default**: the SoC clock *is* the 25 MHz
+  oscillator, no divider, no generated clock (`make bitstream`). It closes with
+  ~86 % margin (measured Fmax 46.58 MHz) since DIV/MOD became multi-cycle
+  (ADR-018).
+* `SV16_CLKDIV = 2` → 12.5 MHz fallback (`make bitstream CLKDIV=2`) for a board
+  that cannot run at 25 MHz; the fabric divider then produces a 50 % duty clock.
+* Larger values are legal (integer divide) but slow the part down.
+* Every testbench simulates `SV16_CLKDIV = 1`: they drive `clk_25m` at 25 MHz and
+  assume 217 cycles per UART bit, so the bitstream and the simulation now run at
+  the same frequency.
 
 The divider output is promoted to a global clock network by nextpnr, so it has
 global clock skew characteristics even though it is generated in fabric.
@@ -115,7 +120,7 @@ Two properties matter in practice:
 
 | | Rev A | Rev B |
 | :--- | :--- | :--- |
-| Clock | 25 MHz straight from the oscillator | oscillator ÷ `SV16_CLKDIV`, console baud derived from the same constant |
+| Clock | 25 MHz straight from the oscillator | the same 25 MHz oscillator (÷ `SV16_CLKDIV`, default 1), console baud derived from the same constant |
 | Reset | held for a fixed number of cycles | sequenced FSM with reset-cause tracking and boot hand-over |
 | Boot vector | fixed ROM/RAM start | image entry + image stack pointer loaded by hardware |
 | Recovery | none | monitor fallback on any boot failure, RX-low escape at reset |

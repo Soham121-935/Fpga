@@ -17,12 +17,12 @@ serial cable, and reports why it restarted.
 | Non-volatile program store | SPI NOR + hardware boot loader + CRC-checked images | [BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md) |
 | Field update | ROM monitor over UART (`C`/`R`/`E`/`V`/`B`) + `make upload` | `scripts/sv16_mon.py` |
 | Reset and startup | reset-cause register, soft reset, fault halt, auto-boot, RX-low escape to the monitor, **watchdog restart of a hung application** | [RESET_AND_CLOCK.md](RESET_AND_CLOCK.md) |
-| Verification | **176 checks, 0 failures** across 6 Verilator suites + lint | [VERIFICATION.md](VERIFICATION.md) |
-| Bitstream | builds, places, routes and packs for the target part; timing PASS at 12.5 MHz | [SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md) |
+| Verification | **217 checks, 0 failures** across 7 Verilator suites + lint | [VERIFICATION.md](VERIFICATION.md) |
+| Bitstream | builds, places, routes and packs for the target part; timing PASS at the full 25 MHz | [SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md) |
 | Documentation | operator manual, memory map, peripherals, flow, verification, ADRs | `docs/` |
 
 **Headline result:** `make bitstream` produces `build/sv16_top.bit` (275 KB,
-LFE5U-12F-6TG144C, 30 % LUTs, 18 % FFs, timing PASS at 12.5 MHz) containing a
+LFE5U-12F-6TG144C, 34 % LUTs, 19 % FFs, timing PASS at 25 MHz) containing a
 boot ROM monitor; program it, open a serial terminal, and the chip is a
 microcontroller you can flash new firmware into with `make upload`.
 
@@ -52,9 +52,10 @@ it does not rely on the old MMIO layout).
 
 ## 3. Rev B backlog, in priority order
 
-1. **Timing headroom.** Raise the ceiling above 14.4 MHz (flag/branch FSM stage,
-   register the fault address, then an `EHXPLLL`) so the part can run at 25 MHz
-   or more.
+1. ~~**Timing headroom.**~~ **DONE**: the real critical path was the ALU's
+   combinational divider, not the flag/branch path. DIV/MOD are now iterative
+   (ADR-018), Fmax measures 46.58 MHz, and the part ships at the full 25 MHz.
+   An `EHXPLLL` could take it to 40–50 MHz when something needs it.
 2. **A/B images with rollback** so a failed update cannot lose the application.
 3. **JTAG debug bridge** over the ECP5 TAP using the existing
    `SYS_CTRL.HALT` / `SYS_DBG_*` hooks.
@@ -74,10 +75,11 @@ Full reasoning, and what "production grade" would still require, is in
 | :--- | ---: |
 | `wdt_tb` | 49 |
 | `flash_ctrl_tb` | 48 |
+| `div_tb` | 41 |
 | `boot_tb` | 24 |
 | `soc_boot_tb` | 21 |
 | `monitor_tb` | 20 |
 | `wdt_reset_tb` | 14 |
-| **Total** | **176 passing, 0 failing** |
+| **Total** | **217 passing, 0 failing** |
 
 Plus RTL lint (25 files clean) and whole-SoC Verilator elaboration.

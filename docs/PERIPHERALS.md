@@ -61,7 +61,7 @@ interrupts — that is the recommended way to drive a motor direction pin.
 
 When `CNT == CMP` the `MATCH` flag sets, the optional interrupt fires, and with
 AUTO-RELOAD the counter restarts. The timer counts SoC clock cycles, so its
-period is `(CMP+1) / f_clk` — 80 µs per 1000 counts at 12.5 MHz.
+period is `(CMP+1) / f_clk` — 40 µs per 1000 counts at the default 25 MHz.
 
 ---
 
@@ -176,7 +176,7 @@ the startup sequencer (ADR-017). It is what turns "the application hung" into
 | 4 | `WINDOW` | RW | minimum ticks between feeds (frozen by LOCK) |
 | 5 | `MARGIN` | RW | early-warning threshold, ticks from expiry (frozen by LOCK) |
 
-* **Period** = `(PRESET + 1) x 2^PRESC` clocks: 5.2 ms to 0.67 s at 12.5 MHz
+* **Period** = `(PRESET + 1) x 2^PRESC` clocks: 2.6 ms to 0.34 s at 25 MHz
   (`PRESC` 0-7). Choose a period longer than reset + image load, or a restart
   will be interrupted by the next bite.
 * **Protection.** `CTRL` is keyed because it holds the bits that could disarm

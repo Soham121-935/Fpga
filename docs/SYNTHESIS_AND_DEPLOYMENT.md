@@ -45,7 +45,7 @@ is cheap and idempotent; `/tmp` being wiped only costs one source.
 | `make prog` | program the device over JTAG (`openFPGALoader`) |
 | `make iss` | run the instruction-set simulator on the legacy Rev A ROM image |
 
-Useful overrides: `CLKDIV=1|2`, `FPGA_FREQ=12.5`, `TB=boot_tb`,
+Useful overrides: `CLKDIV=1|2`, `FPGA_FREQ=25`, `TB=boot_tb`,
 `PORT=/dev/ttyUSB0` (upload), `BOARD=`/`CABLE=` (programming).
 
 ### How the boot ROM gets into the bitstream
@@ -71,26 +71,26 @@ only for synthesis experiments.
 ## 3. Synthesis and place & route
 
 ```sh
-make bitstream        # == scripts/sv16_synth.sh --clkdiv 2 --freq 12.5
+make bitstream        # == scripts/sv16_synth.sh --clkdiv 1 --freq 25
 ```
 
-1. **Yosys** (`synth_ecp5`, ABC9): 6,147 LUT4 + 746 carry cells, 4,576 FFs,
+1. **Yosys** (`synth_ecp5`, ABC9): 7,233 LUT4 + 1,130 carry cells, 4,631 FFs,
    18 `DP16KD` block RAMs (16 for SRAM, 2 for the boot ROM), 1 `MULT18X18D` for
    the ALU multiplier, 52 I/O buffers. The synthesis script, its log and the
    netlist are kept: `build/sv16_synth.ys`, `build/sv16_yosys.log`,
    `build/sv16_top.json`.
-2. **nextpnr-ecp5** `--12k --package TQFP144 --speed 6 --freq 12.5` with
+2. **nextpnr-ecp5** `--12k --package TQFP144 --speed 6 --freq 25` with
    `constraints/ecp5_144tqfp.lpf`. Report: `build/sv16_nextpnr.log`,
    `build/sv16_top.timing.json`.
-3. **ecppack** `--compress` → `build/sv16_top.bit` (~277 KB, ~1.5 Mbit stream
+3. **ecppack** `--compress` → `build/sv16_top.bit` (~286 KB, ~1.5 Mbit stream
    for a 12F).
 
 ### Device utilisation (measured)
 
 | Resource | Used | Available | % |
 | :--- | ---: | ---: | ---: |
-| LUT4 (incl. carry) | 7,639 | 24,288 | 31 % |
-| Flip-flops | 4,576 | 24,288 | 18 % |
+| LUT4 (incl. carry) | 8,363 | 24,288 | 34 % |
+| Flip-flops | 4,631 | 24,288 | 19 % |
 | `DP16KD` block RAM | 18 | 56 | 32 % |
 | `MULT18X18D` | 1 | 28 | 3 % |
 | I/O buffers | 52 | 197 | 26 % |
@@ -101,31 +101,51 @@ items in [MCU_READINESS.md](MCU_READINESS.md).
 
 ### Timing
 
-The board oscillator is 25 MHz and there is **no PLL in the design**: the SoC
-clock is the oscillator divided by `SV16_CLKDIV` in fabric
-(`rtl/sv16_top.sv`), 50 % duty, promoted to a global clock network by nextpnr.
-That makes the achievable frequency a placement question, and it was measured
-three ways:
+The board oscillator is 25 MHz and there is **no PLL in the design**. By default
+(`CLKDIV=1`) the SoC runs directly from that oscillator with no fabric divider at
+all, so the whole machine — CPU, RAM, ROM and every peripheral — is one 25 MHz
+clock domain promoted to a global network by nextpnr:
 
-| Placer configuration | Achieved Fmax | Result at 12.5 MHz |
-| :--- | ---: | :--- |
-| heap (default weights) | **14.68 MHz** (14.09 pre-route) | PASS |
-| heap, `--placer-heap-timingweight 50` | 13.15 / 14.18 MHz | PASS (worse) |
-| simulated annealing (`--placer sa`) | — | **fails to place** carry chains |
+```sh
+make bitstream              # == scripts/sv16_synth.sh --clkdiv 1 --freq 25
+make bitstream CLKDIV=2     # 12.5 MHz fallback (fabric divider, 50 % duty)
+```
 
-So the shipped configuration is `CLKDIV=2` → a 12.5 MHz SoC with ~17 % margin
-over the measured Fmax, and `make bitstream` is expected to exit 0 with "PASS".
-`CLKDIV=1` (25 MHz) is available for experiments and is **not** timing clean on
-this speed grade: nextpnr reports the violation and `sv16_synth.sh` stops before
-packing a bitstream, so a broken build cannot silently ship.
+**Measured, on an LFE5U-12F-6 (speed grade 6):**
 
-The critical path is inside the CPU, not in the peripherals: register file read
-→ ALU → flags → control-unit next-state, plus a secondary path through
-`u_sys.illegal_pc`'s decrement. Three concrete ways to raise the ceiling, in
-increasing order of effort: fold the flag/branch decision into an extra FSM
-state, register the fault address (one pipeline stage on the trap path), and
-instantiate an `EHXPLLL` to replace the fabric divider once the core can carry
-40–50 MHz.
+| Configuration | Achieved Fmax | Requirement | Result |
+| :--- | ---: | ---: | :--- |
+| `CLKDIV=1`, 25 MHz, heap placer (**default**) | **46.58 MHz** post-route (35.15 pre-route) | 25 MHz | **PASS, ~86 % margin** |
+| `CLKDIV=2`, 12.5 MHz, heap placer | 46.58 MHz | 12.5 MHz | PASS |
+| `CLKDIV=1`, heap `--placer-heap-timingweight 50` | 13.15 / 14.18 MHz | 25 MHz | worse; not used |
+| simulated annealing (`--placer sa`) | — | — | **fails to place** carry chains |
+| `CLKDIV=1`, **before** the divider fix (ADR-018) | 14.38 MHz | 25 MHz | FAIL — why the part shipped at 12.5 MHz |
+
+`make bitstream` is expected to exit 0 with `PASS`; if a board ever turns out not
+to run at 25 MHz, `CLKDIV=2` is the fallback and the console keeps working because
+the UART's divisor is recomputed from the same constant.
+
+#### Why 25 MHz was impossible before (the corrected diagnosis)
+
+For most of Rev B the documentation blamed the CPU: "register file → ALU → flags
+→ control-unit next-state, plus `u_sys.illegal_pc`'s decrement", with an extra FSM
+state offered as the fix. Reading the actual nextpnr critical-path report showed
+that the path was **the ALU's combinational 16/16 divider** (`a / b`, `a % b`),
+which sat in the same `always_comb` block as the adder and therefore appeared in
+every arithmetic instruction's timing path. A one-line experiment — replacing
+`a / b` and `a % b` with constants — moved Fmax from **14.68 MHz to 44.31 MHz**.
+
+The fix (ADR-018) is a single iterative restoring divider inside `sv16_alu`,
+driven by a `div_start`/`div_busy` handshake and held by the new `S_DIV_WAIT`
+state of the control unit. DIV and MOD keep their encodings, results and flags;
+they simply take 18 cycles instead of 1. Every other operation is unchanged and
+still single-cycle. That is what took the design from 12.5 MHz to the full 25 MHz
+and left ~86 % timing margin for future logic.
+
+Remaining headroom work, in increasing order of effort: instantiate an `EHXPLLL`
+to replace the fabric divider and run 40–50 MHz (the fabric now supports it), and
+split the flag/branch decision across an extra FSM state if a future feature eats
+the margin.
 
 ### Pin constraints
 
@@ -198,7 +218,7 @@ program.
 The RTL is plain SystemVerilog and the LPF syntax is shared with Diamond, so the
 same sources can be targeted there: add the 25 files of `rtl/` (package first),
 set `sv16_top` as the top, define `SV16_ROM_INIT_FILE` (a quoted path to
-`build/rom/monitor.hex`) and `SV16_CLKDIV 2` as Verilog macros, and use the same
-LPF. Diamond will report its own timing; the 12.5 MHz configuration is the one
+`build/rom/monitor.hex`) and `SV16_CLKDIV 1` as Verilog macros, and use the same
+LPF. Diamond will report its own timing; the 25 MHz configuration is the one
 with margin. Nothing in `scripts/` other than `sv16_venv.sh` depends on the
 open-source toolchain.

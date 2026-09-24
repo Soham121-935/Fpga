@@ -24,7 +24,7 @@ to a production-grade part.
 | Interrupt controller with priority + vectors | **MCU-like** | 8 sources, priority, per-source enable, global enable, `RETI` |
 | Watchdog | **MCU-like** | `sv16_wdt` at `0xF080`: windowed, key-protected, restarts the SoC, survives soft restarts, early-warning interrupt; verified end to end by `wdt_reset_tb` |
 | Low-power / clock scaling | **soft-core gap** | one clock; build-time divider only, no runtime clock control, no sleep modes |
-| Multiple clock options (PLL, 50–100 MHz) | **soft-core gap** | 25 MHz oscillator ÷ `SV16_CLKDIV`; no EHXPLLL instantiated |
+| Multiple clock options (PLL, 50–100 MHz) | **soft-core gap** | runs at 25 MHz with 86 % margin (Fmax 46.58 MHz) so a `EHXPLLL` for 40–50 MHz is now a build change rather than a redesign; still no PLL, no runtime clock scaling |
 | Hardware debug interface (JTAG/SWD, breakpoints, memory access while halted) | **soft-core gap** | single-step and halt exist (`SYS_CTRL`), but only from firmware/console — no JTAG TAP, no GDB stub |
 | Memory protection / privilege levels | **soft-core gap** | no MPU; any code can write any MMIO register |
 | In-application programming from the app | **partially MCU-like** | the app can drive `0xF0A0` itself, but the monitor/loader is the only tested path |
@@ -60,7 +60,8 @@ to a production-grade part.
 * There is no protection between the application and the machine, no
   supervisor/user split, no memory that faults on illegal access.
 * The core is not pipelined: roughly 8–10 clocks per instruction depending on
-  the addressing mode. At 12.5 MHz that is well under 1 MIPS. This is an
+  the addressing mode (a DIV/MOD takes 16 more cycles than that — ADR-018).
+  At 25 MHz that is roughly 2.5 MIPS. This is an
   architecture-level choice (`ADR-002`), not a bug — but it is the reason the
   part is not aimed at compute-heavy work.
 * Peripherals are fixed-function and fixed-pin; there is no mux matrix.
@@ -69,12 +70,14 @@ to a production-grade part.
 
 Ordered by what would unlock the most value per unit of risk:
 
-1. **Timing margin / higher clock.** The design closes at 12.5 MHz
-   (Fmax measured 14.68 MHz at speed grade 6). The critical path runs
-   register file → ALU → flags → control-unit next-state *and* through
-   `u_sys.illegal_pc`'s subtract; splitting the flag/branch decision with one
-   extra FSM state or registering the fault address is what buys 25 MHz, and an
-   `EHXPLLL` instance would then allow 40–50 MHz.
+1. ~~**Timing margin / higher clock.**~~ **DONE in Rev B** (ADR-018). The real
+   critical path was the ALU's *combinational divider*, not the CPU's flag/branch
+   path as the earlier documentation claimed: replacing `a / b` and `a % b` with
+   constants moved Fmax from 14.68 MHz to 44.31 MHz in one experiment. DIV/MOD
+   now run on an iterative divider behind a start/busy handshake with a
+   `S_DIV_WAIT` FSM state, and **the part ships at the full 25 MHz** (measured
+   Fmax 46.58 MHz, ~86 % margin). An `EHXPLLL` for 40–50 MHz is now a build
+   change, not a redesign; nothing else is on the critical path worth splitting.
 2. **A/B images with rollback.** Two image slots, a validity flag, and a
    "confirm this image" store from the application. The loader already has
    `BOOT_SRC_LO/HI` and `VERIFY-ONLY`, so the RTL change is small; the missing

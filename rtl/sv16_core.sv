@@ -330,8 +330,18 @@ module sv16_core (
                               (is_alu_imm) ? ((opcode == 4'h2) ? 3'b000 : 3'b001) :
                                              subop;
 
+    // DIV/MOD are the only operations that need more than one clock: they are
+    // served by the ALU's iterative divider (ADR-018), so the control unit has
+    // to hold the core in a wait state until the result is valid.
+    logic ext_is_div;      // this extended-ALU instruction is DIV or MOD
+    logic alu_div_start;
+    logic alu_div_busy;
+    assign ext_is_div = is_ext_alu && ((subop == 3'b011) || (subop == 3'b100));
+
     // ALU Instance
     sv16_alu u_alu (
+        .clk(clk),
+        .rst_n(rst_n),
         .a(alu_in_a),
         .b(alu_in_b),
         .alu_op(effective_alu_op),
@@ -340,7 +350,9 @@ module sv16_core (
         .flag_z(alu_flag_z),
         .flag_c(alu_flag_c),
         .flag_n(alu_flag_n),
-        .flag_v(alu_flag_v)
+        .flag_v(alu_flag_v),
+        .div_start(alu_div_start),
+        .div_busy(alu_div_busy)
     );
 
     // Status Register Instance
@@ -406,6 +418,9 @@ module sv16_core (
         .is_ei(is_ei),
         .is_di(is_di),
         .is_reti(is_reti),
+        .ext_is_div(ext_is_div),
+        .alu_div_busy(alu_div_busy),
+        .alu_div_start(alu_div_start),
         .flag_z(flag_z),
         .flag_c(flag_c),
         .flag_n(flag_n),

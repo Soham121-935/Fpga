@@ -13,10 +13,10 @@ prototype* into a *practical, MCU-style programmable system* on the Lattice ECP5
 | :--- | :--- |
 | Date of report | 2026-09-24 |
 | Branch | `arena/01a0ce9b-fpga` (this session), one commit ahead of `arena/Rv2` |
-| Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) · `e664a0c` branch-rename note · **watchdog (this change set)** |
-| Remote state | On GitHub this work stream was renamed **`arena/01a0ce9b-fpga` → `arena/Rv2`**, so `arena/Rv2` holds the Rev B work up to `a07f62e`. This session pushed `arena/01a0ce9b-fpga` again and it now sits at `b747fb3` — a direct descendant of `arena/Rv2`, so it can be fast-forwarded or merged without conflicts. |
-| Test status | **176 checks, 0 failures** across 6 suites; RTL lint 25/25 clean |
-| Bitstream | `make bitstream` → `build/sv16_top.bit`, 276,941 bytes, **timing PASS** at 12.5 MHz (Fmax 14.68 MHz) |
+| Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) · `e664a0c` branch-rename note · `62f432a` watchdog in the reset path (P1) · multi-cycle divider + full 25 MHz (P2) |
+| Remote state | On GitHub this work stream was renamed **`arena/01a0ce9b-fpga` → `arena/Rv2`**, so `arena/Rv2` holds the Rev B work up to `a07f62e`. This session pushed `arena/01a0ce9b-fpga` again (P1 watchdog, then P2 timing) and it is a direct descendant of `arena/Rv2`, so it can be fast-forwarded or merged without conflicts. |
+| Test status | **217 checks, 0 failures** across 7 suites; RTL lint 25/25 clean |
+| Bitstream | `make bitstream` → `build/sv16_top.bit`, 285,639 bytes, **timing PASS at the full 25 MHz** (Fmax 46.58 MHz, ~86 % margin) |
 | Silicon | **never run on hardware** — simulation + static timing only |
 
 ---
@@ -52,15 +52,15 @@ it breaks:
 
 | Metric | Value |
 | :--- | :--- |
-| FPGA utilization | 7,639 / 24,288 LUT4 (**31 %**), 4,576 FFs (18 %), 18/56 block RAMs, 1 multiplier, 52 I/O |
-| Timing | Fmax **14.68 MHz** measured; shipped at **12.5 MHz ⇒ PASS** with ~17 % margin |
-| Bitstream | **276,941 bytes** (`build/sv16_top.bit`), boot ROM baked in |
-| Verification | **176 checks, 0 failures** (`49 + 48 + 24 + 21 + 20 + 14`), plus lint (25/25) + whole-SoC elaboration |
+| FPGA utilization | 8,363 / 24,288 LUT4 (**34 %**), 4,631 FFs (19 %), 18/56 block RAMs, 1 multiplier, 52 I/O |
+| Timing | Fmax **46.58 MHz** measured; shipped at **25 MHz ⇒ PASS** with ~86 % margin |
+| Bitstream | **285,639 bytes** (`build/sv16_top.bit`), boot ROM baked in |
+| Verification | **217 checks, 0 failures** (`49 + 48 + 41 + 24 + 21 + 20 + 14`), plus lint (25/25) + whole-SoC elaboration |
 | Code | 25 RTL files / 5,933 lines, 11 scripts / 2,261 lines, 16 documents / ~2,400 lines |
 
-**The one honest headline:** this is functionally a microcontroller now, but it has
-not run on silicon, has no JTAG debug, no A/B image rollback, no memory
-protection and no C compiler. Those are listed with effort estimates in
+**The one honest headline:** this is functionally a microcontroller now, and it
+runs at the full 25 MHz the board gives it, but it has not run on silicon, has no
+JTAG debug, no A/B image rollback, no memory protection and no C compiler. Those are listed with effort estimates in
 section 8.
 
 ---
@@ -198,15 +198,15 @@ silicon), which the request explicitly asked to be enumerated rather than built.
 
 ## 4. Everything that was built (inventory)
 
-### 4.1 RTL — 25 files, 6,260 lines (`rtl/`)
+### 4.1 RTL — 25 files, 6,470 lines (`rtl/`)
 
 | Module | Lines | What it is | New in Rev B |
 | :--- | ---: | :--- | :---: |
 | `sv16_pkg.sv` | 278 | memory map, MMIO blocks, register offsets, opcodes, IRQ vectors | rewritten |
 | `sv16_core.sv` | 452 | CPU integration: datapath, memory interface, interrupt/trap entry | rewritten |
-| `sv16_control_unit.sv` | 546 | FSM; now holds `req` until `ack` (wait-state capable) | rewritten |
+| `sv16_control_unit.sv` | 570 | FSM; holds `req` until `ack` (wait-state capable); `S_DIV_WAIT` holds DIV/MOD until the divider finishes | rewritten |
 | `sv16_decoder.sv` | 162 | register port selection fixed (STORE data, PUSH source) | rewritten |
-| `sv16_alu.sv` | 186 | arithmetic/logic/shift/mul/div, flags | — |
+| `sv16_alu.sv` | 241 | arithmetic/logic/shift/mul/div, flags; **iterative multi-cycle divider** (ADR-018) | **rewritten** |
 | `sv16_regfile.sv` | 48 | 8 × 16-bit registers | — |
 | `sv16_status_reg.sv` | 97 | Z/C/N/V/IE | — |
 | `sv16_pc.sv` | 58 | program counter | — |
@@ -265,7 +265,7 @@ silicon), which the request explicitly asked to be enumerated rather than built.
 | `RESET_AND_CLOCK.md` | rewritten | clock divider, baud derivation, reset causes, startup FSM, fault behaviour |
 | `VERIFICATION.md` | rewritten | what runs, the 10 defects the suites caught, what is *not* verified |
 | `ISA.md` | updated | unchanged ISA + Rev B notes on entry, interrupts, trap |
-| `ARCHITECTURE_DECISIONS.md` | extended | ADR-012 (boot/storage), 013 (field update), 014 (map), 015 (CPU fixes), 016 (interrupts), 017 (watchdog in the reset path) |
+| `ARCHITECTURE_DECISIONS.md` | extended | ADR-012 (boot/storage), 013 (field update), 014 (map), 015 (CPU fixes), 016 (interrupts), 017 (watchdog in the reset path), 018 (multi-cycle divide, full 25 MHz) |
 | `OPEN_QUESTIONS.md` | rewritten | OQ-01..10 resolved, OQ-13 (watchdog) closed by ADR-017, OQ-11/12/14..18 still open |
 | `FPGA.md` | rewritten | device facts, measured usage, clocking, pin rules |
 | `README.md` | rewritten | quick start, blueprint, capability list, honest status |
@@ -312,6 +312,9 @@ multiply/divide; Z C N V flags plus a global IE bit; branches ±128 words; stack
 with `PUSH`/`POP`/`CALL`/`RET`; trap on illegal opcodes; interrupts with a
 priority controller and an 8-entry RAM vector table; `RETI`.
 **No instruction encoding changed** — Rev A applications run unchanged.
+DIV and MOD are the one execution-time change: they now run on the ALU's
+iterative divider (18 cycles instead of 1) because the combinational version was
+a 68 ns critical path that capped the whole SoC at 12.5 MHz (ADR-018).
 
 ### 5.3 Peripherals (11 MMIO blocks, 16 registers each)
 
@@ -337,13 +340,14 @@ single-step (`SYS_CTRL.HALT` + `STEP`).
 
 | Suite | Checks | Failures | What it proves |
 | :--- | ---: | ---: | :--- |
+| `div_tb` | **41** | 0 | the iterative divider (ADR-018): handshake rules, arithmetic incl. `0/5`, `0xFFFF/1`, `0x8000/0x8000`, divide-by-zero per OQ-04, and that everything else is still single-cycle |
 | `wdt_tb` | **49** | 0 | exact period `(PRESET+1)×2^PRESC`, one-cycle reset request, self-rearm, keyed writes, magic-word feeds, integer prescaler, early-warning interrupt timing, windowed feeding, `LOCK` freezing, W1C flags, pin-only clearing |
 | `wdt_reset_tb` | **14** | 0 | **the recovery path end to end**: boot a hanging image out of flash → watchdog bites → `RSTCAUSE.WDT` → boot sequence restarts → image re-boots → hangs again → caught again → external pin clears the block |
 | `flash_ctrl_tb` | **48** | 0 | every flash command, wait states, CRC over a range, error flags |
 | `boot_tb` | **24** | 0 | header parse, both CRCs, streaming to SRAM, verify-only, corrupt-image rejection |
 | `soc_boot_tb` | **21** | 0 | reset → loader → SRAM content → CPU released at the right entry/SP |
 | `monitor_tb` | **20** | 0 | the entire field-update story over a bit-banged UART, including the uploaded app actually running and driving GPIO/PWM/direction |
-| **Total** | **176** | **0** | `make sim` |
+| **Total** | **217** | **0** | `make sim` |
 
 Plus: `sv16_rtl_lint.py` **25/25 files clean** (multiple drivers, latches, missing
 resets, incomplete case) and Verilator elaboration of the whole SoC clean.
@@ -352,11 +356,11 @@ resets, incomplete case) and Verilator elaboration of the whole SoC clean.
 
 | Stage | Result |
 | :--- | :--- |
-| Yosys `synth_ecp5` | 6,147 LUT4 + 746 carry, 4,576 FFs, 18 `DP16KD`, 1 `MULT18X18D`, netlist written |
-| nextpnr-ecp5 (`--12k --package TQFP144 --speed 6 --freq 12.5`) | places, routes, **timing PASS** |
-| ecppack `--compress` | `build/sv16_top.bit`, **276,941 bytes** |
-| Placer comparison | heap default = **14.68 MHz** (PASS, 14.09 pre-route) · heap `timingweight 50` = 13.15/14.18 MHz (worse) · SA = fails to place carry chains |
-| 25 MHz attempt (`CLKDIV=1`) | 14.38 MHz → **FAIL**, flow stops before packing (a broken build cannot ship silently) |
+| Yosys `synth_ecp5` | 7,233 LUT4 + 1,130 carry, 4,631 FFs, 18 `DP16KD`, 1 `MULT18X18D`, netlist written |
+| nextpnr-ecp5 (`--12k --package TQFP144 --speed 6 --freq 25`) | places, routes, **timing PASS at 25 MHz** |
+| ecppack `--compress` | `build/sv16_top.bit`, **285,639 bytes** |
+| Placer comparison | heap default = **46.58 MHz** (PASS at 25 MHz, 35.15 pre-route) · heap `timingweight 50` = 13.15/14.18 MHz (worse) · SA = fails to place carry chains |
+| 25 MHz attempt **before** ADR-018 | 14.38 MHz → FAIL; a constant-folding experiment (`a/b`, `a%b` → constants) measured 44.31 MHz — which is how the real culprit was found |
 
 ### 6.3 Real defects found and fixed by this work
 
@@ -378,6 +382,12 @@ resets, incomplete case) and Verilator elaboration of the whole SoC clean.
 10. **The window was enforced on the first feed**, which would have restarted a
     correctly written application one period after it armed the watchdog; the
     first period after `ENABLE` is now exempt.
+11. **The 25 MHz timing failure was misdiagnosed in four documents** (this report
+    included): the blamed path was the CPU's flag/branch logic and
+    `u_sys.illegal_pc`'s decrement, with "split the flag decision" as the fix. The
+    nextpnr critical-path report showed the actual path was the ALU's
+    combinational **divider** — hence one constant-folding experiment moving Fmax
+    from 14.68 to 44.31 MHz. Multi-cycle DIV/MOD then delivered the full 25 MHz.
 
 ---
 
@@ -388,7 +398,7 @@ git clone https://github.com/Soham121-935/Fpga.git && cd Fpga
 git checkout arena/Rv2                 # or this session's arena/01a0ce9b-fpga
 
 source scripts/sv16_venv.sh            # Verilator + Yosys + nextpnr + ecppack
-make test                              # lint + 176 checks           (~4 min)
+make test                              # lint + 217 checks           (~4 min)
 make bitstream                         # Yosys→PnR→pack, timing report (~2 min)
 make prog                              # program the FPGA over JTAG
 make upload PORT=/dev/ttyUSB0          # program the *firmware* over UART
@@ -418,7 +428,8 @@ be audited or replayed.
 | # | Item | Why it matters | Effort |
 | :--- | :--- | :--- | :--- |
 | ~~P1~~ | ~~**Watchdog in the reset path**~~ — **DONE** (`sv16_wdt.sv`, MMIO block 8, `RSTCAUSE.WDT` live, `MMIO_PRESENT = 0x7FF`) | A software hang used to mean manual intervention; now the hardware restarts the boot sequence and re-boots the application, and the application cannot disarm it | 265-line block + 49 unit checks + 14 system checks + ADR-017; lint and timing re-verified |
-| P2 | **Timing headroom → 25 MHz+** (critical path is CPU: register file → ALU → flags → control FSM, plus `u_sys.illegal_pc`) | Faster part, and the 12.5 MHz default is a workaround, not a design point | 2-4 days: extra FSM stage for flags/branch, register the fault address; then an `EHXPLLL` instead of the fabric divider |
+| ~~P2~~ | ~~**Timing headroom → 25 MHz+**~~ — **DONE**: the real critical path was the ALU's combinational divider, not the CPU flag/branch path | The 12.5 MHz default was a workaround; the part now runs at the full oscillator frequency | multi-cycle DIV/MOD + `S_DIV_WAIT` (ADR-018), 41 new checks, Fmax 14.68 → **46.58 MHz**, shipped at 25 MHz |
+| P2b | **`EHXPLLL` for 40–50 MHz** (or a jitter-free SPI clock) | The fabric now supports it and it would make the clock programmable, but nothing needs it yet | 1-2 days: instance the PLL, constrain it, re-measure |
 | P3 | **A/B images with rollback** | Today a power cut during `C` loses the only application (recovery is the monitor, but the app is gone) | 3-5 days: two slots, validity flag, "confirm" store, loader policy + tests |
 | P4 | **JTAG debug bridge** over the ECP5 TAP using the existing `SYS_CTRL.HALT` / `SYS_DBG_*` hooks | Biggest quality-of-life gap vs a real MCU: halt, resume, peek/poke, breakpoints | 1-2 weeks: TAP shift-register bridge + host tool |
 | P5 | **C toolchain** (or an ISA extension to make C practical: register-indirect call, more registers) | Assembly-only is the main practical limit | weeks; ISA change needs its own ADR |

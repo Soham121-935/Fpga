@@ -174,7 +174,9 @@
 /* The reset divisor is derived from the SoC clock configuration by
  * rtl/sv16_top.sv: divisor = (f_clk + baud/2) / baud, rounded.  Both of these
  * give 115200 8-N-1.  Only write UART0_BAUD if you want a different rate;
- * values below 4 are clamped. */
+ * values below 4 are clamped.  The default build is 25 MHz (CLKDIV=1), which is
+ * also what every testbench simulates; 12.5 MHz only appears with an explicit
+ * `make bitstream CLKDIV=2`. */
 #define UART0_BAUD_115200_AT_25MHZ   217u   /* 25_000_000 / 115200 rounded */
 #define UART0_BAUD_115200_AT_12_5MHZ 109u   /* 12_500_000 / 115200 rounded */
 

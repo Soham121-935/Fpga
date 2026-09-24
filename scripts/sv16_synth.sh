@@ -5,8 +5,11 @@
 #   source scripts/sv16_venv.sh
 #   scripts/sv16_synth.sh                 # full flow into build/
 #   scripts/sv16_synth.sh --no-rom        # synthesize with an empty boot ROM
-#   scripts/sv16_synth.sh --clkdiv 2      # build the 12.5 MHz (timing-clean) SoC
+#   scripts/sv16_synth.sh --clkdiv 2      # build the 12.5 MHz conservatively-clocked SoC
 #   scripts/sv16_synth.sh --freq 40       # different timing target
+#
+# Defaults: --clkdiv 1 (SoC clock = the 25 MHz oscillator, Fmax measured 46.6 MHz
+# after the ALU divider became multi-cycle, ADR-018), --freq = 25/clkdiv.
 #
 # The boot ROM contents are compiled into the bitstream: the ROM's init file is
 # a synthesis-time macro (SV16_ROM_INIT_FILE), so the monitor that comes up on

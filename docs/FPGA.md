@@ -19,8 +19,8 @@
 
 | Resource | Used | Where |
 | :--- | ---: | :--- |
-| LUT4 | 7,639 (31 %) | CPU datapath and control, boot loader, flash controller, watchdog, monitor's ROM decoding |
-| Flip-flops | 4,576 (18 %) | CPU state, FIFOs, peripherals, watchdog counters |
+| LUT4 | 8,363 (34 %) | CPU datapath and control, boot loader, flash controller, watchdog, monitor's ROM decoding, the iterative divider |
+| Flip-flops | 4,631 (19 %) | CPU state, FIFOs, peripherals, watchdog counters, divider registers |
 | `DP16KD` | 18 (32 %) | 16 for the 32 KB SRAM, 2 for the 4 KB boot ROM |
 | `MULT18X18D` | 1 (3 %) | the ALU's single-cycle 16×16 multiply |
 | I/O | 52 (26 %) | UART, two SPI ports, GPIO A/B, PWM, motor control, LEDs, clock, reset |
@@ -29,14 +29,15 @@
 ## 3. Clocking and timing
 
 * Input: `clk_25m` on pin 133 (25 MHz).
-* `SV16_CLKDIV` divides it in fabric to the SoC clock; **`CLKDIV=2` (12.5 MHz) is
-  the shipped configuration** because it is the fastest one that closes timing
-  on this speed grade.
-* Measured Fmax: 14.68 MHz (nextpnr, heap placer, speed grade 6). The 25 MHz
-  configuration is buildable but nextpnr flags the violation and the flow stops
-  before packing a bitstream.
-* An `EHXPLLL` would replace the fabric divider once the CPU critical path is
-  shortened (see [MCU_READINESS.md](MCU_READINESS.md#4-gap-list-to-a-production-grade-mcu-experience)).
+* `SV16_CLKDIV` divides it in fabric; **`CLKDIV=1` is the shipped default**, so
+  the SoC clock *is* the oscillator and there is no generated clock at all.
+  `CLKDIV=2` (12.5 MHz) remains available as a conservative fallback.
+* Measured Fmax: **46.58 MHz** (nextpnr, heap placer, speed grade 6) since the
+  ALU's divider became iterative (ADR-018) — ~86 % margin at 25 MHz. Before that
+  change the same flow measured 14.68 MHz, which is why the part shipped at
+  12.5 MHz for most of Rev B.
+* An `EHXPLLL` could now be used to run 40–50 MHz or to feed a stable clock to
+  the SPI pins, but it is not needed to hit the design point.
 
 ## 4. Pin constraints
 
