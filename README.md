@@ -27,11 +27,13 @@ and can be reprogrammed over a plain serial port.
 
 ```sh
 source scripts/sv16_venv.sh    # fetches Verilator + Yosys + nextpnr + ecppack
-make test                      # lint + 7 simulation suites (217 checks)
+make test                      # lint + 8 simulation suites (276 checks)
 make bitstream                 # -> build/sv16_top.bit (boot ROM baked in)
 make prog                      # openFPGALoader over JTAG
 make app                       # build the example application image
 make upload PORT=/dev/ttyUSB0  # erase + upload + verify over UART
+make upload-slot SLOT=1        # field update: install into the inactive slot
+make mon-boot && make commit   # boot it (trial starts), then commit it
 ```
 
 A fresh board comes up as a monitor on the serial port at **115200 8-N-1**:
@@ -76,11 +78,13 @@ SV-16 monitor v1
 
 | Command | Result |
 | :--- | :--- |
-| `make test` | lint + all seven Verilator suites (217 checks) |
+| `make test` | lint + all eight Verilator suites (276 checks) |
 | `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 25 MHz |
 | `make synth` | Yosys only (fast synthesizability check) |
 | `make prog` | program the FPGA over JTAG |
 | `make upload PORT=...` | program the *firmware* over the serial port |
+| `make upload-slot SLOT=1` | field update into the inactive A/B slot (ADR-019) |
+| `make commit` | commit a trial image (monitor `K`) |
 | `make iss` | instruction-set simulator on the legacy ROM image |
 
 Clocking: `CLKDIV` (default **1**) runs the SoC straight from the 25 MHz
@@ -104,13 +108,13 @@ build/           generated: ROM image, firmware images, netlist, bitstream (untr
 
 | | |
 | :--- | :--- |
-| Simulation | 113 checks, 0 failures (`flash_ctrl_tb`, `boot_tb`, `soc_boot_tb`, `monitor_tb`) |
+| Simulation | 276 checks, 0 failures across 8 suites (CPU, ALU/divider, bus, RAM, watchdog, flash controller, boot loader, A/B slots, monitor) |
 | Synthesis / P&R | places, routes, packs for the target part; 30 % LUTs, 18 % FFs |
 | Timing | 46.58 MHz Fmax measured; shipped at the full 25 MHz with ~86 % margin |
 | Silicon | **never run on hardware** — simulation and static timing only |
 
-What is still missing for a production-grade MCU (watchdog in the reset path,
-JTAG debug, A/B image slots with rollback, a C toolchain, silicon bring-up) is
+What is still missing for a production-grade MCU (JTAG debug, image signing,
+a C toolchain, silicon bring-up) is
 listed with reasoning in
 **[docs/MCU_READINESS.md](docs/MCU_READINESS.md)** — including an explicit
 MCU-like vs. FPGA-soft-core comparison.

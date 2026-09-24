@@ -17,6 +17,9 @@
 ;   E<addr4>               erase the 4 KB sector containing `addr`
 ;   V<addr4>               CRC16 of the whole image (header + payload)
 ;   B                      verify the image at 0 and boot it
+;   K                      confirm the running trial image (ADR-019): a slot
+;                          image that booted from A/B flash is on trial until
+;                          the application -- or this command -- commits it
 ;   ?                      print the command list
 ;
 ; Answers:
@@ -27,6 +30,7 @@
 ;   -E5\r\n                flash controller did not go idle
 ;   -E6\r\n                boot attempt timed out
 ;   -E7\r\n                image rejected by the boot loader (B)
+;   -E8\r\n                the loader did not record the confirmation (K)
 ;   =<crc4>\r\n            V: image CRC16
 ;   .<hex>...\r\n          R: the requested bytes; C: one '.' per byte acked
 ;
@@ -121,8 +125,13 @@ d_v:
 d_b:
     LDI R0, 0x0042           ; 'B'
     CMP R6, R0
-    BNE d_q
+    BNE d_k
     JMP cmd_boot
+d_k:
+    LDI R0, 0x004B           ; 'K'
+    CMP R6, R0
+    BNE d_q
+    JMP cmd_confirm
 d_q:
     LDI R0, 0x003F           ; '?'
     CMP R6, R0
@@ -135,6 +144,38 @@ d_bad:
 
 cmd_help:
     LDI R1, msg_help
+    CALL puts
+    JMP main
+
+; =====================================================================
+; K - confirm the running image's trial (ADR-019)
+;
+; BOOT_CTRL[6] is a write-only pulse; the loader answers by programming the
+; slot record in flash (PENDING/TRIAL -> GOOD) and clearing BOOT_STAT.TRIAL.
+; An image with no slot record has no trial, so the flag is already clear and
+; the command simply succeeds.
+; =====================================================================
+cmd_confirm:
+    LDI R0, BOOT_CTRL
+    LDI R1, 0x0040           ; [6] SLOT_CNF
+    STORE R1, [R0 + 0]
+
+    LDI R7, 0x0000           ; 65536 polls is plenty for one record page
+conf_poll:
+    LDI R0, BOOT_STAT
+    LOAD R1, [R0 + 0]
+    LDI R0, 0x0080           ; [7] SLOT_TRIAL
+    AND R1, R1, R0
+    BEQ conf_ok              ; cleared: the record is committed
+    DEC R7, R7
+    BEQ conf_fail
+    JMP conf_poll
+conf_ok:
+    LDI R1, ok_confirm
+    CALL puts
+    JMP main
+conf_fail:
+    LDI R1, err_confirm
     CALL puts
     JMP main
 
@@ -286,6 +327,28 @@ boot_verdict:
     ; Application images are linked at 0x0000 (the loader reports the entry
     ; point in BOOT_ENTRY; this ISA has no register-indirect jump, so the
     ; monitor uses the documented fixed entry address).
+    ; ADR-019: say which slot the image came from and whether it is still on
+    ; trial -- the operator needs to know before deciding to confirm it.
+    LDI R0, BOOT_STAT
+    LOAD R1, [R0 + 0]
+    LDI R2, 0x0020           ; [5] SLOT
+    AND R1, R1, R2
+    BEQ boot_slot_a
+    LDI R3, msg_slot_b
+    JMP boot_slot_done
+boot_slot_a:
+    LDI R3, msg_slot_a
+boot_slot_done:
+    MOV R1, R3
+    CALL puts
+    LDI R0, BOOT_STAT
+    LOAD R1, [R0 + 0]
+    LDI R2, 0x0080           ; [7] SLOT_TRIAL
+    AND R1, R1, R2
+    BEQ boot_committed
+    LDI R1, msg_trial
+    CALL puts
+boot_committed:
     LDI R1, ok_boot
     CALL puts
     JMP 0x0000
@@ -692,6 +755,7 @@ msg_help:
     .ASCIIZ "E<addr4>               erase sector\r\n"
     .ASCIIZ "V<addr4>               CRC16 image\r\n"
     .ASCIIZ "B                      boot image at 0\r\n"
+    .ASCIIZ "K                      confirm the trial image\r\n"
     .ASCIIZ "?                      this list\r\n"
 
 ok_line:
@@ -699,6 +763,16 @@ ok_line:
 
 ok_boot:
     .ASCIIZ "\r\n+OK booting\r\n"
+
+ok_confirm:
+    .ASCIIZ "\r\n+OK committed\r\n"
+
+msg_slot_a:
+    .ASCIIZ "slot A"
+msg_slot_b:
+    .ASCIIZ "slot B"
+msg_trial:
+    .ASCIIZ " on trial (send K to commit)"
 
 err_badcmd:
     .ASCIIZ "\r\n-E0\r\n"
@@ -712,3 +786,5 @@ err_boottimeout:
     .ASCIIZ "\r\n-E6\r\n"
 err_bootimg:
     .ASCIIZ "\r\n-E7\r\n"
+err_confirm:
+    .ASCIIZ "\r\n-E8\r\n"

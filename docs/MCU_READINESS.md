@@ -16,6 +16,7 @@ to a production-grade part.
 | Boot loader in hardware | **MCU-like** | `sv16_boot` + `sv16_startup`; runs without CPU help, handles blank/broken flash |
 | Factory-resident firmware (can't be erased by the user) | **MCU-like** | monitor in boot ROM (`0xE000`), baked into the bitstream |
 | Field reprogramming from a host | **MCU-like** | UART monitor `C` command + `scripts/sv16_mon.py`; `make upload` |
+| Update that cannot brick the part (A/B + rollback) | **MCU-like** | two 32 KB slots with a trial record in the image header (ADR-019): a new image is booted on trial, confirmed with `BOOT_CTRL[6]` or the monitor's `K`, and rolled back by the hardware on the next restart if it never confirms — `make upload-slot` / `make commit`, proven by `slot_tb` (57 checks) |
 | Reset vector / vector table / stack setup | **MCU-like** | boot ROM at `0xE000`, vector table at `0x0020` in SRAM, SP from the image header |
 | Reset cause register | **MCU-like** | `SYS_RSTCAUSE` (`0xF003`): pin, soft, fault, watchdog, boot-fail, flash-ok |
 | Debug observability without a logic analyser | **MCU-like** | `SYS_DBG_PC/SP/SR/IR`, `SYS_FAULT_ADDR/CNT`, `SYS_CPU_STATE`, `SYS_SCRATCH0/1`, 32-bit cycle counter |
@@ -24,7 +25,7 @@ to a production-grade part.
 | Interrupt controller with priority + vectors | **MCU-like** | 8 sources, priority, per-source enable, global enable, `RETI` |
 | Watchdog | **MCU-like** | `sv16_wdt` at `0xF080`: windowed, key-protected, restarts the SoC, survives soft restarts, early-warning interrupt; verified end to end by `wdt_reset_tb` |
 | Low-power / clock scaling | **soft-core gap** | one clock; build-time divider only, no runtime clock control, no sleep modes |
-| Multiple clock options (PLL, 50–100 MHz) | **soft-core gap** | runs at 25 MHz with 86 % margin (Fmax 46.58 MHz) so a `EHXPLLL` for 40–50 MHz is now a build change rather than a redesign; still no PLL, no runtime clock scaling |
+| Multiple clock options (PLL, 50–100 MHz) | **soft-core gap** | runs at 25 MHz with 82 % margin (Fmax 45.46 MHz) so a `EHXPLLL` for 40–50 MHz is now a build change rather than a redesign; still no PLL, no runtime clock scaling |
 | Hardware debug interface (JTAG/SWD, breakpoints, memory access while halted) | **soft-core gap** | single-step and halt exist (`SYS_CTRL`), but only from firmware/console — no JTAG TAP, no GDB stub |
 | Memory protection / privilege levels | **soft-core gap** | no MPU; any code can write any MMIO register |
 | In-application programming from the app | **partially MCU-like** | the app can drive `0xF0A0` itself, but the monitor/loader is the only tested path |
@@ -78,10 +79,15 @@ Ordered by what would unlock the most value per unit of risk:
    `S_DIV_WAIT` FSM state, and **the part ships at the full 25 MHz** (measured
    Fmax 46.58 MHz, ~86 % margin). An `EHXPLLL` for 40–50 MHz is now a build
    change, not a redesign; nothing else is on the critical path worth splitting.
-2. **A/B images with rollback.** Two image slots, a validity flag, and a
-   "confirm this image" store from the application. The loader already has
-   `BOOT_SRC_LO/HI` and `VERIFY-ONLY`, so the RTL change is small; the missing
-   part is a policy (which slot wins, when to fall back).
+2. ~~**A/B images with rollback.**~~ **DONE (ADR-019).** Two 32 KB slots inside
+   the 64 KB the monitor can address, a 2-byte slot record in the reserved
+   header bytes (`0x18` sync, `0x19` state: pending → tried → good/bad, every
+   transition a bit-clearing so a page program can advance it), a trial period
+   whose state lives in flash rather than in the loader, hardware rollback on
+   the next restart with no host, confirmation through `BOOT_CTRL[6]` (monitor
+   `K`, firmware `sv16_boot_confirm()`), and tooling that installs into the
+   inactive slot (`make upload-slot SLOT=1`). `slot_tb` (57 checks) drives the
+   whole thing, including a reset in the middle of a trial and a torn record.
 3. **JTAG debug.** ECP5 has a usable TAP; a small "debug bridge" that maps JTAG
    shift-register words onto the bus (`SYS_CTRL.HALT` + `SYS_DBG_*` already
    give the core-side hooks) would give halt/resume, memory peek/poke and
@@ -103,7 +109,7 @@ Ordered by what would unlock the most value per unit of risk:
 Rev B turns SV-16 from *a CPU you can instantiate* into *a device you can
 program, run, update over a serial cable and recover when it breaks* — which is
 the functional definition of a microcontroller. What it is not yet is a
-*protected, debuggable, toolchain-supported* product: no JTAG debug, no A/B
-updates, no memory protection, no C compiler, and no silicon validation.
+*protected, debuggable, toolchain-supported* product: no JTAG debug, no memory
+protection, no signed updates, no C compiler, and no silicon validation.
 The gap list above is the roadmap; each item is scoped so it can be added
 without disturbing the SV-16 ISA or the existing boot flow.

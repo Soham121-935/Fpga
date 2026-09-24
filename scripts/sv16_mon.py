@@ -2,10 +2,23 @@
 """SV-16 host programmer — drive the ROM monitor over UART to update flash.
 
     scripts/sv16_mon.py upload  build/fw/motor_test_img.hex [--port /dev/ttyUSB0]
-    scripts/sv16_mon.py verify  --port /dev/ttyUSB0
+    scripts/sv16_mon.py upload  build/fw/motor_test_img.hex --slot 1
+    scripts/sv16_mon.py verify  --port /dev/ttyUSB0 [--slot 1]
     scripts/sv16_mon.py boot    --port /dev/ttyUSB0
+    scripts/sv16_mon.py commit  --port /dev/ttyUSB0      # confirm a trial image
     scripts/sv16_mon.py term    --port /dev/ttyUSB0
     scripts/sv16_mon.py reset   --port /dev/ttyUSB0      # DTR/RTS reset pulse
+
+Field update into the inactive slot (ADR-019):
+
+    python3 scripts/sv16_fwpack.py build/fw/app.hex -o build/fw/app --slot 1
+    scripts/sv16_mon.py upload build/fw/app_img.hex --slot 1
+    scripts/sv16_mon.py boot           # the loader picks the new image and puts
+                                       # it on trial
+    scripts/sv16_mon.py commit         # ... and commits it once it looks good
+
+An image packed without --slot carries no record, so the loader boots it without
+a trial (that is how the monitor's own recovery image behaves).
 
 `upload` implements the C (program) command of the ROM monitor
 (see docs/BOOT_AND_PROGRAMMING.md):
@@ -38,6 +51,13 @@ from sv16_fwpack import crc16_ccitt  # noqa: E402
 
 DEFAULT_BAUD = 115200
 ROOT = "build/fw"
+
+# ADR-019 slots: 32 KB apart, both inside the 64 KB window the monitor's 16-bit
+# update protocol can address.
+SLOT_BASES = {0: 0x0000, 1: 0x8000}
+SLOT_REC_OFFSET = 0x18            # in the image header
+SLOT_REC_SYNC = 0xA5
+SLOT_STATES = {0x1F: "pending", 0x0F: "tried", 0x07: "good", 0x04: "bad"}
 
 
 # --------------------------------------------------------------------------- #
@@ -120,7 +140,10 @@ def command(link: SerialLink, text: str, timeout: float = 5.0) -> str:
 
 
 def image_from_args(args) -> tuple[bytes, int]:
-    """Return (image bytes, flash address for the C command)."""
+    """Return (image bytes, flash address for the C command).
+
+    With --slot the image goes to that slot's base in the A/B area and must
+    carry the slot record the loader reads (the packer writes it with --slot)."""
     if args.image.endswith(".hex"):
         data = bytes(int(line, 16) for line in
                      (l.strip() for l in open(args.image)) if line)
@@ -128,7 +151,24 @@ def image_from_args(args) -> tuple[bytes, int]:
         data = open(args.image, "rb").read()
     if len(data) > 0x10000:
         raise MonitorError("image larger than the 64 KB flash window")
-    return data, 0
+
+    slot = getattr(args, "slot", None)
+    addr = SLOT_BASES[slot] if slot is not None else 0
+    if slot is not None:
+        if len(data) > slot_stride():
+            raise MonitorError(f"image does not fit in a {slot_stride()} byte slot")
+        if data[SLOT_REC_OFFSET] != SLOT_REC_SYNC:
+            raise MonitorError(
+                "image carries no slot record -- pack it with "
+                f"`sv16_fwpack.py ... --slot {slot}` (see ADR-019)")
+        state = SLOT_STATES.get(data[SLOT_REC_OFFSET + 1], "unknown")
+        print(f"[sv16-mon] slot {slot}: record state '{state}', "
+              f"installing at 0x{addr:04X}")
+    return data, addr
+
+
+def slot_stride() -> int:
+    return SLOT_BASES[1] - SLOT_BASES[0]
 
 
 def upload(link: SerialLink, image: bytes, addr: int = 0, sector_size: int = 4096,
@@ -177,11 +217,19 @@ def erase(link: SerialLink, sector_addr: int) -> bool:
     return True
 
 
-def verify(link: SerialLink) -> int:
-    reply = command(link, "V0000", timeout=10.0)
+def verify(link: SerialLink, addr: int = 0) -> int:
+    reply = command(link, f"V{addr:04X}", timeout=10.0)
     crc = int(reply.lstrip("="), 16)
-    print(f"[sv16-mon] image CRC16 in flash: 0x{crc:04X}")
+    print(f"[sv16-mon] image CRC16 in flash at 0x{addr:04X}: 0x{crc:04X}")
     return crc
+
+
+def commit(link: SerialLink) -> None:
+    """Confirm a trial image (monitor command K, ADR-019)."""
+    reply = command(link, "K", timeout=20.0)
+    print(f"[sv16-mon] {reply}")
+    if "-E8" in reply:
+        raise MonitorError("the loader did not record the confirmation")
 
 
 def boot(link: SerialLink) -> None:
@@ -209,8 +257,12 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("action",
-                        choices=["upload", "verify", "boot", "term", "dump", "reset"],
+                        choices=["upload", "verify", "boot", "commit", "term",
+                                 "dump", "reset"],
                         help="what to do with the monitor")
+    parser.add_argument("--slot", type=int, choices=[0, 1], default=None,
+                        help="A/B slot for upload/verify (ADR-019): the image "
+                             "must be packed with the matching --slot")
     parser.add_argument("image", nargs="?", default=f"{ROOT}/motor_test_img.hex",
                         help="image to upload (raw .bin or one-byte-per-line .hex)")
     parser.add_argument("--port", default=os.environ.get("SV16_PORT", "/dev/ttyUSB0"),
@@ -263,7 +315,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     try:
-        if args.action in ("upload", "verify", "boot"):
+        if args.action in ("upload", "verify", "boot", "commit"):
             sync(link)
         if args.action == "upload":
             image, addr = image_from_args(args)
@@ -273,11 +325,13 @@ def main(argv: list[str]) -> int:
                     if line.startswith("payload CRC16"):
                         print(f"[sv16-mon] image built with "
                               f"{line.strip()}")
-            verify(link)
+            verify(link, addr)
         elif args.action == "verify":
-            verify(link)
+            verify(link, SLOT_BASES[args.slot] if args.slot is not None else 0)
         elif args.action == "boot":
             boot(link)
+        elif args.action == "commit":
+            commit(link)
         elif args.action == "term":
             terminal(link, args.time)
         elif args.action == "dump":

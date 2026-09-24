@@ -55,7 +55,7 @@ module flash_ctrl_tb;
     );
 
     sv16_flash_model #(
-        .MEM_BYTES(65536), .PROG_TICKS(48)
+        .MEM_BYTES(131072), .PROG_TICKS(48)
     ) model (
         .clk(clk), .rst_n(rst_n),
         .sck(flash_sck), .cs_n(flash_cs_n), .mosi(flash_mosi), .miso(flash_miso)

@@ -37,7 +37,7 @@ module monitor_tb;
 
     localparam string ROM_IMAGE     = "build/rom/monitor.hex";
     localparam string IMG_BYTES_HEX = "build/fw/motor_test_img.hex";
-    localparam int    IMG_WORDS_N   = 34;                    // payload words
+    localparam int    IMG_WORDS_N   = 39;                    // payload words
     localparam int    IMG_BYTES     = 32 + IMG_WORDS_N * 2;  // 100 bytes
     localparam int    BIT_TICKS     = 217;                   // 25 MHz / 115200
     localparam int    LOOP_LO       = 30, LOOP_HI = 33;      // motor_test idle loop
@@ -78,7 +78,7 @@ module monitor_tb;
     );
 
     // blank flash part: no INIT_FILE means the model comes up erased (0xFF)
-    sv16_flash_model #(.MEM_BYTES(65536), .PROG_TICKS(24)) flash (
+    sv16_flash_model #(.MEM_BYTES(131072), .PROG_TICKS(24)) flash (
         .clk(clk), .rst_n(1'b1),
         .sck(flash_sck), .cs_n(flash_cs_n), .mosi(flash_mosi), .miso(flash_miso)
     );

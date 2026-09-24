@@ -32,7 +32,7 @@ module soc_boot_tb;
 
     localparam string FLASH_IMAGE = "build/fw/motor_test_flash.hex";
     localparam string IMG_WORDS   = "build/fw/motor_test_words.hex";
-    localparam int    IMG_WORDS_N = 34;
+    localparam int    IMG_WORDS_N = 39;
 
     // motor_test.s layout: the program ends with
     //   main_loop: NOP / NOP / JMP main_loop   (words 30..33)
@@ -72,7 +72,7 @@ module soc_boot_tb;
     );
 
     // ------------------------------------------------------- SPI flash model
-    sv16_flash_model #(.MEM_BYTES(65536), .PROG_TICKS(24), .INIT_FILE(FLASH_IMAGE))
+    sv16_flash_model #(.MEM_BYTES(131072), .PROG_TICKS(24), .INIT_FILE(FLASH_IMAGE))
     flash (
         .clk(clk), .rst_n(1'b1),
         .sck(flash_sck), .cs_n(flash_cs_n), .mosi(flash_mosi), .miso(flash_miso)

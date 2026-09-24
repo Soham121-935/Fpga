@@ -90,7 +90,27 @@ def trim_trailing_zeros(words: list[int]) -> list[int]:
     return words[:end]
 
 
-def build_image(words: list[int], entry: int, sp: int, name: str) -> tuple[bytes, int, int]:
+# ---------------------------------------------------------------- ADR-019 A/B
+# The loader reads a 2-byte slot record out of the image header at byte offset
+# 0x18 (header word 0x0C), which sits at absolute flash addresses 0x0000FE and
+# 0x0100FE -- deliberately across a 256-byte page boundary, so each byte is its
+# own one-byte page program and a power cut can never leave a valid-looking
+# record.  A packed image can carry the record so that a freshly installed
+# firmware starts its trial on the next boot.
+SLOT_REC_OFF = 0x18          # inside the header
+SLOT_SYNC    = 0xA5
+# The state byte only ever gets bits cleared by the part, so the values are a
+# chain of bit-subsets: the loader turns PENDING into TRIED before the first
+# boot and TRIED into BAD (or GOOD when the application confirms).
+SLOT_STATES  = {"pending": 0x1F, "tried": 0x0F, "good": 0x07, "bad": 0x04}
+SLOT_BASES   = {0: 0x000000, 1: 0x008000}   # 32 KB per slot, see ADR-019
+SLOT_STRIDE  = 0x008000
+FLASH_SIZE   = 0x010000      # the 64 KB the monitor's protocol can address
+
+
+def build_image(words: list[int], entry: int, sp: int, name: str,
+                slot: int | None = None,
+                slot_state: str = "pending") -> tuple[bytes, int, int]:
     payload = b"".join(struct.pack("<H", w) for w in words)
     if len(payload) > 0x1FFFE:
         raise SystemExit("payload too large (max 64K words)")
@@ -103,6 +123,14 @@ def build_image(words: list[int], entry: int, sp: int, name: str) -> tuple[bytes
     header[0x08:0x10] = name_bytes
     struct.pack_into("<H", header, 0x10, entry & 0xFFFF)
     struct.pack_into("<H", header, 0x12, sp & 0xFFFF)
+
+    if slot is not None:
+        if slot not in SLOT_BASES:
+            raise SystemExit("slot must be 0 or 1")
+        if slot_state not in SLOT_STATES:
+            raise SystemExit(f"slot state must be one of {sorted(SLOT_STATES)}")
+        header[SLOT_REC_OFF] = SLOT_SYNC
+        header[SLOT_REC_OFF + 1] = SLOT_STATES[slot_state]
 
     hdr_crc = crc16_ccitt(bytes(header[:HDR_CRC_LEN]))
     pld_crc = crc16_ccitt(payload)
@@ -192,8 +220,13 @@ def parse_verify(path: str) -> int:
         print("FAIL: payload CRC mismatch")
         return 1
     name = image[0x08:0x10].rstrip(b"\x00").decode("ascii", "replace")
+    rec = image[SLOT_REC_OFF:SLOT_REC_OFF + 2]
+    slot_txt = ""
+    if rec[0] == SLOT_SYNC:
+        state = {v: k for k, v in SLOT_STATES.items()}.get(rec[1], f"0x{rec[1]:02X}")
+        slot_txt = f", slot state '{state}'"
     print(f"OK: {path}: '{name}' {words} words, entry 0x{entry:04X}, "
-          f"sp 0x{sp:04X}, header CRC 0x{hdr_crc:04X}, payload CRC 0x{pld_crc:04X}")
+          f"sp 0x{sp:04X}, header CRC 0x{hdr_crc:04X}, payload CRC 0x{pld_crc:04X}{slot_txt}")
     return 0
 
 
@@ -206,8 +239,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--name", default=None, help="image name (max 8 ASCII chars)")
     ap.add_argument("--no-trim", action="store_true", help="keep trailing zero words")
     ap.add_argument("--flash-offset", default="0", help="flash offset of the image")
-    ap.add_argument("--flash-size", default="65536", help="flash size for the padded hex")
+    ap.add_argument("--flash-size", default=None,
+                    help="flash size for the padded hex (default 64 KB, or the "
+                         "two-slot 128 KB area when --slot is given)")
     ap.add_argument("--c-header", action="store_true", help="also write <prefix>.h")
+    ap.add_argument("--slot", default=None, choices=["0", "1"],
+                    help="mark the image as living in A/B slot 0 or 1: writes the "
+                         "slot record (sync 0xA5 + state) at header offset 0x18")
+    ap.add_argument("--slot-state", default="pending",
+                    choices=sorted(SLOT_STATES),
+                    help="slot record state (default pending = on trial)")
     ap.add_argument("--verify", help="verify an existing .bin image instead")
     args = ap.parse_args(argv)
 
@@ -226,10 +267,17 @@ def main(argv: list[str] | None = None) -> int:
     name = args.name or os.path.splitext(os.path.basename(args.input))[0][:8]
     entry = DEFAULT_ENTRY if args.entry is None else num(args.entry)
     sp = DEFAULT_SP if args.sp is None else num(args.sp)
+    slot = None if args.slot is None else int(args.slot)
+    if slot is not None and args.flash_offset == "0":
+        # default the flash placement to the slot the image belongs to
+        args.flash_offset = str(SLOT_BASES[slot])
+    if args.flash_size is None:
+        args.flash_size = str(FLASH_SIZE if slot is not None else 65536)
     prefix = args.output or os.path.join("build", "fw", "image")
     os.makedirs(os.path.dirname(prefix) or ".", exist_ok=True)
 
-    image, hdr_crc, pld_crc = build_image(words, entry, sp, name)
+    image, hdr_crc, pld_crc = build_image(words, entry, sp, name, slot,
+                                          args.slot_state)
 
     bin_path = prefix + ".bin"
     hex_path = prefix + ".hex"
@@ -266,6 +314,9 @@ def main(argv: list[str] | None = None) -> int:
         f"image hex    : {prefix}_img.hex",
         f"words hex    : {prefix}_words.hex",
     ]
+    if slot is not None:
+        report.insert(4, f"slot         : {slot} "
+                         f"(record 0x{SLOT_SYNC:02X},0x{SLOT_STATES[args.slot_state]:02X})")
     with open(txt_path, "w") as fh:
         fh.write("\n".join(report) + "\n")
     print("\n".join(report))

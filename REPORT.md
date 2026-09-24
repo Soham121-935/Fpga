@@ -13,10 +13,10 @@ prototype* into a *practical, MCU-style programmable system* on the Lattice ECP5
 | :--- | :--- |
 | Date of report | 2026-09-24 |
 | Branch | `arena/01a0ce9b-fpga` (this session), one commit ahead of `arena/Rv2` |
-| Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) · `e664a0c` branch-rename note · `62f432a` watchdog in the reset path (P1) · multi-cycle divider + full 25 MHz (P2) |
+| Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) · `e664a0c` branch-rename note · `62f432a` watchdog in the reset path (P1) · `56a8b62` multi-cycle divider + full 25 MHz (P2) · A/B image slots with rollback (P3) |
 | Remote state | On GitHub this work stream was renamed **`arena/01a0ce9b-fpga` → `arena/Rv2`**, so `arena/Rv2` holds the Rev B work up to `a07f62e`. This session pushed `arena/01a0ce9b-fpga` again (P1 watchdog, then P2 timing) and it is a direct descendant of `arena/Rv2`, so it can be fast-forwarded or merged without conflicts. |
-| Test status | **217 checks, 0 failures** across 7 suites; RTL lint 25/25 clean |
-| Bitstream | `make bitstream` → `build/sv16_top.bit`, 285,639 bytes, **timing PASS at the full 25 MHz** (Fmax 46.58 MHz, ~86 % margin) |
+| Test status | **276 checks, 0 failures** across 8 suites; RTL lint 25/25 clean |
+| Bitstream | `make bitstream` → `build/sv16_top.bit`, 291,352 bytes, **timing PASS at the full 25 MHz** (Fmax 45.46 MHz, ~82 % margin) |
 | Silicon | **never run on hardware** — simulation + static timing only |
 
 ---
@@ -52,15 +52,16 @@ it breaks:
 
 | Metric | Value |
 | :--- | :--- |
-| FPGA utilization | 8,363 / 24,288 LUT4 (**34 %**), 4,631 FFs (19 %), 18/56 block RAMs, 1 multiplier, 52 I/O |
-| Timing | Fmax **46.58 MHz** measured; shipped at **25 MHz ⇒ PASS** with ~86 % margin |
-| Bitstream | **285,639 bytes** (`build/sv16_top.bit`), boot ROM baked in |
-| Verification | **217 checks, 0 failures** (`49 + 48 + 41 + 24 + 21 + 20 + 14`), plus lint (25/25) + whole-SoC elaboration |
-| Code | 25 RTL files / 5,933 lines, 11 scripts / 2,261 lines, 16 documents / ~2,400 lines |
+| FPGA utilization | 8,757 / 24,288 LUT4 (**36 %**), 4,765 FFs (19 %), 18/56 block RAMs, 1 multiplier, 52 I/O |
+| Timing | Fmax **45.46 MHz** measured (36.07 pre-route); shipped at **25 MHz ⇒ PASS** with ~82 % margin |
+| Bitstream | **291,352 bytes** (`build/sv16_top.bit`), boot ROM baked in |
+| Verification | **276 checks, 0 failures** (`49 + 48 + 41 + 26 + 57 + 21 + 20 + 14`), plus lint (25/25) + whole-SoC elaboration |
+| Code | 25 RTL files / 7,145 lines, 14 scripts / 2,369 lines, 24 testbenches / 4,532 lines, 15 documents + this report / 3,144 lines |
 
-**The one honest headline:** this is functionally a microcontroller now, and it
-runs at the full 25 MHz the board gives it, but it has not run on silicon, has no
-JTAG debug, no A/B image rollback, no memory protection and no C compiler. Those are listed with effort estimates in
+**The one honest headline:** this is functionally a microcontroller now, it
+runs at the full 25 MHz the board gives it, and a failed firmware update rolls
+back by itself, but it has not run on silicon, has no JTAG debug, no memory
+protection and no C compiler. Those are listed with effort estimates in
 section 8.
 
 ---
@@ -108,13 +109,14 @@ section 8.
                                  └──────┬───────┘
   sv16_as.py + sv16_fwpack.py           │
     myapp.s ──► myapp_img.hex           │            ┌──────────────┐
-        │                               │   C/R/E/V/B│ image: header│
+        │                               │  C/R/E/V/B/K image: header│
         └── make upload ────────────────┼───────────►│ + payload    │
             (UART 115200, dot-acked)    │            │ CRC-checked  │
                                         │            └──────┬───────┘
                                         │                   │ power-on / reset
                                         │            ┌──────▼─────────────────┐
                                         │            │  HARDWARE BOOT LOADER  │
+                                        │            │  slot A or B? records  │
                                         │            │  magic? hdr CRC? pld   │
                                         │            │  CRC? length? timeouts │
                                         │            └───┬────────────────┬───┘
@@ -344,10 +346,11 @@ single-step (`SYS_CTRL.HALT` + `STEP`).
 | `wdt_tb` | **49** | 0 | exact period `(PRESET+1)×2^PRESC`, one-cycle reset request, self-rearm, keyed writes, magic-word feeds, integer prescaler, early-warning interrupt timing, windowed feeding, `LOCK` freezing, W1C flags, pin-only clearing |
 | `wdt_reset_tb` | **14** | 0 | **the recovery path end to end**: boot a hanging image out of flash → watchdog bites → `RSTCAUSE.WDT` → boot sequence restarts → image re-boots → hangs again → caught again → external pin clears the block |
 | `flash_ctrl_tb` | **48** | 0 | every flash command, wait states, CRC over a range, error flags |
-| `boot_tb` | **24** | 0 | header parse, both CRCs, streaming to SRAM, verify-only, corrupt-image rejection |
+| `boot_tb` | **26** | 0 | header parse, both CRCs, streaming to SRAM, verify-only, corrupt-image rejection, clean "no image anywhere" verdict |
+| `slot_tb` | **57** | 0 | **the A/B policy end to end** (ADR-019) with the loader, flash controller and flash model wired as the SoC wires them: pick order, TRIED written before the CPU is released, a restart inside the trial rolling back to the other slot, a confirmed update retiring the previous image, a torn record refused, `BOOT_CTRL[4]` bypassing the policy |
 | `soc_boot_tb` | **21** | 0 | reset → loader → SRAM content → CPU released at the right entry/SP |
 | `monitor_tb` | **20** | 0 | the entire field-update story over a bit-banged UART, including the uploaded app actually running and driving GPIO/PWM/direction |
-| **Total** | **217** | **0** | `make sim` |
+| **Total** | **276** | **0** | `make sim` |
 
 Plus: `sv16_rtl_lint.py` **25/25 files clean** (multiple drivers, latches, missing
 resets, incomplete case) and Verilator elaboration of the whole SoC clean.
@@ -356,10 +359,10 @@ resets, incomplete case) and Verilator elaboration of the whole SoC clean.
 
 | Stage | Result |
 | :--- | :--- |
-| Yosys `synth_ecp5` | 7,233 LUT4 + 1,130 carry, 4,631 FFs, 18 `DP16KD`, 1 `MULT18X18D`, netlist written |
+| Yosys `synth_ecp5` | 7,627 logic LUT4 + 1,130 carry, 4,765 FFs, 18 `DP16KD`, 1 `MULT18X18D`, netlist written |
 | nextpnr-ecp5 (`--12k --package TQFP144 --speed 6 --freq 25`) | places, routes, **timing PASS at 25 MHz** |
-| ecppack `--compress` | `build/sv16_top.bit`, **285,639 bytes** |
-| Placer comparison | heap default = **46.58 MHz** (PASS at 25 MHz, 35.15 pre-route) · heap `timingweight 50` = 13.15/14.18 MHz (worse) · SA = fails to place carry chains |
+| ecppack `--compress` | `build/sv16_top.bit`, **291,352 bytes** |
+| Placer comparison | heap default = **45.46 MHz** (PASS at 25 MHz, 36.07 pre-route) · heap `timingweight 50` = 13.15/14.18 MHz (worse) · SA = fails to place chains |
 | 25 MHz attempt **before** ADR-018 | 14.38 MHz → FAIL; a constant-folding experiment (`a/b`, `a%b` → constants) measured 44.31 MHz — which is how the real culprit was found |
 
 ### 6.3 Real defects found and fixed by this work
@@ -398,7 +401,7 @@ git clone https://github.com/Soham121-935/Fpga.git && cd Fpga
 git checkout arena/Rv2                 # or this session's arena/01a0ce9b-fpga
 
 source scripts/sv16_venv.sh            # Verilator + Yosys + nextpnr + ecppack
-make test                              # lint + 217 checks           (~4 min)
+make test                              # lint + 276 checks           (~4 min)
 make bitstream                         # Yosys→PnR→pack, timing report (~2 min)
 make prog                              # program the FPGA over JTAG
 make upload PORT=/dev/ttyUSB0          # program the *firmware* over UART
@@ -430,7 +433,7 @@ be audited or replayed.
 | ~~P1~~ | ~~**Watchdog in the reset path**~~ — **DONE** (`sv16_wdt.sv`, MMIO block 8, `RSTCAUSE.WDT` live, `MMIO_PRESENT = 0x7FF`) | A software hang used to mean manual intervention; now the hardware restarts the boot sequence and re-boots the application, and the application cannot disarm it | 265-line block + 49 unit checks + 14 system checks + ADR-017; lint and timing re-verified |
 | ~~P2~~ | ~~**Timing headroom → 25 MHz+**~~ — **DONE**: the real critical path was the ALU's combinational divider, not the CPU flag/branch path | The 12.5 MHz default was a workaround; the part now runs at the full oscillator frequency | multi-cycle DIV/MOD + `S_DIV_WAIT` (ADR-018), 41 new checks, Fmax 14.68 → **46.58 MHz**, shipped at 25 MHz |
 | P2b | **`EHXPLLL` for 40–50 MHz** (or a jitter-free SPI clock) | The fabric now supports it and it would make the clock programmable, but nothing needs it yet | 1-2 days: instance the PLL, constrain it, re-measure |
-| P3 | **A/B images with rollback** | Today a power cut during `C` loses the only application (recovery is the monitor, but the app is gone) | 3-5 days: two slots, validity flag, "confirm" store, loader policy + tests |
+| ~~P3~~ | ~~**A/B images with rollback**~~ — **DONE**: two 32 KB slots (A `0x0000`, B `0x8000`) with a 2-byte slot record in the image header, a trial period that lives *in flash*, hardware rollback on the next restart, `BOOT_CTRL[6]` confirmation, monitor `K`, packer `--slot`, `make upload-slot` / `make commit` | A power cut or a hang during an update no longer loses the only application: the part boots the previous image by itself, with no host attached | ~430 lines of RTL across `sv16_boot`/`sv16_flash_ctrl`, `slot_tb` (57 checks) + boot_tb additions, ADR-019, docs; timing re-verified (45.46 MHz, PASS) |
 | P4 | **JTAG debug bridge** over the ECP5 TAP using the existing `SYS_CTRL.HALT` / `SYS_DBG_*` hooks | Biggest quality-of-life gap vs a real MCU: halt, resume, peek/poke, breakpoints | 1-2 weeks: TAP shift-register bridge + host tool |
 | P5 | **C toolchain** (or an ISA extension to make C practical: register-indirect call, more registers) | Assembly-only is the main practical limit | weeks; ISA change needs its own ADR |
 | P6 | **Signed / authenticated updates** (CRC16 detects corruption, not tampering) | Field-update security | 2-3 days for a keyed MAC in the loader + packer |
@@ -453,12 +456,16 @@ and ISA extension (OQ-16), update throughput (OQ-17), real board pin assignment
 1. **No silicon.** Every claim here is simulation plus static timing analysis.
    The first board will very likely find something (pin, polarity, timing, the
    flash part's command set).
-2. **12.5 MHz, ~1 MIPS-core.** The core is multi-cycle by design (ADR-002) and
-   the fabric clock divider is a timing workaround, not elegance.
+2. **25 MHz, ~1 MIPS-class core.** The core is multi-cycle by design
+   (ADR-002): DIV/MOD take 18 cycles (ADR-018), and the ISA is unchanged from
+   Rev A.
 3. **No protection.** No MPU, no privilege levels: any code can write any MMIO
    register, including the flash controller and the reset logic.
-4. **Single image.** No rollback; a failed update leaves the monitor, not the
-   previous application.
+4. **Rollback depth is one generation.** A/B keeps the previously confirmed
+   image; a second failed update overwrites the oldest one. The records are only
+   written by the loader (an application asks; it does not program the flash
+   itself), updates are not signed, and slot B needs the UART or an external
+   programmer because the monitor's `C` command addresses 64 KB.
 5. **Assembly only.** The assembler is also the linker (`.org`). The C example in
    `firmware/` documents intent, it does not compile.
 6. **Update path is intentionally simple.** ASCII, CRC16, per-byte ack, no

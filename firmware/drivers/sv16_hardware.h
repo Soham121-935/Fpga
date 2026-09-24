@@ -300,12 +300,53 @@
 #define BOOT_CTRL_ABORT       SV16_BIT(1)
 #define BOOT_CTRL_VERIFY_ONLY SV16_BIT(2)   /* validate but do not hand over */
 #define BOOT_CTRL_AUTO        SV16_BIT(3)   /* boot from flash on every reset */
+/* ADR-019 A/B images: bit 4 is active low ("1 = ignore the slot records and
+ * boot BOOT_SRC"), so writing 0 -- what firmware that predates the slot policy
+ * does -- leaves the A/B policy enabled. */
+#define BOOT_CTRL_NOSLOT      SV16_BIT(4)
+#define BOOT_CTRL_SLOT_CLR    SV16_BIT(5)   /* write-only: forget cached state */
+#define BOOT_CTRL_SLOT_CNF    SV16_BIT(6)   /* write-only: commit the trial */
 
 #define BOOT_STAT_BUSY     SV16_BIT(0)
 #define BOOT_STAT_OK       SV16_BIT(1)
 #define BOOT_STAT_FAIL     SV16_BIT(2)
 #define BOOT_STAT_CRC_OK   SV16_BIT(3)
 #define BOOT_STAT_MAGIC_OK SV16_BIT(4)
+#define BOOT_STAT_SLOT     SV16_BIT(5)   /* booted from slot B (0 = slot A) */
+#define BOOT_STAT_RETRY    SV16_BIT(6)   /* a slot was abandoned this attempt */
+#define BOOT_STAT_TRIAL    SV16_BIT(7)   /* this image is still on trial */
+
+#define BOOT_ERR_SLOT      SV16_BIT(7)   /* a slot record was unusable */
+
+/* ---------------------------------------------------------- ADR-019 A/B slots
+ *
+ * An image installed in a slot can carry a slot record in the reserved part of
+ * its header (bytes 0x18/0x19).  If the record says PENDING the loader puts the
+ * image on trial: it marks the record TRIED before releasing the CPU, and if
+ * the part restarts before the trial is committed (sv16_boot_confirm below) the
+ * loader retires the record to BAD and boots the other slot instead.  That is
+ * the rollback, and it needs no host: a watchdog restart inside the trial is
+ * enough.  See docs/ARCHITECTURE_DECISIONS.md (ADR-019) and
+ * docs/BOOT_AND_PROGRAMMING.md, section 3.2.
+ */
+#define SV16_SLOT_REC_SYNC     0xA5u
+#define SV16_SLOT_REC_PENDING  0x1Fu  /* installed, never booted */
+#define SV16_SLOT_REC_TRIED    0x0Fu  /* booted, awaiting confirmation */
+#define SV16_SLOT_REC_GOOD     0x07u  /* confirmed: the fallback image */
+#define SV16_SLOT_REC_BAD      0x04u  /* failed its trial / retired */
+
+/* Commit this image: clears BOOT_STAT.TRIAL once the loader has programmed the
+ * record.  Harmless (a no-op) for an image with no slot record. */
+static inline void sv16_boot_confirm(void)
+{
+    *(volatile unsigned short *)BOOT_CTRL = BOOT_CTRL_SLOT_CNF;
+}
+
+/* True while the running image still owes a confirmation. */
+static inline int sv16_boot_on_trial(void)
+{
+    return (*(volatile unsigned short *)BOOT_STAT & BOOT_STAT_TRIAL) != 0;
+}
 
 /* BOOT_ERR codes (same numbering as the monitor's -E replies) */
 #define BOOT_ERR_NONE     0x00u

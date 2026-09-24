@@ -67,7 +67,7 @@ module wdt_reset_tb;
     );
 
     sv16_flash_model #(
-        .MEM_BYTES(65536), .PROG_TICKS(24), .INIT_FILE(FLASH_IMAGE)
+        .MEM_BYTES(131072), .PROG_TICKS(24), .INIT_FILE(FLASH_IMAGE)
     ) flash (
         .clk(clk), .rst_n(1'b1),
         .sck(flash_sck), .cs_n(flash_cs_n), .mosi(flash_mosi), .miso(flash_miso)

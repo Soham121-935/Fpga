@@ -12,12 +12,18 @@
 // firmware status polling is exercised; a program without WREN, and commands
 // issued while WIP is set, are ignored exactly like a real device.
 //
+// Physics that the tests depend on: a page program only clears bits
+// (mem <= mem & data) and an erase sets a whole sector back to 0xFF.  Modelling
+// the program as a plain assignment would hide the ADR-019 requirement that
+// every slot-record transition only ever clear bits -- a real chip cannot turn
+// a 0 back into a 1 without erasing the whole 4 KB sector, image and all.
+//
 // This is a testbench model: not synthesizable, never part of the FPGA build.
 
 `timescale 1ns / 1ps
 
 module sv16_flash_model #(
-    parameter int          MEM_BYTES   = 65536,
+    parameter int          MEM_BYTES   = 131072,  // two 64 KB A/B slots
     parameter logic [7:0]  ID_MFR      = 8'hEF,   // Winbond
     parameter logic [7:0]  ID_TYPE     = 8'h40,
     parameter logic [7:0]  ID_CAP      = 8'h18,   // 128 Mbit
@@ -220,7 +226,7 @@ module sv16_flash_model #(
                                 case (cmd)
                                     CMD_READ: begin
                                         fstate         <= F_READ;
-                                        rd_addr        <= {addr[15:0], rx_byte};
+                                        rd_addr        <= {addr[15:0], rx_byte};   // 24-bit addr
                                         out_bytes_left <= 2'd3;   // streams until CS rises
                                     end
                                     CMD_PP:   fstate <= F_PROG;
@@ -232,7 +238,9 @@ module sv16_flash_model #(
                         F_PROG: begin
                             if (wel) begin
                                 if (addr[ADDR_W-1:0] < MEM_BYTES)
-                                    mem[addr[ADDR_W-1:0]] <= rx_byte;
+                                    // page program: AND, not overwrite
+                                    mem[addr[ADDR_W-1:0]]
+                                        <= mem[addr[ADDR_W-1:0]] & rx_byte;
                                 addr <= {addr[23:8], addr[7:0] + 8'd1};  // page wrap
                             end
                         end

@@ -18,6 +18,12 @@ Everything below is implemented in RTL that is placed, routed and packed for the
 | SRAM | FPGA block RAM (`rtl/sv16_ram.sv`) | 16 K words = 32 KB at `0x0000-0x3FFF` | applications at run time; boot loader while loading | no |
 | Application flash | external SPI NOR, 512 KB typical (W25Q40 class) | `0x000000-0x0FFFFF` byte address space | the ROM monitor (`C` command) or the application itself through the flash controller | yes |
 
+The first 64 KB of the application flash is split into two **A/B slots**
+(ADR-019): slot A at `0x000000` and slot B at `0x008000`, each holding one
+complete image, with the *slot record* in the reserved bytes of the image
+header (`0x18` sync `0xA5`, `0x19` state). Either slot can be booted; the loader
+picks between them and can undo an update by itself.
+
 The boot ROM holds the **monitor** — a small console that lives at
 `0xE000-0xE7FF` (word addresses) and is *not* overwritten by applications. The
 application flash holds **images** in the format described in section 4. SRAM
@@ -121,6 +127,40 @@ B
 
 ---
 
+### 3.2 Installing into the inactive slot (A/B field update)
+
+The update that cannot brick the part is the one that writes the slot it is
+*not* running from. With the boot loader's A/B policy (ADR-019) that is the
+whole procedure, and every step is a `make` target:
+
+```
+make slot-image SLOT=1      # pack firmware/examples/motor_test.s with a
+                            # PENDING slot record for slot B
+make upload-slot SLOT=1     # erase the sectors it touches and stream it into
+                            # slot B (flash 0x8000) over the monitor
+make mon-boot               # B: the loader picks the PENDING slot, marks its
+                            # record TRIED and boots it -- the trial starts
+make commit                 # K: once the image looks good, commit it.  The
+                            # loader writes GOOD over its record and retires the
+                            # other slot
+```
+
+If the new image hangs, or the power goes off before `make commit`, nothing else
+is needed: on the next restart (including the one the watchdog performs) the
+loader finds the record still TRIED, writes BAD, and boots the *previous* image
+from the other slot. `BOOT_STAT[7]` tells a running application that it is on
+trial; `BOOT_STAT[6]` says a rollback happened during this attempt;
+`BOOT_ERR[7]` says a record was unusable. Firmware that wants to commit itself
+calls `sv16_boot_confirm()` (or writes `BOOT_CTRL[6]`) once its own self-test
+has passed — the shipped `motor_test.s` does exactly that at the end of its
+initialisation.
+
+The monitor reports the slot in its boot verdict (`slot A` / `slot B on trial
+(send K to commit)`), and `sv16_mon.py upload --slot 1` refuses an image that
+carries no slot record rather than installing a copy the policy would ignore.
+
+---
+
 ## 4. Firmware image format
 
 `scripts/sv16_fwpack.py` packs the assembler output into the image the boot
@@ -138,7 +178,9 @@ identical to `rtl/sv16_crc16.sv`).
 | `0x12` | 2 | initial stack pointer (`0` → `0x3FFE`) |
 | `0x14` | 2 | header CRC16 over bytes `0x00-0x13` |
 | `0x16` | 2 | payload CRC16 over the payload bytes |
-| `0x18` | 8 | reserved (zero) |
+| `0x18` | 1 | slot record: sync `0xA5` (0 = no record, boot untried) |
+| `0x19` | 1 | slot record state: `0x1F` pending, `0x0F` tried, `0x07` good, `0x04` bad |
+| `0x1A` | 6 | reserved (zero) |
 | `0x20` | n | payload: 16-bit words, little endian |
 
 `make app` produces, for `firmware/examples/motor_test.s`:
@@ -157,6 +199,14 @@ by default). A different placement is supported through `BOOT_SRC_LO/HI`
 (`0xF0A2`/`0xF0A3`) plus `make upload` with a matching address; the monitor
 itself always uploads to 0.
 
+Pack with `--slot N` to install an image in slot A or B:
+`scripts/sv16_fwpack.py build/fw/app.hex -o build/fw/app --slot 1` writes the
+record (sync + `PENDING`) into bytes `0x18`/`0x19` of the image and defaults the
+flash placement to that slot's base, so the image a host flashes *is* the
+record. An image packed without `--slot` has zeroes there, which the loader
+reads as "no record": it boots untried, exactly like every image written before
+ADR-019.
+
 ---
 
 ## 5. The boot engine register block (`0xF0A0`)
@@ -166,15 +216,15 @@ is the in-application programming (IAP) path.
 
 | Reg | Addr | Access | Meaning |
 | :--- | :--- | :--- | :--- |
-| `BOOT_CTRL` | `0xF0A0` | RW | `[0]` START (latched, self-clearing), `[1]` ABORT, `[2]` VERIFY-ONLY (load and check, do not hand over), `[3]` AUTO (boot from flash on every reset) |
-| `BOOT_STAT` | `0xF0A1` | RO | `[0]` BUSY, `[1]` OK, `[2]` FAIL, `[3]` CRC_OK, `[4]` MAGIC_OK |
+| `BOOT_CTRL` | `0xF0A0` | RW | `[0]` START (latched, self-clearing), `[1]` ABORT, `[2]` VERIFY-ONLY (load and check, do not hand over), `[3]` AUTO (boot from flash on every reset), `[4]` NOSLOT *(active low)*: 1 = ignore the slot records and boot `BOOT_SRC`, `[5]` SLOT_CLR, `[6]` SLOT_CNF (write-only pulses, ADR-019) |
+| `BOOT_STAT` | `0xF0A1` | RO | `[0]` BUSY, `[1]` OK, `[2]` FAIL, `[3]` CRC_OK, `[4]` MAGIC_OK, `[5]` SLOT (this attempt chose slot B), `[6]` RETRY (a slot was abandoned), `[7]` TRIAL (this image still owes a confirmation) |
 | `BOOT_SRC_LO/HI` | `0xF0A2/3` | RW | flash **byte** address of the image (24-bit) |
 | `BOOT_SRC_LEN` | `0xF0A4` | RW | bytes to stream (`0` = trust the header) |
 | `BOOT_ENTRY` | `0xF0A5` | RO | entry address decoded from the header |
 | `BOOT_STACK` | `0xF0A6` | RO | stack pointer decoded from the header |
 | `BOOT_WORDS` | `0xF0A7` | RO | payload word count from the header |
 | `BOOT_CRC_EXP/ACT` | `0xF0A8/9` | RO | expected vs computed payload CRC |
-| `BOOT_ERR` | `0xF0AA` | RW1C | error code (write 1s to clear) |
+| `BOOT_ERR` | `0xF0AA` | RW1C | error code (write 1s to clear); `[7]` set when no slot was bootable *or* a record was unusable |
 | `BOOT_MAGIC` | `0xF0AB` | RO | magic word read from flash |
 | `BOOT_HDRVER` | `0xF0AC` | RO | header version |
 | `BOOT_NAME0..2` | `0xF0AD-F` | RO | image name characters |
@@ -185,6 +235,10 @@ the lowest-priority bus master: while it writes SRAM it steals RAM cycles from
 the CPU (which simply waits — the CPU's request is held until acknowledged), and
 it never touches the boot ROM, so the monitor keeps polling `BOOT_STAT` while an
 image streams past it.
+
+A write that carries `[5]` or `[6]` is a *control* write: it does not change
+AUTO or NOSLOT, so an application committing its own trial cannot disarm the
+boot policy at the same time.
 
 ### 5.1 A minimal IAP sequence (assembly)
 
@@ -251,9 +305,17 @@ boot engine are part of the bitstream, not of the application image.
 
 ## 8. What is still missing for production programming
 
-* **No A/B images or rollback.** One image at address 0; a power loss during
-  `C` leaves invalid flash, which the hardware boot correctly rejects (the
-  monitor comes up) but the *previous* application is gone.
+* **No image signing** — see the next item; CRC16 (and the A/B trial) detect
+  corruption and a bad build, not tampering.
+* **Rollback depth is one generation.** A/B keeps the previously *confirmed*
+  image; a third generation of history would need more slots or a data area.
+* **Records are only written by the loader.** An application cannot promote its
+  own record while it runs (the write is deferred to a 2-byte page program in
+  the loader); `BOOT_CTRL[6]` is the supported path and it works while the CPU
+  runs, but a record write costs a flash page program and is therefore not free.
+* **Slot B has to be programmed over UART or an external programmer**, and the
+  monitor's `C` command writes the 64 KB window only — slot A/B fits, a larger
+  data area would not.
 * **No image signing** — CRC16 detects corruption, not tampering.
 * **No self-programming of the FPGA configuration** — the bitstream is loaded
   over JTAG only; there is no "application updates the FPGA" path.

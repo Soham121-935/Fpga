@@ -46,6 +46,11 @@ APP_IMG     = $(APP)_img.hex
 HANG        = $(FW_DIR)/wdt_hang
 HANG_IMG    = $(HANG)_img.hex
 
+# ADR-019 field update: pack the example application for an A/B slot and install
+# it into the *inactive* one.  SLOT=1 is slot B (flash 0x8000), SLOT=0 slot A.
+SLOT        ?= 1
+SLOT_APP    = $(FW_DIR)/app_slot$(SLOT)
+
 CONSTRAINTS = constraints/ecp5_144tqfp.lpf
 
 PY   = python3
@@ -90,12 +95,14 @@ TESTBENCHES = \
 	div_tb:simulation/unit/div_tb.sv \
 	flash_ctrl_tb:simulation/unit/flash_ctrl_tb.sv \
 	boot_tb:simulation/unit/boot_tb.sv \
+	slot_tb:simulation/unit/slot_tb.sv \
 	soc_boot_tb:simulation/regression/soc_boot_tb.sv \
 	monitor_tb:simulation/regression/monitor_tb.sv \
 	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
 
 .PHONY: all firmware rom app lint vlint test sim iss bitstream synth prog \
-	upload mon-verify mon-boot mon-term clean help
+	upload upload-slot slot-image commit mon-verify mon-boot mon-term \
+	clean help
 
 all: firmware lint
 
@@ -183,6 +190,27 @@ IMG  ?= $(if $(FILE),$(FILE),$(APP_IMG))
 
 upload: $(APP_IMG)
 	$(PY) scripts/sv16_mon.py upload $(IMG) --port $(PORT)
+
+# ---- ADR-019 field update (see docs/BOOT_AND_PROGRAMMING.md, section 5) ----
+# 1. pack the application so it carries the slot record (PENDING) the loader
+#    needs to start a trial, then 2. install it into the inactive slot over the
+#    monitor, 3. boot it (the loader picks the pending slot), 4. commit it once
+#    it behaves.  Skip step 4 and the next restart rolls back to the other slot.
+$(SLOT_APP)_img.hex: $(APP_SRC) scripts/sv16_as.py scripts/sv16_fwpack.py
+	@mkdir -p $(FW_DIR)
+	$(AS) $(APP_SRC) $(SLOT_APP)_asm.hex --listing $(SLOT_APP).lst
+	$(PACK) $(SLOT_APP)_asm.hex -o $(SLOT_APP) --name SLOT$(SLOT) --slot $(SLOT)
+
+slot-image: $(SLOT_APP)_img.hex
+	@echo "packed $(SLOT_APP)_img.hex for slot $(SLOT)"
+
+upload-slot: $(SLOT_APP)_img.hex
+	$(PY) scripts/sv16_mon.py upload $(SLOT_APP)_img.hex --slot $(SLOT) --port $(PORT)
+	@echo "next: make mon-boot  (the loader picks the pending slot), then"
+	@echo "      make commit    (once the new image looks good)"
+
+commit:
+	$(PY) scripts/sv16_mon.py commit --port $(PORT)
 
 mon-verify:
 	$(PY) scripts/sv16_mon.py verify --port $(PORT)

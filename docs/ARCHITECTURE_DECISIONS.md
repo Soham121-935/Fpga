@@ -122,7 +122,8 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
 - **Consequences**: A host tool (`scripts/sv16_mon.py`, `make upload`) is a
   convenience, not a requirement — the protocol is human-typeable. Images are
   verified twice (monitor + loader). Cost: hex text doubles the wire time versus a
-  binary protocol; there is no resume, no compression and no A/B slots yet.
+  binary protocol; there is no resume and no compression. (A/B slots with
+  rollback arrived later, in ADR-019.)
 
 ---
 
@@ -285,3 +286,94 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
   state, and 16 extra cycles for the two rarest instructions; ~1,150 LUTs were
   freed (7,233 vs 6,147 logic LUTs is more, but the 4,448→4,631 FF and 18 BRAM
   counts are unchanged and the part is still only 34 % full).
+
+---
+
+## ADR-019: A/B application images with a trial period and hardware rollback
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: ADR-012 gave the SoC a hardware boot loader and ADR-013 a way to
+  reprogram it over UART, but there was exactly one image at flash address 0.
+  A field update is therefore a *destructive* operation: the monitor erases the
+  sector holding the running image, and a power cut, a bad build or a hang in
+  the new firmware leaves the part with nothing bootable. The recovery path is
+  the monitor, which needs a host. The WDT (ADR-017) can restart a hung
+  application, but it restarts it into the same broken image, so a hang is a
+  boot loop, not a recovery. What was missing is the thing every practical MCU
+  has: an update that can be undone by the part itself.
+- **Decision**:
+  - **Two slots, 32 KB apart, inside the first 64 KB of the flash**: slot A at
+    `0x000000`, slot B at `0x008000`. Keeping both inside the 64 KB the
+    monitor's 16-bit update protocol can address is deliberate (a 64 KB stride
+    pushed slot B out of reach, i.e. the *inactive* slot — the one a field
+    update must write — could only be programmed with an external programmer).
+    32 KB per slot is far more than an image can use with 32 KB of RAM.
+  - **The slot record lives in the image header**, in the eight reserved bytes
+    of the format-v1 header, at byte offset `0x18` (header word `0x0C`; the
+    header CRC covers `0x00-0x13`, so writing a record cannot invalidate the
+    image, and it can never collide with payload bytes):
+    - `0x18` = sync `0xA5`, written once and never changed,
+    - `0x19` = state, the only byte that ever changes:
+      `0x1F` PENDING (installed, never booted) → `0x0F` TRIED (booted, awaiting
+      confirmation) → `0x07` GOOD (confirmed, the fallback image) or `0x04` BAD
+      (trial failed / retired).
+  - **Every transition only clears bits** (`0x1F → 0x0F → 0x07 / 0x04`). This is
+    not cosmetic: a page program on real NOR flash can only turn 1s into 0s, and
+    no erase unit is small enough to rewrite one byte in the middle of an image,
+    so any encoding that needed a bit set back would need a sector erase — which
+    would erase the image the record belongs to. The read-back check in the
+    loader (`rec_b1 == l_wr_data`) is what keeps the encoding honest, and the
+    flash *simulation model* implements the same physics (program = AND) so a
+    violation fails `slot_tb` instead of the board.
+  - **The record is written by the loader as one 2-byte page program** (sync +
+    state), so a power cut can leave `{0xA5, 0xFF}` — "record started, state
+    never written" — which the classifier reads as *no record*, or a state byte
+    with unrecognised bits, which it reads as BAD and reports in `BOOT_ERR[7]`.
+    Fail toward rollback: a torn record can never promote an image.
+  - **Pick order** (the class value doubles as the priority, ties settle on
+    slot A): PENDING > TRIAL > GOOD > no-record > BAD. A PENDING image is the
+    new one and wins; a TRIAL image has already had its chance and is retired
+    (BAD) *without being loaded*; GOOD is the confirmed image; an image with no
+    record at all (one flashed by any other tool) boots untried, which is how
+    every existing image and the monitor's own recovery image keep working.
+  - **Trial and rollback**: on the first boot of a PENDING slot the loader
+    writes TRIED *before* releasing the CPU, then streams the image. If the part
+    restarts before the application confirms, the record still says TRIED, so
+    the loader writes BAD and boots the other slot — in the same attempt, with
+    no host. The state is in *flash*, not in the loader: the reset that triggers
+    the rollback is exactly the reset that would clear a flip-flop copy of it
+    (an earlier draft used a `tried` register and could never have worked on
+    hardware; `slot_tb` now pulses `rst_n` to prove the flash version does).
+  - **Confirmation** is one write: `BOOT_CTRL[6]` (write-only pulse) makes the
+    loader program `0x07` over the running slot's record and then retire the
+    *other* slot's record to BAD. With two GOOD records the pick would settle on
+    slot A and a confirmed update would silently revert; retiring the other
+    image keeps exactly one live image, and the retired one is the image that
+    was current before the update.
+  - **Registers are the existing ones** — no new offsets, so no firmware
+    register map moves: `BOOT_CTRL[4]` NOSLOT (active low: 1 = ignore the
+    records and boot `BOOT_SRC`), `[5]` SLOT_CLR, `[6]` SLOT_CNF;
+    `BOOT_STAT[5]` SLOT, `[6]` RETRY, `[7]` TRIAL; `BOOT_ERR[7]` SLOT. A write
+    that carries a write-only pulse bit is a *control* write: it does not touch
+    AUTO or NOSLOT, so an application committing its own trial cannot disarm the
+    boot policy by accident.
+  - **Tooling**: `sv16_fwpack.py --slot N [--slot-state ...]` writes the record
+    into the image (so the image a host flashes *is* the record);
+    `make slot-image SLOT=1` / `make upload-slot SLOT=1` install it into the
+    inactive slot over UART; `make mon-boot` boots it (the loader picks the
+    pending slot); `make commit` (monitor command `K`) commits it. Firmware uses
+    `sv16_boot_confirm()` from `firmware/drivers/sv16_hardware.h`.
+- **Consequences**: A field update is now non-destructive: the previous image
+  is untouched until the new one has proved itself, a hang or a power cut during
+  the trial rolls back by itself on the next restart, and the recovery path is
+  the fallback image rather than the monitor. The demo image
+  (`firmware/examples/motor_test.s`) commits itself at the end of its
+  initialisation, so the shipped example exercises the whole loop. Cost: ~430
+  lines of RTL across `sv16_boot.sv`/`sv16_flash_ctrl.sv`, one slot-record
+  plumbing path (a 2-byte page program that re-uses the existing program
+  sequencer and takes priority over an application page flush), one new flash
+  command *sequence* (not a new command), and `slot_tb` (57 checks) as the
+  regression. Limitations, documented in
+  [BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md#8-what-is-still-missing-for-production-programming):
+  records are not written while the application runs (a write costs one page
+  program, so the update tool decides when), there is no signed image (ADR-019
+  is integrity, not authenticity), and the rollback depth is one generation.

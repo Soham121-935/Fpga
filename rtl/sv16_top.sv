@@ -408,10 +408,18 @@ module sv16_top (
         .boot_start(f_start), .boot_addr(f_addr), .boot_len(f_len),
         .boot_valid(f_valid), .boot_data(f_data), .boot_ack(f_ack),
         .boot_abort(f_abort), .boot_busy(f_busy),
+        .slot_wr_req(slot_wr_req), .slot_wr_addr(slot_wr_addr),
+        .slot_wr_data(slot_wr_data), .slot_wr_done(slot_wr_done),
         .flash_sck(flash_sck), .flash_cs_n(flash_cs_n),
         .flash_mosi(flash_mosi), .flash_miso(flash_miso),
         .flash_irq(flash_irq), .id_ok(flash_id_ok), .jedec_id(flash_jedec_id)
     );
+
+    // ------------------------------------------------- ADR-019 slot wires
+    logic        slot_wr_req;
+    logic [23:0] slot_wr_addr;
+    logic [7:0]  slot_wr_data;
+    logic [1:0]  slot_wr_done;
 
     // ---------------------------------------------------- Boot loader engine
     // The sequencer talks in pulses ("start a boot attempt", "this attempt
@@ -436,7 +444,12 @@ module sv16_top (
         .boot_entry(boot_entry),
         .boot_stack(boot_stack),
         .auto_boot(boot_auto),
-        .busy(boot_busy)
+        .busy(boot_busy),
+        // ADR-019: the loader maintains the A/B slot records itself
+        .slot_wr_req(slot_wr_req),
+        .slot_wr_addr(slot_wr_addr),
+        .slot_wr_data(slot_wr_data),
+        .slot_wr_done(slot_wr_done)
     );
 
     // `boot_ready` is a sticky, one-shot "this power-on has no image" flag:

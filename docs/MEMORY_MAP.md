@@ -17,6 +17,22 @@ device is involved (SPI flash, the image format, the monitor's flash commands).
 | `0xF000-0xF0FF` | 256 words | **MMIO** — 16 blocks × 16 registers | `sv16_bus_interconnect` + peripherals | 2 cycles minimum, more with wait states |
 | `0xF100-0xFFFF` | 3840 words | unmapped / reserved for future peripherals | — | as above |
 
+### Application flash layout (ADR-019)
+
+| Flash byte range | Contents |
+| :--- | :--- |
+| `0x000000-0x00001F` | slot A image header (record at `0x18`/`0x19`) |
+| `0x000020-0x007FFF` | slot A image payload (up to ~32 KB) |
+| `0x008000-0x00801F` | slot B image header (record at `0x8018`/`0x8019`) |
+| `0x008020-0x00FFFF` | slot B image payload (up to ~32 KB) |
+| `0x010000-...` | free — data area / spare slots for a future revision |
+
+Both slots live inside the 64 KB the monitor's update protocol can address, so
+either one can be programmed over UART. The loader chooses between them from the
+records (see [ADR-019](ARCHITECTURE_DECISIONS.md#adr-019-ab-application-images-with-a-trial-period-and-hardware-rollback));
+an image with no record boots untried from slot A unless the policy is disabled
+with `BOOT_CTRL[4]`.
+
 Programs run **from SRAM**, not from flash: the hardware boot loader copies the
 image into SRAM before the CPU is released, so instruction fetch is always a
 single-cycle RAM access. The boot ROM is executed only when flash has no valid
@@ -122,7 +138,7 @@ the vector table; `RETI` restores `SR` (and therefore `IE`) and returns.
 | Boot ROM | none (or `firmware/bootrom.hex` loaded by hand) | **2 K words @ `0xE000-0xE7FF`, monitor baked into the bitstream** |
 | MMIO | 4 blocks (GPIO, timer, PWM, UART) | **11 blocks present** of 16 (`MMIO_PRESENT = 0x7FF`): adds SPI, flash controller, GPIO1, watchdog, IRQ controller, boot engine, system control |
 | Interrupts | core lines wired ad hoc | IRQ controller with enable/pending/priority + 8-entry vector table |
-| Program store | none (JTAG-loaded init file) | **external SPI flash + hardware boot loader** |
+| Program store | none (JTAG-loaded init file) | **external SPI flash + hardware boot loader**, two A/B slots with a trial period and hardware rollback (ADR-019) |
 
 The ISA is unchanged (see [ISA.md](ISA.md)); Rev B is an address-map and
 peripheral change only.

@@ -11,7 +11,8 @@
 // Checks
 //   1. a valid image loads, verifies and reports entry/stack/name/CRCs
 //   2. the SRAM contents match the payload words after the load
-//   3. a region without a valid image fails cleanly (no bus hang)
+//   3. a region without a valid image fails cleanly (no bus hang); with the
+//      A/B slot policy enabled by default the loader also reports BOOTERR_SLOT
 //   4. the loader can be restarted after a failure and succeeds again
 //   5. a payload CRC mismatch is detected (bit flip in flash)
 //
@@ -27,7 +28,7 @@ module boot_tb;
 
     localparam string FLASH_IMAGE = "build/fw/motor_test_flash.hex";
     localparam string IMG_WORDS   = "build/fw/motor_test_words.hex";
-    localparam int    IMG_WORDS_N = 34;
+    localparam int    IMG_WORDS_N = 39;
     localparam int    IMG_OFFSET  = 32;      // payload starts after the header
 
     // ------------------------------------------------------------ signals
@@ -96,7 +97,7 @@ module boot_tb;
         .flash_irq(flash_irq), .id_ok(id_ok), .jedec_id(jedec_id)
     );
 
-    sv16_flash_model #(.MEM_BYTES(65536), .PROG_TICKS(24), .INIT_FILE(FLASH_IMAGE)) model (
+    sv16_flash_model #(.MEM_BYTES(131072), .PROG_TICKS(24), .INIT_FILE(FLASH_IMAGE)) model (
         .clk(clk), .rst_n(rst_n),
         .sck(flash_sck), .cs_n(flash_cs_n), .mosi(flash_mosi), .miso(flash_miso)
     );
@@ -173,6 +174,7 @@ module boot_tb;
     logic [15:0] rd;
     int          i;
     bit          words_match;
+    logic [7:0]  hdr_save [0:31];
 
     initial begin
         $readmemh(IMG_WORDS, exp_words);
@@ -200,11 +202,11 @@ module boot_tb;
         check(boot_entry == 16'h0000, "entry address = 0x0000");
         check(boot_stack == 16'h3FFE, "stack pointer = 0x3FFE");
         boot_read(4'h7, rd);
-        check(rd == IMG_WORDS_N, "payload length = 34 words");
+        check(rd == IMG_WORDS_N, "payload length = 39 words");
         boot_read(4'h8, rd);
-        check(rd == 16'hE083, "payload CRC from header = 0xE083");
+        check(rd == 16'h3A7B, "payload CRC from header = 0x3A7B");
         boot_read(4'h9, rd);
-        check(rd == 16'hE083, "hardware payload CRC matches");
+        check(rd == 16'h3A7B, "hardware payload CRC matches");
         boot_read(4'hA, rd);
         check(rd[7:0] == 8'h00, "no error flags after a good image");
         boot_read(4'hD, rd);
@@ -225,15 +227,27 @@ module boot_tb;
         end
         check(words_match, "SRAM payload matches the assembled program");
 
-        // ---- 3. erased flash region -> clean failure --------------------
-        $display("-- 3. no valid image (erased region) --");
+        // ---- 3. no valid image anywhere -> clean failure ----------------
+        // ADR-019: with the A/B policy on (the default) an automatic boot does
+        // not stream BOOT_SRC -- it picks a slot from the records, so "no valid
+        // image" means erasing the image itself.  The loader must try both
+        // slots, refuse, and report both the reason each slot failed and the
+        // fact that no slot was bootable.  (BOOT_SRC is ignored on purpose: it
+        // is what gives the rollback its meaning.)
+        $display("-- 3. no valid image (both slots erased) --");
+        for (i = 0; i < 32; i++) hdr_save[i] = model.mem[i];
+        for (i = 0; i < 32; i++) model.mem[i] = 8'hFF;
         run_boot(24'h008000);
         check(boot_ok == 1'b0, "boot_ok low for an invalid image");
         boot_read(4'h1, rd);
         check(rd[2] == 1'b1, "BOOT_STAT.FAIL set");
         check(rd[0] == 1'b0, "engine not stuck busy");
+        check(rd[6] == 1'b1, "BOOT_STAT.SLOT_RETRY set (both slots were tried)");
         boot_read(4'hA, rd);
-        check(rd[7:0] == 8'h01, "BOOT_ERR magic error reported");
+        check(rd[0] == 1'b1, "BOOT_ERR magic error reported");
+        check(rd[7] == 1'b1, "BOOT_ERR slot error reported (no slot bootable)");
+        // put the image back for the remaining tests
+        for (i = 0; i < 32; i++) model.mem[i] = hdr_save[i];
 
         // ---- 4. retry with the good image -------------------------------
         $display("-- 4. restart after failure --");

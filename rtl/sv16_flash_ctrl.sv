@@ -81,6 +81,15 @@ module sv16_flash_ctrl (
     output logic        flash_mosi,
     input  logic        flash_miso,
 
+    // Slot-record program interface (ADR-019, driven by the boot loader).
+    // Programs a 2-byte record {0xA5, state} at a byte address spread over two
+    // 256-byte flash pages (the record straddles a page boundary by design), so
+    // that a 256-byte page program can never be needed for a torn record.
+    input  logic        slot_wr_req,    // one-cycle pulse: program it
+    input  logic [23:0] slot_wr_addr,   // record byte address (low byte = 0xFE)
+    input  logic [7:0]  slot_wr_data,   // record payload byte
+    output logic [1:0]  slot_wr_done,   // [0] accepted, [1] finished
+
     // Status
     output logic        flash_irq,      // pulse: CPU command completed
     output logic        id_ok,
@@ -144,23 +153,28 @@ module sv16_flash_ctrl (
     logic        eng_busy, eng_done, ph_go, just_done;
     logic [7:0]  d_opcode;
     logic [1:0]  d_kind;
-    logic        d_addr_en, d_dir_rd, d_src_buf, d_crc, d_pre_wren;
+    logic        d_addr_en, d_dir_rd, d_src_buf, d_src_slot, d_crc, d_pre_wren;
     logic [15:0] d_len, e_sent;
     logic [23:0] d_addr;
     logic [7:0]  e_chunk, e_src_idx, e_addr_idx;
     logic        spi_start, spi_cs_hold;
     logic [7:0]  spi_len;
 
+    // Slot record writes (ADR-019) arrive on the ports above; the sequencer
+    // below owns slot_seq_active and slot_pgm_go.
+
     logic [2:0]  pstate;
     logic [8:0]  p_total, p_off;
     logic [23:0] p_base;
     logic        pgm_busy;
+    logic        slot_pgm_go;
+    logic        slot_seq_active;   // current program sequence is a slot record
     logic [8:0]  pp_chunk;              // bytes in the page program in flight
     logic        pgm_done, pgm_flush_done;
     // page-program request descriptor (combinational, selected by pstate)
     logic        pq_valid;
     logic [7:0]  pq_opcode;
-    logic        pq_addr_en, pq_src_buf;
+    logic        pq_addr_en, pq_src_buf, pq_src_slot;
     logic [1:0]  pq_kind;
     logic [15:0] pq_len;
     logic [23:0] pq_addr;
@@ -171,6 +185,7 @@ module sv16_flash_ctrl (
     logic [15:0] bq_len;
 
     logic [7:0]  page_buf [0:255];
+    logic [7:0]  slot_buf [0:3];        // ADR-019 slot record staging (2 used)
     logic [8:0]  page_wr_ptr;
     logic [23:0] page_base;
     logic        wr_active, flush_pending, dw_pending;
@@ -430,6 +445,7 @@ module sv16_flash_ctrl (
                 pq_opcode  = SPIF_RDSR;
                 pq_addr_en = 1'b0;
                 pq_src_buf = 1'b0;
+                pq_src_slot= 1'b0;
                 pq_len     = 16'd1;
                 pq_addr    = 24'd0;
                 pq_src_off = 8'd0;
@@ -440,6 +456,7 @@ module sv16_flash_ctrl (
                 pq_opcode  = SPIF_WREN;
                 pq_addr_en = 1'b0;
                 pq_src_buf = 1'b0;
+                pq_src_slot= 1'b0;
                 pq_len     = 16'd0;
                 pq_addr    = 24'd0;
                 pq_src_off = 8'd0;
@@ -449,7 +466,12 @@ module sv16_flash_ctrl (
                 pq_kind    = KIND_DATA;
                 pq_opcode  = SPIF_PP;
                 pq_addr_en = 1'b1;
+                // A page-buffer flush programs the 256-byte staging buffer; a
+                // slot record is only two bytes and lives in registers, so it
+                // is written into the staging buffer first (see BLK J) and then
+                // flushed through exactly the same path.
                 pq_src_buf = 1'b1;
+                pq_src_slot= slot_seq_active;
                 pq_len     = {7'd0, pp_chunk};
                 pq_addr    = p_base + {15'd0, p_off};
                 pq_src_off = p_off[7:0];
@@ -460,6 +482,7 @@ module sv16_flash_ctrl (
                 pq_opcode  = 8'h00;
                 pq_addr_en = 1'b0;
                 pq_src_buf = 1'b0;
+                pq_src_slot= 1'b0;
                 pq_len     = 16'd0;
                 pq_addr    = 24'd0;
                 pq_src_off = 8'd0;
@@ -484,12 +507,23 @@ module sv16_flash_ctrl (
             p_base    <= 24'd0;
             pgm_busy  <= 1'b0;
             prog_total<= 16'd0;
+            slot_seq_active <= 1'b0;
         end else begin
             if (pgm_done) prog_total <= prog_total + {7'd0, pp_chunk};
 
             case (pstate)
                 P_IDLE: begin
-                    if (flush_cond) begin
+                    if (slot_pgm_go) begin
+                        // A slot-record write has priority over an application
+                        // page flush: the loader is a bus master and the CPU is
+                        // still in reset while its record is written.
+                        p_total         <= 9'd2;
+                        p_base          <= slot_wr_addr;
+                        p_off           <= 9'd0;
+                        pgm_busy        <= 1'b1;
+                        slot_seq_active <= 1'b1;
+                        pstate          <= P_POLL;
+                    end else if (flush_cond) begin
                         p_total  <= page_wr_ptr;
                         p_base   <= page_base;
                         p_off    <= 9'd0;
@@ -525,8 +559,11 @@ module sv16_flash_ctrl (
                 end
 
                 P_UPDATE: begin
-                    // tell the buffer owner that the flush finished
+                    // tell the buffer owner (or the slot logic) that the
+                    // program sequence finished
                     pgm_busy <= 1'b0;
+                    slot_seq_active <= 1'b0;   // BLK J turns the falling edge
+                                               // into slot_wr_done[1]
                     pstate   <= P_IDLE;
                 end
 
@@ -596,7 +633,8 @@ module sv16_flash_ctrl (
                             d_opcode  <= SPIF_READ;
                             d_addr_en <= 1'b1;
                             d_dir_rd  <= 1'b1;
-                            d_src_buf <= 1'b0;
+                            d_src_buf  <= 1'b0;
+                            d_src_slot <= 1'b0;
                             d_crc     <= 1'b0;
                             d_kind    <= KIND_DATA;
                             d_pre_wren<= 1'b0;
@@ -612,6 +650,7 @@ module sv16_flash_ctrl (
                             d_addr_en <= pq_addr_en;
                             d_dir_rd  <= 1'b0;
                             d_src_buf <= pq_src_buf;
+                            d_src_slot<= pq_src_slot;
                             d_crc     <= 1'b0;
                             d_kind    <= pq_kind;
                             d_pre_wren<= 1'b0;
@@ -627,7 +666,8 @@ module sv16_flash_ctrl (
                             d_opcode  <= cq_opcode;
                             d_addr_en <= cq_addr_en;
                             d_dir_rd  <= cq_dir_rd;
-                            d_src_buf <= 1'b0;
+                            d_src_buf  <= 1'b0;
+                            d_src_slot <= 1'b0;
                             d_crc     <= (cq_kind == KIND_CRC);
                             d_kind    <= cq_kind;
                             d_pre_wren<= cq_pre_wren;
@@ -729,7 +769,8 @@ module sv16_flash_ctrl (
             E_ADDR:    begin spi_tx_valid = 1'b1; spi_tx_data = last_addr_byte; end
             E_PAYLOAD: begin
                 spi_tx_valid = 1'b1;
-                spi_tx_data  = d_src_buf ? page_buf[e_src_idx] : 8'hFF;
+                spi_tx_data  = d_src_slot ? slot_buf[e_src_idx[1:0]] :
+                               (d_src_buf ? page_buf[e_src_idx] : 8'hFF);
             end
             default: ;
         endcase
@@ -999,6 +1040,40 @@ module sv16_flash_ctrl (
             if (eng_done && (owner == OWN_CPU)) begin
                 cpu_req_pend <= 1'b0;
                 busy_flag    <= 1'b0;
+            end
+        end
+    end
+
+    // ---------------------------------- BLK J: slot record program (ADR-019)
+    // Owns: slot_buf, slot_pgm_go, slot_wr_done.
+    //
+    // The boot loader marks an image pending / good / bad by programming two
+    // bytes into the image header's slot record.  The record has its own tiny
+    // staging buffer so that the page-buffer owner (BLK B) stays the only
+    // writer of page_buf; the program sequence itself is the shared one, which
+    // is why this path is free of new flash-command logic.
+    logic slot_seq_d;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            slot_buf[0]  <= 8'h00;
+            slot_buf[1]  <= 8'h00;
+            slot_buf[2]  <= 8'h00;
+            slot_buf[3]  <= 8'h00;
+            slot_pgm_go  <= 1'b0;
+            slot_wr_done <= 2'b00;
+            slot_seq_d   <= 1'b0;
+        end else begin
+            slot_pgm_go <= 1'b0;
+            slot_seq_d  <= slot_seq_active;
+            if (slot_seq_d && !slot_seq_active) slot_wr_done[1] <= 1'b1;
+            if (slot_wr_req && !pgm_busy && (pstate == P_IDLE)) begin
+                // stage the record and start the shared program sequence
+                slot_buf[0]  <= SLOT_REC_SYNC;              // record sync byte
+                slot_buf[1]  <= slot_wr_data;
+                slot_pgm_go  <= 1'b1;
+                slot_wr_done[0] <= 1'b1;                    // accepted
+                slot_wr_done[1] <= 1'b0;
             end
         end
     end

@@ -34,7 +34,17 @@
     LDI R1, 1
     STORE R1, [R0 + 0]
 
-    ; 8. Enter Heartbeat / Main Loop
+    ; 8. ADR-019: this image is usable -- commit it.
+    ;    If the image was installed in an A/B slot with a PENDING record the
+    ;    loader put it on trial before handing over the CPU: this write ends the
+    ;    trial (PENDING/TRIED -> GOOD), and without it a restart inside the trial
+    ;    would retire the image and boot the previous slot instead.
+    ;    Writing the bit is harmless for an image with no slot record.
+    LDI R0, 0xF0A0      ; BOOT_CTRL
+    LDI R1, 0x0040      ; [6] SLOT_CNF: confirm
+    STORE R1, [R0 + 0]
+
+    ; 9. Enter Heartbeat / Main Loop
 main_loop:
     NOP
     NOP

@@ -265,6 +265,65 @@ package sv16_pkg;
     localparam logic [3:0] BOOT_NAME1    = 4'hE; // image name chars [3:2]
     localparam logic [3:0] BOOT_NAME2    = 4'hF; // image name chars [5:4]
 
+    // ------------------------------------------------------- ADR-019: A/B slots
+    // Two application slots 32 KB apart in the first 64 KB of the flash: slot A
+    // at 0x000000, slot B at 0x008000.  Both live inside the address window the
+    // ROM monitor's 16-bit update protocol can reach, which is what makes a
+    // field update into the *inactive* slot possible over UART at all; the rest
+    // of the flash stays free.  32 KB is far more than an image can need when
+    // the CPU has 16 KB of RAM.  A slot is an ordinary
+    // image (same 32-byte header, same CRC16) plus a 2-byte *slot record* that
+    // lives in the header bytes reserved for it by format v1 -- the padding at
+    // 0x18-0x1F, header word 0x0C:
+    //
+    //   byte 0x18   sync   SLOT_REC_SYNC     written once, never changes
+    //   byte 0x19   state  SLOT_REC_*        the only byte that ever changes
+    //
+    // The record is part of the image, so it can never collide with program
+    // data (unlike a record parked in the flash page the image starts in), and a
+    // host tool that writes an image also installs the record.
+    //
+    // The state byte only ever gets bits *cleared*, which is what SPI NOR
+    // allows: a page program can turn 1s into 0s but never back, and there is no
+    // erase unit small enough to rewrite one byte in the middle of an image.
+    // Hence PENDING is written with both its bits set and everything the loader
+    // writes later is a subset of it.  See ADR-019 for the protocol and for what
+    // a torn write leaves behind.
+    localparam logic [23:0] BOOT_SLOT_STRIDE  = 24'h00_8000; // 32 KB per slot
+    localparam logic [23:0] SLOT_REC_OFFSET   = 24'h00_0018; // image header byte
+    localparam logic [23:0] SLOT_REC0         = 24'h00_0018; // slot A (base 0)
+    localparam logic [23:0] SLOT_REC1         = BOOT_SLOT_STRIDE + SLOT_REC_OFFSET;
+    localparam logic [7:0]  SLOT_REC_SYNC     = 8'hA5;
+    localparam logic [7:0]  SLOT_REC_PENDING  = 8'h1F; // installed, never booted
+    localparam logic [7:0]  SLOT_REC_TRIED    = 8'h0F; // booted, awaiting CONFIRM
+    localparam logic [7:0]  SLOT_REC_GOOD     = 8'h07; // confirmed: fallback image
+    localparam logic [7:0]  SLOT_REC_BAD      = 8'h04; // trial failed / retired
+    // Each state is a bit-subset of the one it comes from:
+    //     PENDING 0x1F -> TRIED 0x0F -> { GOOD 0x07 | BAD 0x04 }
+    // which is exactly what a page program allows (1 -> 0, never back), so the
+    // record can be advanced without erasing the page that holds the header.
+    // A sync byte with the erased 0xFF reads as "state never written", and a
+    // missing sync byte reads as "no record": both boot the image untried.
+    // who gets the next boot: the priority slot is the one that is new, because
+    // a slot only becomes GOOD after confirmation while BAD is written once the
+    // trial fails -- so "pending" outranks "good", and the fixed order 0 then 1
+    // settles ties.  A trial never hangs the system: the watchdog restarts the
+    // part (ADR-017) and bad-confirm takes PENDING -> BAD, after which that slot
+    // is never tried again and the other one boots (ADR-019).
+    // ADR-019 uses spare bits of the existing registers rather than new
+    // offsets, so no firmware register map moves:
+    //   BOOT_CTRL [4] NOSLOT   1 = ignore the slot records (boot BOOT_SRC)
+    //             [5] SLOT_CLR write 1 = forget the loader's cached slot state
+    //             [6] SLOT_CNF write 1 = confirm the running image's trial
+    //   BOOT_STAT [5] SLOT     slot this attempt chose / booted
+    //             [6] SLOT_RETRY  a slot was abandoned during this attempt
+    //             [7] SLOT_TRIAL  the running image is still on trial
+    localparam int BOOT_CTRL_NOSLOT_BIT    = 4;
+    localparam int BOOT_CTRL_SLOTCLR_BIT   = 5;
+    localparam int BOOT_CTRL_SLOTCNF_BIT   = 6;
+    localparam int BOOT_STAT_SLOT_BIT      = 5;
+    localparam int BOOTERR_SLOT_BIT = 7;  // slot record inconsistent / unreadable
+
     // BOOT_STAT bits
     localparam int BOOT_BUSY_BIT     = 0;
     localparam int BOOT_OK_BIT       = 1;  // image validated
@@ -272,6 +331,7 @@ package sv16_pkg;
     localparam int BOOT_CRC_OK_BIT   = 3;
     localparam int BOOT_MAGIC_OK_BIT = 4;
     localparam int BOOT_JUMPED_BIT   = 5;
+    localparam int BOOT_RETRY_BIT    = 6;  // this attempt gave up and fell back
 
     // BOOT_ERR bits
     localparam int BOOTERR_MAGIC_BIT  = 0;
