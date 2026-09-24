@@ -12,7 +12,7 @@ serial cable, and reports why it restarted.
 | Area | State | Evidence |
 | :--- | :--- | :--- |
 | CPU and ISA | **frozen, unchanged in Rev B** | [ISA.md](ISA.md), [CPU_ARCHITECTURE.md](CPU_ARCHITECTURE.md) |
-| Memory map | Rev B: 32 KB SRAM, 4 KB boot ROM at `0xE000`, 11 MMIO blocks | [MEMORY_MAP.md](MEMORY_MAP.md) |
+| Memory map | Rev B: 32 KB SRAM, 4 KB boot ROM at `0xE000`, 10 MMIO blocks present of 16 | [MEMORY_MAP.md](MEMORY_MAP.md) |
 | Peripherals | GPIO ×2, timer, PWM (with hardware fault input), UART, SPI master, flash controller, IRQ controller, system control, boot engine | [PERIPHERALS.md](PERIPHERALS.md) |
 | Non-volatile program store | SPI NOR + hardware boot loader + CRC-checked images | [BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md) |
 | Field update | ROM monitor over UART (`C`/`R`/`E`/`V`/`B`) + `make upload` | `scripts/sv16_mon.py` |

@@ -120,7 +120,7 @@ the vector table; `RETI` restores `SR` (and therefore `IE`) and returns.
 | :--- | :--- | :--- |
 | SRAM | 8 K words @ `0x0000-0x1FFF` | **16 K words @ `0x0000-0x3FFF`** |
 | Boot ROM | none (or `firmware/bootrom.hex` loaded by hand) | **2 K words @ `0xE000-0xE7FF`, monitor baked into the bitstream** |
-| MMIO | 4 blocks (GPIO, timer, PWM, UART) | **11 blocks present** of 16: adds SPI, flash controller, GPIO1, IRQ controller, boot engine, system control |
+| MMIO | 4 blocks (GPIO, timer, PWM, UART) | **10 blocks present** of 16 (`MMIO_PRESENT = 0x6FF`): adds SPI, flash controller, GPIO1, IRQ controller, boot engine, system control |
 | Interrupts | core lines wired ad hoc | IRQ controller with enable/pending/priority + 8-entry vector table |
 | Program store | none (JTAG-loaded init file) | **external SPI flash + hardware boot loader** |
 

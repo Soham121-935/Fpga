@@ -20,7 +20,7 @@ to a production-grade part.
 | Reset cause register | **MCU-like** | `SYS_RSTCAUSE` (`0xF003`): pin, soft, fault, watchdog, boot-fail, flash-ok |
 | Debug observability without a logic analyser | **MCU-like** | `SYS_DBG_PC/SP/SR/IR`, `SYS_FAULT_ADDR/CNT`, `SYS_CPU_STATE`, `SYS_SCRATCH0/1`, 32-bit cycle counter |
 | Single toolchain recipe, reproducible build | **MCU-like** | `source scripts/sv16_venv.sh && make test bitstream`; the ROM is compiled into the image |
-| Memory-mapped peripherals, one bus | **MCU-like** | 32 KB SRAM @ 0, 4 KB boot ROM @ 0xE000, 11 MMIO blocks @ 0xF000 |
+| Memory-mapped peripherals, one bus | **MCU-like** | 32 KB SRAM @ 0, 4 KB boot ROM @ 0xE000, 10 MMIO blocks @ 0xF000 |
 | Interrupt controller with priority + vectors | **MCU-like** | 8 sources, priority, per-source enable, global enable, `RETI` |
 | Watchdog | **soft-core gap** | `rtl/sv16_wdt.sv` exists but is not instantiated (`MMIO_PRESENT` bit 8 = 0) |
 | Low-power / clock scaling | **soft-core gap** | one clock; build-time divider only, no runtime clock control, no sleep modes |

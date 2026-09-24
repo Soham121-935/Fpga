@@ -1,6 +1,6 @@
 # SV-16 Rev B — Peripheral Subsystem
 
-Eleven memory-mapped blocks hang off the single SV-16 bus (see
+Ten memory-mapped blocks are instantiated on the single SV-16 bus (ten of the sixteen decode slots; block 8 and blocks 11-15 are reserved and simply acknowledge reads with `0x0000`) (see
 [BUS_ARCHITECTURE.md](BUS_ARCHITECTURE.md)). This page is the register-level
 reference for each of them; addresses are **word offsets from the block base**.
 

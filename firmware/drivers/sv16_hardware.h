@@ -171,11 +171,12 @@
 #define UART0_CTRL_TXIRQ  SV16_BIT(2)
 #define UART0_CTRL_RXIRQ  SV16_BIT(3)
 
-/* The reset divisor is derived from the SoC clock: 217 at 25 MHz, 108 at
- * 12.5 MHz, both = 115200 8-N-1.  Only write UART0_BAUD if you want a
- * different rate; values below 4 are clamped. */
-#define UART0_BAUD_115200_AT_25MHZ   217u
-#define UART0_BAUD_115200_AT_12_5MHZ 108u
+/* The reset divisor is derived from the SoC clock configuration by
+ * rtl/sv16_top.sv: divisor = (f_clk + baud/2) / baud, rounded.  Both of these
+ * give 115200 8-N-1.  Only write UART0_BAUD if you want a different rate;
+ * values below 4 are clamped. */
+#define UART0_BAUD_115200_AT_25MHZ   217u   /* 25_000_000 / 115200 rounded */
+#define UART0_BAUD_115200_AT_12_5MHZ 109u   /* 12_500_000 / 115200 rounded */
 
 /* ------------------------------------------------------------------- SPI 0xF050 */
 #define SPI0_DATA   SV16_MMIO(SV16_BLK_SPI0, 0)

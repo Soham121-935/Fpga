@@ -20,7 +20,7 @@ wrong.
 | `ack` | 1 | in (from slave) | transfer complete |
 
 Masters are the CPU (`u_cpu`) and the boot loader (`u_boot`'s memory port).
-Slaves are SRAM, the boot ROM, and the eleven MMIO blocks.
+Slaves are SRAM, the boot ROM, and the ten instantiated MMIO blocks.
 
 ---
 
