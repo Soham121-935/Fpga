@@ -17,7 +17,7 @@ serial cable, and reports why it restarted.
 | Non-volatile program store | SPI NOR + hardware boot loader + CRC-checked images | [BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md) |
 | Field update | ROM monitor over UART (`C`/`R`/`E`/`V`/`B`/`K`) + `make upload`; **A/B slots with a trial period and hardware rollback** (ADR-019) via `make upload-slot` / `make commit` | `scripts/sv16_mon.py` |
 | Reset and startup | reset-cause register, soft reset, fault halt, auto-boot, RX-low escape to the monitor, **watchdog restart of a hung application** | [RESET_AND_CLOCK.md](RESET_AND_CLOCK.md) |
-| Verification | **276 checks, 0 failures** across 8 Verilator suites + lint | [VERIFICATION.md](VERIFICATION.md) |
+| Verification | **277 checks, 0 failures** across 8 Verilator suites + lint | [VERIFICATION.md](VERIFICATION.md) |
 | Bitstream | builds, places, routes and packs for the target part; timing PASS at the full 25 MHz | [SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md) |
 | Documentation | operator manual, memory map, peripherals, flow, verification, ADRs | `docs/` |
 
@@ -82,8 +82,8 @@ Full reasoning, and what "production grade" would still require, is in
 | `boot_tb` | 26 |
 | `slot_tb` | 57 |
 | `soc_boot_tb` | 21 |
-| `monitor_tb` | 20 |
+| `monitor_tb` | 21 |
 | `wdt_reset_tb` | 14 |
-| **Total** | **276 passing, 0 failing** |
+| **Total** | **277 passing, 0 failing** |
 
 Plus RTL lint (25 files clean) and whole-SoC Verilator elaboration.

@@ -24,11 +24,11 @@ make sim TB=wdt_tb   # a single suite
 | `boot_tb` | `simulation/unit/boot_tb.sv` | 26 | PASS | the hardware boot loader against a behavioural SPI NOR model: header parse, CRCs, payload streaming into SRAM, `BOOT_STAT`/`BOOT_ERR`, verify-only mode, rejection of corrupt images, and a clean "no image anywhere" verdict |
 | `slot_tb` | `simulation/unit/slot_tb.sv` | 57 | PASS | the A/B policy end to end (ADR-019), with the loader, the flash controller and the flash model wired as `sv16_top` wires them, including the slot-record program handshake: the pick order (pending > trial > good > no record > bad), a pending image being marked TRIED *before* the CPU is released, a restart inside the trial retiring it to BAD and booting the other slot, a confirmed update retiring the previous image so the update sticks, a torn record being refused, and `BOOT_CTRL[4]` booting `BOOT_SRC` with the records ignored |
 | `soc_boot_tb` | `simulation/regression/soc_boot_tb.sv` | 21 | PASS | end-to-end: reset → boot engine → SRAM contains the image → CPU released at the entry point with the image's stack pointer |
-| `monitor_tb` | `simulation/regression/monitor_tb.sv` | 20 | PASS | the whole field-programming story over a bit-banged UART: banner, `?`, `C` upload of a real image, `R` readback, `E` erase, `V` CRC, `B` boot, the application actually running and driving GPIO/PWM/direction pins, and the monitor being the fallback |
+| `monitor_tb` | `simulation/regression/monitor_tb.sv` | 21 | PASS | the whole field-programming story over a bit-banged UART: banner, `?`, `C` upload of a real image, `R` readback, `E` erase, `V` CRC, `K` confirm (ADR-019), `B` boot, the application actually running and driving GPIO/PWM/direction pins, and the monitor being the fallback |
 | `sv16_rtl_lint.py` | `scripts/sv16_rtl_lint.py` | 25 files | clean | structural checks: multiple drivers, missing `default` in combinational `case`, `always_ff` without reset, latches, etc. |
 | Verilator elaboration | `make vlint` | top | clean | the whole SoC (package + 25 modules) elaborates as one design |
 
-Total: **276 checks, 0 failures.**
+Total: **277 checks, 0 failures.**
 
 The SPI flash model implements the physics the A/B record depends on: a page
 program can only clear bits (`mem <= mem & data`) and an erase sets a whole

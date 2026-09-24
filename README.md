@@ -27,7 +27,7 @@ and can be reprogrammed over a plain serial port.
 
 ```sh
 source scripts/sv16_venv.sh    # fetches Verilator + Yosys + nextpnr + ecppack
-make test                      # lint + 8 simulation suites (276 checks)
+make test                      # lint + 8 simulation suites (277 checks)
 make bitstream                 # -> build/sv16_top.bit (boot ROM baked in)
 make prog                      # openFPGALoader over JTAG
 make app                       # build the example application image
@@ -78,7 +78,7 @@ SV-16 monitor v1
 
 | Command | Result |
 | :--- | :--- |
-| `make test` | lint + all eight Verilator suites (276 checks) |
+| `make test` | lint + all eight Verilator suites (277 checks) |
 | `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 25 MHz |
 | `make synth` | Yosys only (fast synthesizability check) |
 | `make prog` | program the FPGA over JTAG |
@@ -108,7 +108,7 @@ build/           generated: ROM image, firmware images, netlist, bitstream (untr
 
 | | |
 | :--- | :--- |
-| Simulation | 276 checks, 0 failures across 8 suites (CPU, ALU/divider, bus, RAM, watchdog, flash controller, boot loader, A/B slots, monitor) |
+| Simulation | 277 checks, 0 failures across 8 suites (CPU, ALU/divider, bus, RAM, watchdog, flash controller, boot loader, A/B slots, monitor) |
 | Synthesis / P&R | places, routes, packs for the target part; 30 % LUTs, 18 % FFs |
 | Timing | 46.58 MHz Fmax measured; shipped at the full 25 MHz with ~86 % margin |
 | Silicon | **never run on hardware** — simulation and static timing only |

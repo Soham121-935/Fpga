@@ -378,6 +378,17 @@ module monitor_tb;
         collect_reply(line);
         check(str_contains(line, "+OK"), "erase answered +OK");
 
+        // ---- 3b. K (confirm the running image's trial, ADR-019) ------------
+        // The monitor sends BOOT_CTRL[6]; an image with no slot record has no
+        // trial to end, so the loader leaves BOOT_STAT.TRIAL clear and the
+        // command simply succeeds.  (The trial path itself is slot_tb's job.)
+        $display("-- 3b. K (confirm trial image) --  @%0t", $time);
+        rx_flush;
+        uart_send_str("K");
+        uart_send(8'h0D);
+        collect_reply(line);
+        check(str_contains(line, "+OK committed"), "K answered +OK committed");
+
         // ---- 4. R (stream the first bytes back) ----------------------------
         $display("-- 4. R (read 16 bytes) --  @%0t", $time);
         begin

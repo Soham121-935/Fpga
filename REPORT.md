@@ -15,7 +15,7 @@ prototype* into a *practical, MCU-style programmable system* on the Lattice ECP5
 | Branch | `arena/01a0ce9b-fpga` (this session), one commit ahead of `arena/Rv2` |
 | Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) · `e664a0c` branch-rename note · `62f432a` watchdog in the reset path (P1) · `56a8b62` multi-cycle divider + full 25 MHz (P2) · A/B image slots with rollback (P3) |
 | Remote state | On GitHub this work stream was renamed **`arena/01a0ce9b-fpga` → `arena/Rv2`**, so `arena/Rv2` holds the Rev B work up to `a07f62e`. This session pushed `arena/01a0ce9b-fpga` again (P1 watchdog, then P2 timing) and it is a direct descendant of `arena/Rv2`, so it can be fast-forwarded or merged without conflicts. |
-| Test status | **276 checks, 0 failures** across 8 suites; RTL lint 25/25 clean |
+| Test status | **277 checks, 0 failures** across 8 suites; RTL lint 25/25 clean |
 | Bitstream | `make bitstream` → `build/sv16_top.bit`, 291,352 bytes, **timing PASS at the full 25 MHz** (Fmax 45.46 MHz, ~82 % margin) |
 | Silicon | **never run on hardware** — simulation + static timing only |
 
@@ -55,7 +55,7 @@ it breaks:
 | FPGA utilization | 8,757 / 24,288 LUT4 (**36 %**), 4,765 FFs (19 %), 18/56 block RAMs, 1 multiplier, 52 I/O |
 | Timing | Fmax **45.46 MHz** measured (36.07 pre-route); shipped at **25 MHz ⇒ PASS** with ~82 % margin |
 | Bitstream | **291,352 bytes** (`build/sv16_top.bit`), boot ROM baked in |
-| Verification | **276 checks, 0 failures** (`49 + 48 + 41 + 26 + 57 + 21 + 20 + 14`), plus lint (25/25) + whole-SoC elaboration |
+| Verification | **277 checks, 0 failures** (`49 + 48 + 41 + 26 + 57 + 21 + 21 + 14`), plus lint (25/25) + whole-SoC elaboration |
 | Code | 25 RTL files / 7,145 lines, 14 scripts / 2,369 lines, 24 testbenches / 4,532 lines, 15 documents + this report / 3,144 lines |
 
 **The one honest headline:** this is functionally a microcontroller now, it
@@ -349,8 +349,8 @@ single-step (`SYS_CTRL.HALT` + `STEP`).
 | `boot_tb` | **26** | 0 | header parse, both CRCs, streaming to SRAM, verify-only, corrupt-image rejection, clean "no image anywhere" verdict |
 | `slot_tb` | **57** | 0 | **the A/B policy end to end** (ADR-019) with the loader, flash controller and flash model wired as the SoC wires them: pick order, TRIED written before the CPU is released, a restart inside the trial rolling back to the other slot, a confirmed update retiring the previous image, a torn record refused, `BOOT_CTRL[4]` bypassing the policy |
 | `soc_boot_tb` | **21** | 0 | reset → loader → SRAM content → CPU released at the right entry/SP |
-| `monitor_tb` | **20** | 0 | the entire field-update story over a bit-banged UART, including the uploaded app actually running and driving GPIO/PWM/direction |
-| **Total** | **276** | **0** | `make sim` |
+| `monitor_tb` | **21** | 0 | the entire field-update story over a bit-banged UART: upload, read-back, erase, verify, `K` confirm, boot, the uploaded app actually running and driving GPIO/PWM/direction |
+| **Total** | **277** | **0** | `make sim` |
 
 Plus: `sv16_rtl_lint.py` **25/25 files clean** (multiple drivers, latches, missing
 resets, incomplete case) and Verilator elaboration of the whole SoC clean.
@@ -401,7 +401,7 @@ git clone https://github.com/Soham121-935/Fpga.git && cd Fpga
 git checkout arena/Rv2                 # or this session's arena/01a0ce9b-fpga
 
 source scripts/sv16_venv.sh            # Verilator + Yosys + nextpnr + ecppack
-make test                              # lint + 276 checks           (~4 min)
+make test                              # lint + 277 checks           (~4 min)
 make bitstream                         # Yosys→PnR→pack, timing report (~2 min)
 make prog                              # program the FPGA over JTAG
 make upload PORT=/dev/ttyUSB0          # program the *firmware* over UART
