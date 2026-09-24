@@ -16,7 +16,7 @@ clk_25m ──► divider (SV16_CLKDIV) ──► clk ──► CPU, RAM, ROM, a
 ```
 
 * `SV16_CLKDIV = 1` → 25 MHz nominal (does **not** close timing on an
-  LFE5U-12F-6: measured Fmax 14.43 MHz).
+  LFE5U-12F-6: measured Fmax 14.68 MHz).
 * `SV16_CLKDIV = 2` → **12.5 MHz, the shipped default** (`make bitstream`),
   ~15 % timing margin. `make bitstream CLKDIV=2` is what the Makefile does.
 * Larger values are legal (integer divide, 50 % duty) but slow the part down.
@@ -42,7 +42,7 @@ and no CDC inside the design.
 | External pin | `ext_rst_n` low (internally pulled up) | bit 0 |
 | Software | `SYS_CTRL.SOFTRST` with the `0xA5` key | bit 1 |
 | CPU fault | illegal opcode / exception trap | bit 2 |
-| Watchdog | *reserved — the WDT is not instantiated in Rev B* | bit 3 |
+| Watchdog | `sv16_wdt` timeout (`0xF080`); the watchdog is cleared only by the pin, so it survives every other reset | bit 3 |
 | Boot failure | no valid image found in flash | bit 4 |
 | Boot success | image validated and loaded | bit 5 |
 
@@ -74,7 +74,7 @@ S_IMAGE   release the CPU with PC = image entry, SP = image stack pointer,
 S_MONITOR release the CPU with PC = 0xE000 (boot ROM) and SP = 0x3FFE.
    │
 S_RUN     normal operation. Observes soft-reset requests, `SYS_CTRL.HALT`,
-          CPU faults and (future) watchdog timeouts; any of them restarts the
+          CPU faults and watchdog timeouts; any of them restarts the
           sequence at S_RESET or S_BOOT.
 ```
 
@@ -93,6 +93,12 @@ Two properties matter in practice:
 
 ## 4. Debug and fault behaviour
 
+* A **watchdog bite** restarts the sequence at `S_RESET` (not the pin), sets
+  `RSTCAUSE.WDT`, and re-runs the boot attempt. Because the watchdog block hangs
+  off `rst_n` rather than `cpu_rst_n`, it keeps running across that restart and
+  auto-reloads its counter, so an application that hangs again is restarted
+  again. `SYS_SCRATCH0/1` and the early-warning interrupt (`IRQ_WDT`) give it a
+  chance to leave evidence before the reset lands.
 * `SYS_CTRL.HALT` stops the CPU at an instruction boundary; `SYS_CTRL.STEP`
   then executes exactly one instruction. This is how the monitor's
   `SYS_DBG_PC/SP/SR/IR` registers are meant to be used as a poor man's debugger.
@@ -114,3 +120,4 @@ Two properties matter in practice:
 | Boot vector | fixed ROM/RAM start | image entry + image stack pointer loaded by hardware |
 | Recovery | none | monitor fallback on any boot failure, RX-low escape at reset |
 | Fault visibility | none | fault address, count, PC/SP/SR/IR snapshot, halted core |
+| Hung-application recovery | none (a hung program stays hung) | watchdog restarts the boot sequence and re-boots the application |

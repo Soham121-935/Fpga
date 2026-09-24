@@ -193,3 +193,48 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
   table; an unpopulated table is visible (a trap jumps to whatever word is there),
   so images that use interrupts must fill `0x0020-0x0027`. Priority is fixed by
   index; there is no nesting control and no interrupt latency specification yet.
+
+---
+
+## ADR-017: Watchdog in the reset path, protected by a key and a lock
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: An MCU that can be reprogrammed in the field but cannot recover
+  from its own firmware hanging is only half a microcontroller: the classic
+  failure mode is a control loop that stops making progress, and the classic
+  answer is a watchdog that restarts the system. Rev B had `SYS_RSTCAUSE.WDT`
+  reserved, an IRQ slot for the watchdog and a spare MMIO block, but no timer
+  behind them. It also had a design question: a watchdog that software can
+  disable (by accident, or by a wild pointer) is worth very little.
+- **Decision**:
+  - A dedicated block (`rtl/sv16_wdt.sv`, MMIO block 8 at `0xF080`) with
+    `(PRESET + 1) x 2^PRESC` clock period, so the same block covers "the control
+    loop stalled" (milliseconds) and "the boot load never finished" (hundreds of
+    milliseconds).
+  - A timeout **restarts the boot sequence** through `sv16_startup` and sets
+    `RSTCAUSE.WDT`. It is not a trap or an interrupt: a hung program cannot be
+    relied on to handle anything.
+  - **Protection**: `CTRL` (which holds ENABLE, LOCK, WINDOW_EN and PRESC) is
+    keyed with `0x5A` in the top byte; `FEED` requires the magic word `0x5A5A`;
+    `PRESET`/`WINDOW`/`MARGIN` are plain 16-bit registers but are frozen by
+    `LOCK`. `LOCK` can only be cleared by the external reset pin. (A 16-bit
+    period and an 8-bit key cannot share one 16-bit register — hence the split
+    rather than a keyed write to every register.)
+  - The block hangs off the **hard reset** (`rst_n`), never the SoC's own soft
+    restart (`cpu_rst_n`), and it **auto-reloads its counter on expiry**. So an
+    application that hangs twice is restarted twice, and each restart gets a
+    full period to reach the code that feeds it.
+  - An **early-warning interrupt** (`IRQ_WDT`, source 6) fires `MARGIN` ticks
+    before expiry so software can leave a breadcrumb in `SYS_SCRATCH0/1`, which
+    survive a restart.
+  - **Windowed feeding** (`WINDOW_EN` + `WINDOW`) rejects feeds that arrive too
+    soon after the previous one, which is the only way to catch a runaway loop
+    that feeds the watchdog non-stop. The first period after `ENABLE` is exempt
+    so that arming the watchdog and feeding it immediately stays legal.
+- **Consequences**: A hung application now recovers by itself — proven end to
+  end by `wdt_reset_tb`, which boots a deliberately hanging image out of flash
+  and watches the hardware restart it twice with no host involved. The watchdog
+  starts disabled, so an application must arm it (three stores); a watchdog that
+  arms itself at reset was rejected because the boot ROM monitor and the loader
+  would then have to feed it too, and the monitor is the recovery path — it must
+  not be able to be interrupted by the thing it is there to recover from. The
+  cost is 1 block of MMIO, ~220 lines of RTL and 281 extra LUTs.

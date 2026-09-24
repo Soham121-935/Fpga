@@ -20,9 +20,9 @@ to a production-grade part.
 | Reset cause register | **MCU-like** | `SYS_RSTCAUSE` (`0xF003`): pin, soft, fault, watchdog, boot-fail, flash-ok |
 | Debug observability without a logic analyser | **MCU-like** | `SYS_DBG_PC/SP/SR/IR`, `SYS_FAULT_ADDR/CNT`, `SYS_CPU_STATE`, `SYS_SCRATCH0/1`, 32-bit cycle counter |
 | Single toolchain recipe, reproducible build | **MCU-like** | `source scripts/sv16_venv.sh && make test bitstream`; the ROM is compiled into the image |
-| Memory-mapped peripherals, one bus | **MCU-like** | 32 KB SRAM @ 0, 4 KB boot ROM @ 0xE000, 10 MMIO blocks @ 0xF000 |
+| Memory-mapped peripherals, one bus | **MCU-like** | 32 KB SRAM @ 0, 4 KB boot ROM @ 0xE000, 11 MMIO blocks @ 0xF000 |
 | Interrupt controller with priority + vectors | **MCU-like** | 8 sources, priority, per-source enable, global enable, `RETI` |
-| Watchdog | **soft-core gap** | `rtl/sv16_wdt.sv` exists but is not instantiated (`MMIO_PRESENT` bit 8 = 0) |
+| Watchdog | **MCU-like** | `sv16_wdt` at `0xF080`: windowed, key-protected, restarts the SoC, survives soft restarts, early-warning interrupt; verified end to end by `wdt_reset_tb` |
 | Low-power / clock scaling | **soft-core gap** | one clock; build-time divider only, no runtime clock control, no sleep modes |
 | Multiple clock options (PLL, 50–100 MHz) | **soft-core gap** | 25 MHz oscillator ÷ `SV16_CLKDIV`; no EHXPLLL instantiated |
 | Hardware debug interface (JTAG/SWD, breakpoints, memory access while halted) | **soft-core gap** | single-step and halt exist (`SYS_CTRL`), but only from firmware/console — no JTAG TAP, no GDB stub |
@@ -69,32 +69,28 @@ to a production-grade part.
 
 Ordered by what would unlock the most value per unit of risk:
 
-1. **Watchdog wiring.** `sv16_wdt.sv` already has the register interface and
-   `SYS_RSTCAUSE.WDT`. Wire it into `sv16_top` (MMIO block 8, `MMIO_PRESENT`
-   bit 8) and into the reset controller, then add a `SYS_CTRL` lock so an
-   application cannot disable it accidentally.
-2. **Timing margin / higher clock.** The design closes at 12.5 MHz
-   (Fmax measured 14.43 MHz at speed grade 6). The critical path runs
+1. **Timing margin / higher clock.** The design closes at 12.5 MHz
+   (Fmax measured 14.68 MHz at speed grade 6). The critical path runs
    register file → ALU → flags → control-unit next-state *and* through
    `u_sys.illegal_pc`'s subtract; splitting the flag/branch decision with one
    extra FSM state or registering the fault address is what buys 25 MHz, and an
    `EHXPLLL` instance would then allow 40–50 MHz.
-3. **A/B images with rollback.** Two image slots, a validity flag, and a
+2. **A/B images with rollback.** Two image slots, a validity flag, and a
    "confirm this image" store from the application. The loader already has
    `BOOT_SRC_LO/HI` and `VERIFY-ONLY`, so the RTL change is small; the missing
    part is a policy (which slot wins, when to fall back).
-4. **JTAG debug.** ECP5 has a usable TAP; a small "debug bridge" that maps JTAG
+3. **JTAG debug.** ECP5 has a usable TAP; a small "debug bridge" that maps JTAG
    shift-register words onto the bus (`SYS_CTRL.HALT` + `SYS_DBG_*` already
    give the core-side hooks) would give halt/resume, memory peek/poke and
    breakpoints — the single biggest quality-of-life gap versus an MCU.
-5. **C toolchain.** A minimal `sv16-elf-gcc` backend or a small C compiler for
+4. **C toolchain.** A minimal `sv16-elf-gcc` backend or a small C compiler for
    the 8-register machine. Without it, this is an assembly-only platform.
-6. **Signed/protected updates.** CRC16 (integrity) → add a keyed MAC or
+5. **Signed/protected updates.** CRC16 (integrity) → add a keyed MAC or
    signature check in the loader before handing over.
-7. **Brown-out and power-fail handling.** No BOR comparator or flash-safe
+6. **Brown-out and power-fail handling.** No BOR comparator or flash-safe
    power-loss path is present; a power cut during `C` destroys the image (the
    hardware recovers to the monitor, but the application is lost).
-8. **Silicon bring-up.** Everything here is verified in simulation and
+7. **Silicon bring-up.** Everything here is verified in simulation and
    place-and-route. Until a board runs it, treat pin electrical behaviour
    (drive strength, pull-ups, boot straps) and the flash part's real command set
    as unproven.
@@ -104,7 +100,7 @@ Ordered by what would unlock the most value per unit of risk:
 Rev B turns SV-16 from *a CPU you can instantiate* into *a device you can
 program, run, update over a serial cable and recover when it breaks* — which is
 the functional definition of a microcontroller. What it is not yet is a
-*protected, debuggable, toolchain-supported* product: no watchdog in the reset
-path, no JTAG debug, no A/B updates, no C compiler, and no silicon validation.
+*protected, debuggable, toolchain-supported* product: no JTAG debug, no A/B
+updates, no memory protection, no C compiler, and no silicon validation.
 The gap list above is the roadmap; each item is scoped so it can be added
 without disturbing the SV-16 ISA or the existing boot flow.

@@ -11,28 +11,32 @@ the tables below is aspirational.
 
 ```sh
 source scripts/sv16_venv.sh
-make test           # lint + firmware + all four simulation suites
-make sim TB=boot_tb # a single suite
+make test            # lint + firmware + all six simulation suites
+make sim TB=wdt_tb   # a single suite
 ```
 
 | Suite | File | Checks | Result | What it proves |
 | :--- | :--- | ---: | :--- | :--- |
+| `wdt_tb` | `simulation/unit/wdt_tb.sv` | 49 | PASS | the watchdog: exact period `(PRESET+1)x2^PRESC`, one-cycle reset request, self-rearm, keyed writes, magic-word feeds, integer prescaler, early-warning interrupt `MARGIN` ticks ahead, windowed feeding, LOCK freezing enable/period/prescaler/window, write-1-to-clear flags, hard-reset-only clearing |
+| `wdt_reset_tb` | `simulation/regression/wdt_reset_tb.sv` | 14 | PASS | the whole point of it: an application that hangs is restarted by the hardware — bite, `RSTCAUSE.WDT`, re-boot of the image, application runs again, second hang caught again, external pin clears it |
 | `flash_ctrl_tb` | `simulation/unit/flash_ctrl_tb.sv` | 48 | PASS | the flash controller's command set: ID, read stream, page program + flush, sector erase, CRC over a range, status/wait-state handling, error flags |
 | `boot_tb` | `simulation/unit/boot_tb.sv` | 24 | PASS | the hardware boot loader against a behavioural SPI NOR model: header parse, CRCs, payload streaming into SRAM, `BOOT_STAT`/`BOOT_ERR`, verify-only mode, rejection of corrupt images |
 | `soc_boot_tb` | `simulation/regression/soc_boot_tb.sv` | 21 | PASS | end-to-end: reset → boot engine → SRAM contains the image → CPU released at the entry point with the image's stack pointer |
 | `monitor_tb` | `simulation/regression/monitor_tb.sv` | 20 | PASS | the whole field-programming story over a bit-banged UART: banner, `?`, `C` upload of a real image, `R` readback, `E` erase, `V` CRC, `B` boot, the application actually running and driving GPIO/PWM/direction pins, and the monitor being the fallback |
-| `sv16_rtl_lint.py` | `scripts/sv16_rtl_lint.py` | 24 files | clean | structural checks: multiple drivers, missing `default` in combinational `case`, `always_ff` without reset, latches, etc. |
-| Verilator elaboration | `make vlint` | top | clean | the whole SoC (package + 24 modules) elaborates as one design |
+| `sv16_rtl_lint.py` | `scripts/sv16_rtl_lint.py` | 25 files | clean | structural checks: multiple drivers, missing `default` in combinational `case`, `always_ff` without reset, latches, etc. |
+| Verilator elaboration | `make vlint` | top | clean | the whole SoC (package + 25 modules) elaborates as one design |
 
-Total: **113 checks, 0 failures.**
+Total: **176 checks, 0 failures.**
 
 `monitor_tb` is the most valuable suite in the set: it is a *system* test. It
 bakes `build/rom/monitor.hex` into the ROM model, brings up a blank flash, drives
 a real image (`build/fw/motor_test_img.hex`) through the monitor's upload
 protocol byte by byte with the ack/dot handshake, verifies the flash contents,
 and then checks that a `B` command hands control to the uploaded application with
-the expected side effects on the peripherals. All four suites are run from the
-repository root (they read files from `build/`).
+the expected side effects on the peripherals. `wdt_reset_tb` is the other system
+test: it boots a deliberately hanging application out of flash and watches the
+watchdog recover it, twice, with no host involved. All six suites are run from
+the repository root (they read files from `build/`).
 
 ### Testbench infrastructure
 
@@ -71,6 +75,17 @@ Worth recording, because they are the reason the boot path is trustworthy now:
    single-cycle `boot_go`.
 5. **Flash read streaming was off by one** (wait states after the last byte),
    and the monitor's hex helper printed one nibble short.
+6. **The watchdog's feed was swallowed by its own tick** (found by `wdt_tb`):
+   at `PRESC = 0` every clock is a tick, and the counter's decrement was
+   evaluated after — and therefore overrode — the reload a feed had just
+   requested, so feeding the watchdog at its most common setting did nothing.
+   The counter now has an explicit priority: window fault, feed, then tick.
+7. **A 16-bit period and an 8-bit key cannot share one word**: the first cut
+   stored the whole keyed value as the period, so a 32-tick watchdog ran for
+   23048 clocks. `CTRL` is keyed; the period registers are frozen by `LOCK`.
+8. **The window was enforced on the very first feed**, which would have reset a
+   correctly written application one period after arming the watchdog; the first
+   period after `ENABLE` is now exempt.
 
 ---
 
@@ -85,6 +100,7 @@ Being explicit about coverage gaps is part of the verification story:
 | UART framing errors, overrun, break conditions | the model drives clean 8-N-1 only |
 | Interrupt latency | the IRQ controller and vector fetch are exercised indirectly; no timing-bound test exists |
 | Timer/PWM boundaries | `simulation/unit/*` has older Rev A testbenches for these; they are **not** in the Rev B regression (some of them do not build under Verilator 5) |
+| Watchdog under a fault-injection campaign | window, lock and interrupt paths are covered functionally, but not with randomised timing or injected faults |
 | Software (monitor) | exercised through `monitor_tb` only; no unit tests for the assembler, packer or `sv16_mon.py` against a golden corpus |
 | Flash endurance / power-loss during program | not modelled |
 | Timing | closed by nextpnr's static analysis at 12.5 MHz; no SDF/back-annotated simulation and no on-board measurement |

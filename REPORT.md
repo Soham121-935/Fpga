@@ -13,10 +13,10 @@ prototype* into a *practical, MCU-style programmable system* on the Lattice ECP5
 | :--- | :--- |
 | Date of report | 2026-09-24 |
 | Branch | `arena/01a0ce9b-fpga` (this session), one commit ahead of `arena/Rv2` |
-| Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) |
+| Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) · `e664a0c` branch-rename note · **watchdog (this change set)** |
 | Remote state | On GitHub this work stream was renamed **`arena/01a0ce9b-fpga` → `arena/Rv2`**, so `arena/Rv2` holds the Rev B work up to `a07f62e`. This session pushed `arena/01a0ce9b-fpga` again and it now sits at `b747fb3` — a direct descendant of `arena/Rv2`, so it can be fast-forwarded or merged without conflicts. |
-| Test status | **113 checks, 0 failures** across 4 suites; RTL lint 24/24 clean |
-| Bitstream | `make bitstream` → `build/sv16_top.bit`, 275,119 bytes, **timing PASS** at 12.5 MHz |
+| Test status | **176 checks, 0 failures** across 6 suites; RTL lint 25/25 clean |
+| Bitstream | `make bitstream` → `build/sv16_top.bit`, 276,941 bytes, **timing PASS** at 12.5 MHz (Fmax 14.68 MHz) |
 | Silicon | **never run on hardware** — simulation + static timing only |
 
 ---
@@ -41,6 +41,10 @@ it breaks:
   (`make upload`) — or typed in by hand.
 * Whatever goes wrong, the chip **falls back to the monitor** and says why
   (graded boot errors, reset-cause register, fault address, CPU state snapshot).
+* If the *application* hangs, a **windowed, key-protected watchdog** (`0xF080`)
+  restarts the whole boot sequence, sets `SYS_RSTCAUSE.WDT`, re-boots the image
+  and keeps guarding it. The application cannot disarm it, and a breadcrumb left
+  in the surviving scratch registers survives the restart.
 * The whole flow is **reproducible from one script** (`scripts/sv16_venv.sh`) and
   the bitstream **places, routes and packs for the real part with timing passing**.
 
@@ -48,15 +52,15 @@ it breaks:
 
 | Metric | Value |
 | :--- | :--- |
-| FPGA utilization | 7,358 / 24,288 LUT4 (**30 %**), 4,448 FFs (18 %), 18/56 block RAMs, 1 multiplier, 52 I/O |
-| Timing | Fmax **14.43 MHz** measured; shipped at **12.5 MHz ⇒ PASS** with ~15 % margin |
-| Bitstream | **275,119 bytes** (`build/sv16_top.bit`), boot ROM baked in |
-| Verification | **113 checks, 0 failures** (`48 + 24 + 21 + 20`), plus lint + whole-SoC elaboration |
-| Code | 24 RTL files / 5,933 lines, 11 scripts / 2,261 lines, 16 documents / ~2,400 lines |
+| FPGA utilization | 7,639 / 24,288 LUT4 (**31 %**), 4,576 FFs (18 %), 18/56 block RAMs, 1 multiplier, 52 I/O |
+| Timing | Fmax **14.68 MHz** measured; shipped at **12.5 MHz ⇒ PASS** with ~17 % margin |
+| Bitstream | **276,941 bytes** (`build/sv16_top.bit`), boot ROM baked in |
+| Verification | **176 checks, 0 failures** (`49 + 48 + 24 + 21 + 20 + 14`), plus lint (25/25) + whole-SoC elaboration |
+| Code | 25 RTL files / 5,933 lines, 11 scripts / 2,261 lines, 16 documents / ~2,400 lines |
 
 **The one honest headline:** this is functionally a microcontroller now, but it has
-not run on silicon, has no JTAG debug, no watchdog in the reset path, no A/B
-image rollback and no C compiler. Those are listed with effort estimates in
+not run on silicon, has no JTAG debug, no A/B image rollback, no memory
+protection and no C compiler. Those are listed with effort estimates in
 section 8.
 
 ---
@@ -138,11 +142,11 @@ section 8.
  0xE800 ├──────────────────────────────┤
         │ unmapped                     │
  0xF000 ├──────────────────────────────┤
-        │ MMIO 16 blocks × 16 registers│  10 blocks present (MMIO_PRESENT 0x6FF)
-        │ 0 sys  1 GPIO A  2 timer     │  block 8 = watchdog (RTL exists, unwired)
-        │ 3 PWM  4 UART    5 SPI       │  blocks 11-15 reserved
-        │ 6 flash 7 GPIO B 9 IRQ       │
-        │ A boot engine                │
+        │ MMIO 16 blocks × 16 registers│  11 blocks present (MMIO_PRESENT 0x7FF)
+        │ 0 sys  1 GPIO A  2 timer     │  block 8 = watchdog: arm it, feed it,
+        │ 3 PWM  4 UART    5 SPI       │  feed it wrongly, or it restarts the SoC
+        │ 6 flash 7 GPIO B 9 IRQ       │  blocks 11-15 reserved
+        │ A boot engine  8 watchdog    │
  0xF100 ├──────────────────────────────┤
         │ unmapped / reserved          │
  0xFFFF └──────────────────────────────┘
@@ -179,7 +183,7 @@ The original request had seven items. Status of each:
 | 5 | Documentation: capabilities, how to program, how to update firmware, how to build + flash | **[x] DONE** | `BOOT_AND_PROGRAMMING.md` (operator manual), `SYNTHESIS_AND_DEPLOYMENT.md`, plus 6 rewritten docs |
 | 6 | Keep builds reproducible via the existing flow; update Makefile/scripts as needed | **[x] DONE** | `make test`, `make bitstream`, `make upload`, `make app`; toolchain bootstrap + synthesis script; generated Yosys script kept for audit |
 | 7 | No cosmetic changes — real architectural work | **[x] DONE** | 9 new RTL modules, rewritten interconnect, new bus protocol, boot flow, hardware loader; every change is functional |
-| — | Deliverable: RTL/script changes | **[x] DONE** | 24 RTL files, 7 new scripts, Makefile rework |
+| — | Deliverable: RTL/script changes | **[x] DONE** | 25 RTL files, 7 new scripts, Makefile rework |
 | — | Deliverable: updated documentation | **[x] DONE** | 16 documents (2 new, 8 rewritten) |
 | — | Deliverable: firmware loading/boot flow | **[x] DONE** | hardware loader + monitor protocol + host tool + image format, all tested end to end |
 | — | Deliverable: "MCU-like vs FPGA-soft-core" explanation | **[x] DONE** | `docs/MCU_READINESS.md` (side-by-side table) |
@@ -194,7 +198,7 @@ silicon), which the request explicitly asked to be enumerated rather than built.
 
 ## 4. Everything that was built (inventory)
 
-### 4.1 RTL — 24 files, 5,933 lines (`rtl/`)
+### 4.1 RTL — 25 files, 6,260 lines (`rtl/`)
 
 | Module | Lines | What it is | New in Rev B |
 | :--- | ---: | :--- | :---: |
@@ -218,6 +222,7 @@ silicon), which the request explicitly asked to be enumerated rather than built.
 | `sv16_startup.sv` | 223 | reset/boot sequencer, reset causes, monitor escape | **new** |
 | `sv16_sys.sv` | 207 | system control, reset cause, fault capture, debug regs, cycle counter, scratch | **new** |
 | `sv16_irq_ctrl.sv` | 101 | enable/pending/priority controller | **new** |
+| `sv16_wdt.sv` | 265 | windowed, key-protected watchdog: preset/prescaler/window registers, magic-word feed, early-warning interrupt, `LOCK`, reset request into the startup FSM | **new** |
 | `sv16_gpio.sv` | 89 | atomic set/clear, sync'd inputs (2 ports) | reused ×2 |
 | `sv16_timer.sv` / `sv16_pwm.sv` | 119 / 118 | timer with compare IRQ; PWM with hardware fault input | — |
 | `sv16_top.sv` | 480 | SoC top: clock divider, reset, 2 SPI ports, 32 GPIO, LED/motor pins | rewritten |
@@ -242,7 +247,8 @@ silicon), which the request explicitly asked to be enumerated rather than built.
 | `monitor/` build output | — | `build/rom/monitor.hex` (934 words) + `.lst` disassembly |
 | `examples/motor_test.s` | 41 | demo application used by the upload test |
 | `examples/motor_control.c` | 62 | intent/documentation (no C compiler yet) |
-| `drivers/sv16_hardware.h` | 364 | complete Rev B register map, bit fields, image header, CRC helper, inline helpers |
+| `examples/wdt_hang.s` | 62 | deliberately hangs *after* arming the watchdog — the image `wdt_reset_tb` boots to prove the recovery path |
+| `drivers/sv16_hardware.h` | ~420 | complete Rev B register map, bit fields, image header, CRC helper, inline helpers incl. `sv16_wdt_arm()`/`sv16_wdt_feed()`/`sv16_wdt_lock()` |
 | `bootrom.hex` | — | legacy Rev A ROM image, kept for `make iss` |
 
 ### 4.4 Documentation — 16 files, ~2,400 lines
@@ -254,23 +260,23 @@ silicon), which the request explicitly asked to be enumerated rather than built.
 | `PROJECT_STATUS.md` | rewritten | Rev A→Rev B comparison, backlog, verification summary |
 | `SYNTHESIS_AND_DEPLOYMENT.md` | rewritten | toolchain, targets, utilization, timing (with the three placer measurements), pin map, programming, reproducibility |
 | `MEMORY_MAP.md` | rewritten | Rev B map, MMIO blocks, system registers, vector table, Rev A→B changes |
-| `PERIPHERALS.md` | rewritten | register reference for all 10 blocks + programming idioms |
+| `PERIPHERALS.md` | rewritten | register reference for all 11 blocks + programming idioms |
 | `BUS_ARCHITECTURE.md` | rewritten | protocol rules, arbitration, timing diagrams, how to add a slave |
 | `RESET_AND_CLOCK.md` | rewritten | clock divider, baud derivation, reset causes, startup FSM, fault behaviour |
-| `VERIFICATION.md` | rewritten | what runs, the 5 bugs the suite caught, what is *not* verified |
+| `VERIFICATION.md` | rewritten | what runs, the 10 defects the suites caught, what is *not* verified |
 | `ISA.md` | updated | unchanged ISA + Rev B notes on entry, interrupts, trap |
-| `ARCHITECTURE_DECISIONS.md` | extended | ADR-012 (boot/storage), 013 (field update), 014 (map), 015 (CPU fixes), 016 (interrupts) |
-| `OPEN_QUESTIONS.md` | rewritten | OQ-01..10 resolved (with Rev B changes flagged), OQ-11..18 newly open |
+| `ARCHITECTURE_DECISIONS.md` | extended | ADR-012 (boot/storage), 013 (field update), 014 (map), 015 (CPU fixes), 016 (interrupts), 017 (watchdog in the reset path) |
+| `OPEN_QUESTIONS.md` | rewritten | OQ-01..10 resolved, OQ-13 (watchdog) closed by ADR-017, OQ-11/12/14..18 still open |
 | `FPGA.md` | rewritten | device facts, measured usage, clocking, pin rules |
 | `README.md` | rewritten | quick start, blueprint, capability list, honest status |
 | `CPU_ARCHITECTURE.md`, `CODING_STANDARDS.md` | unchanged | still accurate (ISA/CPU untouched) |
 
-### 4.5 Verification assets (5 files, 1,681 lines)
+### 4.5 Verification assets (7 files, 2,126 lines)
 
 `simulation/unit/sv16_flash_model.sv` (273) behavioural SPI NOR — 64 KB, 256 B
 pages, 4 KB sectors, `tPROG`/`tERASE` in clocks, JEDEC `0xEF4018`;
 `flash_ctrl_tb.sv` (272), `boot_tb.sv` (265), `soc_boot_tb.sv` (240),
-`monitor_tb.sv` (521).
+`monitor_tb.sv` (521), `wdt_tb.sv` (367), `wdt_reset_tb.sv` (188).
 
 ### 4.6 Constraints
 
@@ -294,6 +300,10 @@ database. Header documents the four invalid Rev A sites and the pin table.
 | Tell you why it restarted | `SYS_RSTCAUSE`: pin / soft / fault / WDT / no-image / image-loaded; sticky bits, W1C | `docs/RESET_AND_CLOCK.md` §2 |
 | Update itself from the application | application drives `BOOT_CTRL.START` (+`VERIFY_ONLY`, `SRC_LO/HI`) and polls `BOOT_STAT` | `sv16_hardware.h:sv16_boot_image()` |
 | Survive a soft reset with context | `SYS_SCRATCH0/1` are never cleared by reset | `docs/MEMORY_MAP.md` §3 |
+| **Recover by itself from a hung application** | arm the watchdog (3 stores: `WDT_PRESET`, `WDT_WINDOW`, keyed `WDT_CTRL`), feed it from the main loop; on expiry the hardware restarts the boot sequence, sets `RSTCAUSE.WDT`, re-boots the image and re-arms for a full period | `wdt_reset_tb` **14 checks**: a real hanging image is booted from flash, bites, restarts, runs again, bites again — with no host involved |
+| Be warned before it bites | `WDT_CTRL.IRQ_EN` raises IRQ 6 `MARGIN` ticks before expiry so the handler can save a breadcrumb in scratch that survives the restart | `wdt_tb` 49 checks |
+| Catch a runaway loop that feeds the watchdog non-stop | windowed feeding: a feed earlier than `WINDOW` ticks after the previous one is itself a fault | `wdt_tb` |
+| Make the watchdog un-disarmable | `LOCK` freezes enable/period/prescaler/window; only the external reset pin clears the block | `wdt_tb` |
 
 ### 5.2 As a CPU (unchanged from Rev A, by design)
 
@@ -303,14 +313,14 @@ with `PUSH`/`POP`/`CALL`/`RET`; trap on illegal opcodes; interrupts with a
 priority controller and an 8-entry RAM vector table; `RETI`.
 **No instruction encoding changed** — Rev A applications run unchanged.
 
-### 5.3 Peripherals (10 MMIO blocks, 16 registers each)
+### 5.3 Peripherals (11 MMIO blocks, 16 registers each)
 
 GPIO A + GPIO B (atomic `SET`/`CLR`, synchronised inputs) · timer with compare
 interrupt · PWM with a **hardware fault input** (`motor_fault_n` shuts the output
 down without CPU help) · UART with 4-byte FIFOs (console + upload) · SPI master
 for expansion · a full **SPI-NOR flash controller** (ID, read stream, page
 program, sector erase, CRC over a range, internal `tPROG`/`tERASE` waits) ·
-interrupt controller · system control/debug · boot engine.
+interrupt controller · system control/debug · boot engine · **watchdog** (windowed, keyed, restarts the SoC, early-warning interrupt).
 
 ### 5.4 Observability (the "why is my board doing that" layer)
 
@@ -327,23 +337,25 @@ single-step (`SYS_CTRL.HALT` + `STEP`).
 
 | Suite | Checks | Failures | What it proves |
 | :--- | ---: | ---: | :--- |
+| `wdt_tb` | **49** | 0 | exact period `(PRESET+1)×2^PRESC`, one-cycle reset request, self-rearm, keyed writes, magic-word feeds, integer prescaler, early-warning interrupt timing, windowed feeding, `LOCK` freezing, W1C flags, pin-only clearing |
+| `wdt_reset_tb` | **14** | 0 | **the recovery path end to end**: boot a hanging image out of flash → watchdog bites → `RSTCAUSE.WDT` → boot sequence restarts → image re-boots → hangs again → caught again → external pin clears the block |
 | `flash_ctrl_tb` | **48** | 0 | every flash command, wait states, CRC over a range, error flags |
 | `boot_tb` | **24** | 0 | header parse, both CRCs, streaming to SRAM, verify-only, corrupt-image rejection |
 | `soc_boot_tb` | **21** | 0 | reset → loader → SRAM content → CPU released at the right entry/SP |
 | `monitor_tb` | **20** | 0 | the entire field-update story over a bit-banged UART, including the uploaded app actually running and driving GPIO/PWM/direction |
-| **Total** | **113** | **0** | `make sim` |
+| **Total** | **176** | **0** | `make sim` |
 
-Plus: `sv16_rtl_lint.py` **24/24 files clean** (multiple drivers, latches, missing
+Plus: `sv16_rtl_lint.py` **25/25 files clean** (multiple drivers, latches, missing
 resets, incomplete case) and Verilator elaboration of the whole SoC clean.
 
 ### 6.2 Implementation (measured, reproducible)
 
 | Stage | Result |
 | :--- | :--- |
-| Yosys `synth_ecp5` | 5,982 LUT4 + 1,376 carry, 4,448 FFs, 18 `DP16KD`, 1 `MULT18X18D`, netlist written |
+| Yosys `synth_ecp5` | 6,147 LUT4 + 746 carry, 4,576 FFs, 18 `DP16KD`, 1 `MULT18X18D`, netlist written |
 | nextpnr-ecp5 (`--12k --package TQFP144 --speed 6 --freq 12.5`) | places, routes, **timing PASS** |
-| ecppack `--compress` | `build/sv16_top.bit`, **275,119 bytes** |
-| Placer comparison | heap default = **14.43 MHz** (PASS) · heap `timingweight 50` = 13.15/14.18 MHz (worse) · SA = fails to place carry chains |
+| ecppack `--compress` | `build/sv16_top.bit`, **276,941 bytes** |
+| Placer comparison | heap default = **14.68 MHz** (PASS, 14.09 pre-route) · heap `timingweight 50` = 13.15/14.18 MHz (worse) · SA = fails to place carry chains |
 | 25 MHz attempt (`CLKDIV=1`) | 14.38 MHz → **FAIL**, flow stops before packing (a broken build cannot ship silently) |
 
 ### 6.3 Real defects found and fixed by this work
@@ -357,6 +369,15 @@ resets, incomplete case) and Verilator elaboration of the whole SoC clean.
 5. Flash read streaming off-by-one + a monitor hex helper printing one nibble short.
 6. Decoder mis-mapped `STORE` data / `PUSH` source registers (silent corruption in Rev A).
 7. Four pin constraints that could never have placed on the target package.
+8. **Watchdog feed swallowed by its own tick** — at `PRESC = 0` the counter's
+   decrement overrode the reload a feed had just requested, so feeding the
+   watchdog at its most common setting silently did nothing (caught by `wdt_tb`).
+9. **A 16-bit period cannot share a register with an 8-bit key** — the first cut
+   stored the whole keyed value as the period, so a 32-tick watchdog ran for
+   23,048 clocks. `CTRL` is keyed; the period registers are frozen by `LOCK`.
+10. **The window was enforced on the first feed**, which would have restarted a
+    correctly written application one period after it armed the watchdog; the
+    first period after `ENABLE` is now exempt.
 
 ---
 
@@ -367,7 +388,7 @@ git clone https://github.com/Soham121-935/Fpga.git && cd Fpga
 git checkout arena/Rv2                 # or this session's arena/01a0ce9b-fpga
 
 source scripts/sv16_venv.sh            # Verilator + Yosys + nextpnr + ecppack
-make test                              # lint + 113 checks           (~2 min)
+make test                              # lint + 176 checks           (~4 min)
 make bitstream                         # Yosys→PnR→pack, timing report (~2 min)
 make prog                              # program the FPGA over JTAG
 make upload PORT=/dev/ttyUSB0          # program the *firmware* over UART
@@ -396,7 +417,7 @@ be audited or replayed.
 
 | # | Item | Why it matters | Effort |
 | :--- | :--- | :--- | :--- |
-| P1 | **Watchdog in the reset path** (`sv16_wdt.sv` exists, MMIO block 8, `SYS_RSTCAUSE.WDT` reserved) | A software hang currently means manual intervention | 1-2 days: instance + interconnect leg + `MMIO_PRESENT` bit + optional lock bit + tests |
+| ~~P1~~ | ~~**Watchdog in the reset path**~~ — **DONE** (`sv16_wdt.sv`, MMIO block 8, `RSTCAUSE.WDT` live, `MMIO_PRESENT = 0x7FF`) | A software hang used to mean manual intervention; now the hardware restarts the boot sequence and re-boots the application, and the application cannot disarm it | 265-line block + 49 unit checks + 14 system checks + ADR-017; lint and timing re-verified |
 | P2 | **Timing headroom → 25 MHz+** (critical path is CPU: register file → ALU → flags → control FSM, plus `u_sys.illegal_pc`) | Faster part, and the 12.5 MHz default is a workaround, not a design point | 2-4 days: extra FSM stage for flags/branch, register the fault address; then an `EHXPLLL` instead of the fabric divider |
 | P3 | **A/B images with rollback** | Today a power cut during `C` loses the only application (recovery is the monitor, but the app is gone) | 3-5 days: two slots, validity flag, "confirm" store, loader policy + tests |
 | P4 | **JTAG debug bridge** over the ECP5 TAP using the existing `SYS_CTRL.HALT` / `SYS_DBG_*` hooks | Biggest quality-of-life gap vs a real MCU: halt, resume, peek/poke, breakpoints | 1-2 weeks: TAP shift-register bridge + host tool |
@@ -410,7 +431,7 @@ be audited or replayed.
 ### 8.3 Tracked design questions still open
 
 See `docs/OPEN_QUESTIONS.md`: RAM remap (OQ-11), vector table placement (OQ-12),
-watchdog policy (OQ-13), image slots (OQ-14), latency budget (OQ-15), C toolchain
+image slots (OQ-14), latency budget (OQ-15), C toolchain
 and ISA extension (OQ-16), update throughput (OQ-17), real board pin assignment
 (OQ-18).
 

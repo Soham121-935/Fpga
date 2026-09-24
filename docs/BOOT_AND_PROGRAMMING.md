@@ -239,6 +239,8 @@ is the default.
 | `C` stops mid-stream with no dots | host ignored the per-byte ack and overflowed the RX FIFO | use `scripts/sv16_mon.py`, not a raw paste |
 | `-E5` from `C` | flash controller did not return to idle (wiring / missing flash) | check `FLASH_ID` reads `0xEF4018`; check SCK/CS/MOSI/MISO pins |
 | Application starts then resets in a loop | application fault → `SYS_RSTCAUSE.FAULT`, `SYS_FAULT_ADDR`/`SYS_FAULT_CNT` hold the address | read the cause registers with `R`/`V`, or hold RX low to reach the monitor |
+| Application restarts every few seconds (or a second time, after a hang) | the watchdog bit: `RSTCAUSE.WDT`, and `WDT_STAT` says why — `TIMEOUT` (not fed in time), `WINFAULT` (fed too early: the period or the window are wrong for the workload), `BADKEY` (bad key/feed word — usually a wild pointer write) | fix the feed call sites, or re-arm with a longer period; read `SYS_SCRATCH0/1` for the breadcrumb the early-warning interrupt left |
+| The watchdog restarted the same hung application twice | by design: the watchdog is cleared only by the external reset pin, and it reloads its counter on expiry, so a repeated hang is caught repeatedly. Hold RX low at reset (or press the reset button) to land in the monitor, then upload a working image |
 | Board bricks itself | *not possible*: the boot ROM is inside the FPGA configuration, and the boot engine is hardware | re-flash the FPGA if the *bitstream* is bad; re-upload the image if the *application* is bad |
 
 The worst case is always recoverable with a serial cable: the monitor and the

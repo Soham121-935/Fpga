@@ -64,7 +64,7 @@
 #define SV16_BLK_SPI0   5
 #define SV16_BLK_FLASH  6
 #define SV16_BLK_GPIO1  7
-#define SV16_BLK_WDT    8   /* reserved: not instantiated in Rev B */
+#define SV16_BLK_WDT    8   /* watchdog: windowed, keyed, restarts the SoC */
 #define SV16_BLK_IRQ    9
 #define SV16_BLK_BOOT   10
 
@@ -109,7 +109,7 @@
 #define RSTCAUSE_PIN      SV16_BIT(0)
 #define RSTCAUSE_SOFT     SV16_BIT(1)
 #define RSTCAUSE_FAULT    SV16_BIT(2)
-#define RSTCAUSE_WDT      SV16_BIT(3)   /* reserved until the WDT is wired */
+#define RSTCAUSE_WDT      SV16_BIT(3)   /* the watchdog restarted the system */
 #define RSTCAUSE_BOOTFAIL SV16_BIT(4)
 #define RSTCAUSE_FLASHOK  SV16_BIT(5)
 
@@ -245,6 +245,37 @@
 #define IRQ_LINES SV16_MMIO(SV16_BLK_IRQ, 2)   /* RO */
 #define IRQ_PRIO  SV16_MMIO(SV16_BLK_IRQ, 3)   /* RO */
 
+/* --------------------------------------------------------------- Watchdog 0xF080 */
+#define WDT_CTRL   SV16_MMIO(SV16_BLK_WDT, 0)   /* key 0x5A in [15:8] */
+#define WDT_STAT   SV16_MMIO(SV16_BLK_WDT, 1)   /* RW1C (except RUNNING) */
+#define WDT_PRESET SV16_MMIO(SV16_BLK_WDT, 2)   /* ticks, frozen once LOCKED */
+#define WDT_FEED   SV16_MMIO(SV16_BLK_WDT, 3)   /* write SV16_WDT_KEY_FEED */
+#define WDT_WINDOW SV16_MMIO(SV16_BLK_WDT, 4)   /* min ticks between feeds */
+#define WDT_MARGIN SV16_MMIO(SV16_BLK_WDT, 5)   /* early warning, ticks to expiry */
+
+#define WDT_CTRL_ENABLE SV16_BIT(0)
+#define WDT_CTRL_LOCK   SV16_BIT(1)
+#define WDT_CTRL_WINDOW SV16_BIT(2)
+#define WDT_CTRL_IRQ    SV16_BIT(3)
+#define WDT_CTRL_PRESC_SHIFT 4                  /* [6:4]: period x 2^PRESC */
+#define WDT_CTRL_PRESC_MASK  0x0070u
+
+#define WDT_STAT_RUNNING   SV16_BIT(0)
+#define WDT_STAT_TIMEOUT   SV16_BIT(1)          /* sticky: it bit */
+#define WDT_STAT_WINFAULT  SV16_BIT(2)          /* sticky: feed too early */
+#define WDT_STAT_LOCKED    SV16_BIT(3)
+#define WDT_STAT_IRQ       SV16_BIT(4)          /* sticky: early warning */
+#define WDT_STAT_BADKEY    SV16_BIT(5)          /* sticky: bad key or feed word */
+#define WDT_STAT_BLOCKED   SV16_BIT(6)          /* sticky: write ignored (LOCKED) */
+
+#define SV16_WDT_KEY       0x5A00u              /* OR into WDT_CTRL writes */
+#define SV16_WDT_KEY_FEED  0x5A5Au              /* the value written to WDT_FEED */
+
+/* Timeout in SoC clocks: (preset + 1) << presc.  At 12.5 MHz a preset of 512
+ * with presc = 4 is ~0.66 ms; presc = 7 with preset = 0xFFFF is ~0.67 s. */
+#define SV16_WDT_PERIOD_CLOCKS(preset, presc) \
+    (((uint32_t)(preset) + 1u) << (presc))
+
 /* ---------------------------------------------------------------- Boot engine 0xF0A0 */
 #define BOOT_CTRL    SV16_MMIO(SV16_BLK_BOOT, 0)
 #define BOOT_STAT    SV16_MMIO(SV16_BLK_BOOT, 1)   /* RO */
@@ -344,6 +375,31 @@ static inline uint16_t sv16_uart_getc(void)
         /* wait for a byte */
     }
     return UART0_DATA;
+}
+
+/* Arm the watchdog, so a later hang restarts the SoC instead of stopping it.
+ * Returns with the watchdog running; call sv16_wdt_feed() from the main loop. */
+static inline void sv16_wdt_arm(uint16_t preset, uint8_t presc, uint16_t window)
+{
+    WDT_PRESET = preset;
+    WDT_WINDOW = window;
+    WDT_CTRL = (uint16_t)(SV16_WDT_KEY | WDT_CTRL_ENABLE |
+                          ((uint16_t)(presc & 0x7u) << WDT_CTRL_PRESC_SHIFT) |
+                          (window ? WDT_CTRL_WINDOW : 0u));
+}
+
+/* Kick it.  Must be called at least once per period, and (with a window) not
+ * more often than every `window` ticks. */
+static inline void sv16_wdt_feed(void)
+{
+    WDT_FEED = SV16_WDT_KEY_FEED;
+}
+
+/* Lock it down: after this, only the external reset pin can clear it.  Feed
+ * calls still work. */
+static inline void sv16_wdt_lock(void)
+{
+    WDT_CTRL = (uint16_t)(SV16_WDT_KEY | WDT_CTRL_ENABLE | WDT_CTRL_LOCK);
 }
 
 /* Ask the hardware boot loader to load the image at `src` (flash byte address)

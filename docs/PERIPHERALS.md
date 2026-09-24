@@ -1,6 +1,6 @@
 # SV-16 Rev B — Peripheral Subsystem
 
-Ten memory-mapped blocks are instantiated on the single SV-16 bus (ten of the sixteen decode slots; block 8 and blocks 11-15 are reserved and simply acknowledge reads with `0x0000`) (see
+Eleven memory-mapped blocks are instantiated on the single SV-16 bus (eleven of the sixteen decode slots; blocks 11-15 are reserved and simply acknowledge reads with `0x0000`) (see
 [BUS_ARCHITECTURE.md](BUS_ARCHITECTURE.md)). This page is the register-level
 reference for each of them; addresses are **word offsets from the block base**.
 
@@ -21,6 +21,7 @@ reference for each of them; addresses are **word offsets from the block base**.
 | `0xF050` | SPI 0 (master) | 4 | transfer done |
 | `0xF060` | Flash controller | 14 | done/error |
 | `0xF070` | GPIO port B | 4 | shared with port A |
+| `0xF080` | Watchdog | 6 | early warning |
 | `0xF090` | Interrupt controller | 4 | — |
 | `0xF0A0` | Boot loader | 16 | — |
 
@@ -156,6 +157,57 @@ Command codes (`CMD`):
 Firmware rarely drives this directly for *images*: the boot engine and the
 monitor already implement the erase/program/verify sequence. Use `CRC_START`
 plus `READ_START` to verify a region cheaply.
+
+---
+
+## Watchdog (`0xF080`)
+
+A windowed, key-protected watchdog whose timeout restarts the whole SoC through
+the startup sequencer (ADR-017). It is what turns "the application hung" into
+"the application restarted" — see
+[BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md#7-recovery-checklist).
+
+| Off | Name | Access | Bits |
+| :--- | :--- | :--- | :--- |
+| 0 | `CTRL` | RW | key `0x5A` in `[15:8]`; `[0]` ENABLE, `[1]` LOCK, `[2]` WINDOW_EN, `[3]` IRQ_EN, `[6:4]` PRESC |
+| 1 | `STAT` | RW1C | `[0]` RUNNING, `[1]` TIMEOUT, `[2]` WINDOW_FAULT, `[3]` LOCKED, `[4]` IRQ_PENDING, `[5]` BAD_KEY, `[6]` WRITE_BLOCKED |
+| 2 | `PRESET` | RW | reload value in prescaled ticks (frozen by LOCK) |
+| 3 | `FEED` | WO | write `0x5A5A` to kick the counter (wrong value sets `BAD_KEY`) |
+| 4 | `WINDOW` | RW | minimum ticks between feeds (frozen by LOCK) |
+| 5 | `MARGIN` | RW | early-warning threshold, ticks from expiry (frozen by LOCK) |
+
+* **Period** = `(PRESET + 1) x 2^PRESC` clocks: 5.2 ms to 0.67 s at 12.5 MHz
+  (`PRESC` 0-7). Choose a period longer than reset + image load, or a restart
+  will be interrupted by the next bite.
+* **Protection.** `CTRL` is keyed because it holds the bits that could disarm
+  the watchdog. `PRESET`/`WINDOW`/`MARGIN` are plain 16-bit writes (a 16-bit
+  period cannot share a word with an 8-bit key) and are frozen once LOCK is set,
+  which only the external reset pin can clear. `FEED` needs the magic word.
+* **On timeout:** `STAT.TIMEOUT` latches, the counter reloads (so the restarted
+  system gets a full period), and `sv16_startup` restarts the boot sequence with
+  `SYS_RSTCAUSE.WDT` set. The block is reset **only** by the external reset pin,
+  so an application cannot escape its watchdog by hanging twice.
+* **Early warning:** `IRQ_EN` raises interrupt source 6 `MARGIN` ticks before
+  expiry, so software can save a breadcrumb in `SYS_SCRATCH0/1` (which survive
+  the restart) before the reset lands.
+* **Windowed feeding:** with `WINDOW_EN` set, a feed earlier than `WINDOW` ticks
+  after the previous one is a fault (immediate restart). The window is not
+  enforced during the first period after ENABLE, so arming the watchdog and
+  feeding it in the next instruction is legal.
+
+Arming it is three stores:
+
+```asm
+    .EQU WDT_PRESET, 0xF082
+    .EQU WDT_CTRL,   0xF080
+    LDI  R0, WDT_PRESET
+    LDI  R1, 0x0200          ; 512 ticks
+    STORE R1, [R0 + 0]
+    LDI  R0, WDT_CTRL
+    LDI  R1, 0x5A41          ; key 0x5A | ENABLE | PRESC = 4 (/16)
+    STORE R1, [R0 + 0]
+    ; ... and a feed (0x5A5A to 0xF083) from the main loop
+```
 
 ---
 

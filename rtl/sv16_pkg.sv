@@ -221,6 +221,32 @@ package sv16_pkg;
     localparam logic [3:0] FCMD_WR_DISABLE = 4'd10;
     localparam logic [3:0] FCMD_RELEASE    = 4'd11;
 
+    // --------------------------------------------- Watchdog timer (block 8)
+    // See rtl/sv16_wdt.sv and docs/PERIPHERALS.md.  Every register except STAT
+    // and FEED is key protected: bits [15:8] of the write data must be 0x5A.
+    localparam logic [3:0] WDT_CTRL   = 4'h0; // [0] EN [1] LOCK [2] WIN [3] IRQ [6:4] PRESC
+    localparam logic [3:0] WDT_STAT   = 4'h1;
+    localparam logic [3:0] WDT_PRESET = 4'h2; // reload value in prescaled ticks
+    localparam logic [3:0] WDT_FEED   = 4'h3; // write 0x5A5A to kick
+    localparam logic [3:0] WDT_WINDOW = 4'h4; // minimum ticks before a legal feed
+    localparam logic [3:0] WDT_MARGIN = 4'h5; // early-warning threshold from expiry
+
+    localparam int WDT_CTRL_ENABLE_BIT = 0;
+    localparam int WDT_CTRL_LOCK_BIT   = 1;
+    localparam int WDT_CTRL_WINDOW_BIT = 2;
+    localparam int WDT_CTRL_IRQ_BIT    = 3;
+    localparam int WDT_CTRL_PRESC_LO   = 4;
+    localparam int WDT_CTRL_PRESC_HI   = 6;
+
+    localparam int WDT_STAT_TIMEOUT_BIT  = 1; // sticky: the watchdog fired
+    localparam int WDT_STAT_WINFAULT_BIT = 2; // sticky: a feed arrived too early
+    localparam int WDT_STAT_IRQ_BIT      = 4; // sticky: early warning fired
+    localparam int WDT_STAT_BADKEY_BIT   = 5; // sticky: keyed write with a bad key
+    localparam int WDT_STAT_BLOCKED_BIT  = 6; // sticky: write ignored because LOCKed
+
+    localparam logic [7:0]  WDT_KEY_BYTE = 8'h5A;    // CTRL/PRESET/WINDOW/MARGIN
+    localparam logic [15:0] WDT_KEY_FEED = 16'h5A5A; // FEED
+
     // ------------------------------------------------- Boot loader block
     localparam logic [3:0] BOOT_CTRL     = 4'h0; // [0] START [1] ABORT [2] VERIFY [3] AUTO
     localparam logic [3:0] BOOT_STAT     = 4'h1;

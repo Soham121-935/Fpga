@@ -30,7 +30,7 @@ image (or when the monitor is explicitly requested).
 
 ## 2. MMIO block map (`0xF000-0xF0FF`)
 
-Each block owns 16 word addresses. `MMIO_PRESENT = 0x06FF` marks which blocks
+Each block owns 16 word addresses. `MMIO_PRESENT = 0x07FF` marks which blocks
 actually have a slave behind them — the interconnect acknowledges unmapped
 registers with `0x0000` so probing never hangs.
 
@@ -44,7 +44,7 @@ registers with `0x0000` so probing never hangs.
 | `0x5` | `0xF050` | yes | SPI 0 (generic master, expansion bus) | [PERIPHERALS](PERIPHERALS.md#spi-0-0xf050) |
 | `0x6` | `0xF060` | yes | SPI flash controller | [PERIPHERALS](PERIPHERALS.md#flash-controller-0xf060) |
 | `0x7` | `0xF070` | yes | GPIO port B (16 pins, `gpio_b[15:0]`) | as GPIO A |
-| `0x8` | `0xF080` | **no** | Watchdog — RTL exists (`sv16_wdt.sv`), not instantiated | [MCU_READINESS](MCU_READINESS.md#4-gap-list-to-a-production-grade-mcu-experience) |
+| `0x8` | `0xF080` | yes | Watchdog (windowed, keyed, resets the SoC) | [PERIPHERALS](PERIPHERALS.md#watchdog-0xf080) |
 | `0x9` | `0xF090` | yes | Interrupt controller | [PERIPHERALS](PERIPHERALS.md#interrupt-controller-0xf090) |
 | `0xA` | `0xF0A0` | yes | Boot loader engine | [BOOT_AND_PROGRAMMING](BOOT_AND_PROGRAMMING.md#5-the-boot-engine-register-block-0xf0a0) |
 | `0xB-0xF` | `0xF0B0-0xF0F0` | no | reserved for future peripherals | — |
@@ -100,7 +100,7 @@ shows the offending instruction address after an illegal-opcode trap, and
 | 3 | SPI 0 transfer complete | `0x0023` |
 | 4 | Flash controller | `0x0024` |
 | 5 | GPIO (port A/B edge) | `0x0025` |
-| 6 | Watchdog (not instantiated in Rev B) | `0x0026` |
+| 6 | Watchdog early warning (`IRQ_EN`) | `0x0026` |
 | 7 | **TRAP** — illegal opcode / exception | `0x0027` |
 
 The CPU takes an interrupt only when `SR.IE = 1` and `SYS_CTRL.IRQEN = 1`. The
@@ -120,7 +120,7 @@ the vector table; `RETI` restores `SR` (and therefore `IE`) and returns.
 | :--- | :--- | :--- |
 | SRAM | 8 K words @ `0x0000-0x1FFF` | **16 K words @ `0x0000-0x3FFF`** |
 | Boot ROM | none (or `firmware/bootrom.hex` loaded by hand) | **2 K words @ `0xE000-0xE7FF`, monitor baked into the bitstream** |
-| MMIO | 4 blocks (GPIO, timer, PWM, UART) | **10 blocks present** of 16 (`MMIO_PRESENT = 0x6FF`): adds SPI, flash controller, GPIO1, IRQ controller, boot engine, system control |
+| MMIO | 4 blocks (GPIO, timer, PWM, UART) | **11 blocks present** of 16 (`MMIO_PRESENT = 0x7FF`): adds SPI, flash controller, GPIO1, watchdog, IRQ controller, boot engine, system control |
 | Interrupts | core lines wired ad hoc | IRQ controller with enable/pending/priority + 8-entry vector table |
 | Program store | none (JTAG-loaded init file) | **external SPI flash + hardware boot loader** |
 

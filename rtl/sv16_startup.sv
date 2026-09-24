@@ -13,6 +13,8 @@
 //      flash is missing/blank, or the user holds the serial RX line low during
 //      reset (a jumper/wired-AND escape hatch - no extra pin required)
 //   5. supports soft reset (SYS_CTRL.SOFTRST) that restarts this sequence
+//   6. restarts the sequence on a watchdog timeout, recording RSTCAUSE.WDT
+//      (ADR-017)
 //      without reconfiguring the FPGA, and keeps the peripherals/CPU in reset
 //      until the CPU is released
 //
@@ -48,6 +50,7 @@ module sv16_startup #(
     input  logic [15:0] boot_stack,
     output logic        boot_go,        // pulse: start a boot attempt
     input  logic        soft_rst_req,   // pulse from SYS_CTRL
+    input  logic        wdt_timeout,    // pulse from the watchdog (ADR-017)
 
     // Reset outputs
     output logic        rst_n,          // hard reset (whole device)
@@ -99,6 +102,20 @@ module sv16_startup #(
     // Monitor escape hatch detector
     logic [12:0] rx_low_cnt;
     logic        force_monitor;
+    logic        wdt_pend;         // a watchdog bite we have not acted on yet
+
+    // A watchdog bite is latched rather than sampled: the pulse can arrive while
+    // the sequencer is busy with a boot attempt, and a watchdog that is ignored
+    // is worse than no watchdog at all.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            wdt_pend <= 1'b0;
+        end else if (wdt_timeout) begin
+            wdt_pend <= 1'b1;
+        end else if (sstate == S_RUN) begin
+            wdt_pend <= 1'b0;      // acted on below
+        end
+    end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -208,7 +225,15 @@ module sv16_startup #(
 
                 // ---------------------------------------------------- running
                 S_RUN: begin
-                    if (soft_rst_req) begin
+                    if (wdt_pend) begin
+                        // the watchdog bit is sticky, and the WDT itself keeps
+                        // running across this restart (it is only cleared by the
+                        // external reset pin), so a program that hangs again is
+                        // restarted again
+                        delay_cnt  <= 32'd0;
+                        rst_cause[RSTCAUSE_WDT_BIT] <= 1'b1;
+                        sstate     <= S_RESET;
+                    end else if (soft_rst_req) begin
                         delay_cnt  <= 32'd0;
                         rst_cause[RSTCAUSE_SOFT_BIT] <= 1'b1;
                         sstate     <= S_RESET;

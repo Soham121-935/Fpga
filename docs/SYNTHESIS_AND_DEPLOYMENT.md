@@ -36,7 +36,7 @@ is cheap and idempotent; `/tmp` being wiped only costs one source.
 | `make firmware` | builds the boot ROM (`build/rom/monitor.hex`) and the example application image |
 | `make rom` | assembles `firmware/monitor/monitor.s` (+ `.lst` listing) |
 | `make app` | assembles + packs `firmware/examples/motor_test.s` |
-| `make lint` | repository RTL lint (`scripts/sv16_rtl_lint.py`, 24 files, no external tools) |
+| `make lint` | repository RTL lint (`scripts/sv16_rtl_lint.py`, 25 files, no external tools) |
 | `make vlint` | Verilator lint of the whole SoC |
 | `make sim` | builds and runs all four Verilator testbenches (`TB=name` to pick one) |
 | `make test` | `lint` + `firmware` + `sim` |
@@ -74,7 +74,7 @@ only for synthesis experiments.
 make bitstream        # == scripts/sv16_synth.sh --clkdiv 2 --freq 12.5
 ```
 
-1. **Yosys** (`synth_ecp5`, ABC9): 5,982 LUT4 + 1,376 carry cells, 4,448 FFs,
+1. **Yosys** (`synth_ecp5`, ABC9): 6,147 LUT4 + 746 carry cells, 4,576 FFs,
    18 `DP16KD` block RAMs (16 for SRAM, 2 for the boot ROM), 1 `MULT18X18D` for
    the ALU multiplier, 52 I/O buffers. The synthesis script, its log and the
    netlist are kept: `build/sv16_synth.ys`, `build/sv16_yosys.log`,
@@ -82,15 +82,15 @@ make bitstream        # == scripts/sv16_synth.sh --clkdiv 2 --freq 12.5
 2. **nextpnr-ecp5** `--12k --package TQFP144 --speed 6 --freq 12.5` with
    `constraints/ecp5_144tqfp.lpf`. Report: `build/sv16_nextpnr.log`,
    `build/sv16_top.timing.json`.
-3. **ecppack** `--compress` → `build/sv16_top.bit` (~275 KB, ~1.5 Mbit stream
+3. **ecppack** `--compress` → `build/sv16_top.bit` (~277 KB, ~1.5 Mbit stream
    for a 12F).
 
 ### Device utilisation (measured)
 
 | Resource | Used | Available | % |
 | :--- | ---: | ---: | ---: |
-| LUT4 (incl. carry) | 7,358 | 24,288 | 30 % |
-| Flip-flops | 4,448 | 24,288 | 18 % |
+| LUT4 (incl. carry) | 7,639 | 24,288 | 31 % |
+| Flip-flops | 4,576 | 24,288 | 18 % |
 | `DP16KD` block RAM | 18 | 56 | 32 % |
 | `MULT18X18D` | 1 | 28 | 3 % |
 | I/O buffers | 52 | 197 | 26 % |
@@ -109,11 +109,11 @@ three ways:
 
 | Placer configuration | Achieved Fmax | Result at 12.5 MHz |
 | :--- | ---: | :--- |
-| heap (default weights) | **14.43 MHz** | PASS |
+| heap (default weights) | **14.68 MHz** (14.09 pre-route) | PASS |
 | heap, `--placer-heap-timingweight 50` | 13.15 / 14.18 MHz | PASS (worse) |
 | simulated annealing (`--placer sa`) | — | **fails to place** carry chains |
 
-So the shipped configuration is `CLKDIV=2` → a 12.5 MHz SoC with ~15 % margin
+So the shipped configuration is `CLKDIV=2` → a 12.5 MHz SoC with ~17 % margin
 over the measured Fmax, and `make bitstream` is expected to exit 0 with "PASS".
 `CLKDIV=1` (25 MHz) is available for experiments and is **not** timing clean on
 this speed grade: nextpnr reports the violation and `sv16_synth.sh` stops before
@@ -196,7 +196,7 @@ program.
 ## 6. Using another flow (Lattice Diamond)
 
 The RTL is plain SystemVerilog and the LPF syntax is shared with Diamond, so the
-same sources can be targeted there: add the 24 files of `rtl/` (package first),
+same sources can be targeted there: add the 25 files of `rtl/` (package first),
 set `sv16_top` as the top, define `SV16_ROM_INIT_FILE` (a quoted path to
 `build/rom/monitor.hex`) and `SV16_CLKDIV 2` as Verilog macros, and use the same
 LPF. Diamond will report its own timing; the 12.5 MHz configuration is the one

@@ -13,6 +13,7 @@ and can be reprogrammed over a plain serial port.
  reset ─►│  │ 8 regs,    │   │ held req / qual ack  │  │ PWM+fault, UART, │   │
         │  │ 16-bit ALU │   │ held grant, 2 masters│  │ SPI, flash ctrl, │   │
         │  └────────────┘   └──────────────────────┘  │ IRQ, boot, system│   │
+        │                                  watchdog ──►│  WDT, GPIO, SPI  │   │
         │      ▲ boot loader (hardware) ─────────────────────────────────►   │
         └──────┼───────────────────────────────────────────────┬──────────┘
                │  streams + CRC-checks the image from flash    │ 4 SPI pins
@@ -26,7 +27,7 @@ and can be reprogrammed over a plain serial port.
 
 ```sh
 source scripts/sv16_venv.sh    # fetches Verilator + Yosys + nextpnr + ecppack
-make test                      # lint + 4 simulation suites (113 checks)
+make test                      # lint + 6 simulation suites (176 checks)
 make bitstream                 # -> build/sv16_top.bit (boot ROM baked in)
 make prog                      # openFPGALoader over JTAG
 make app                       # build the example application image
@@ -57,7 +58,8 @@ SV-16 monitor v1
 * **Peripherals** — two 16-bit GPIO ports with atomic set/clear, timer, PWM with
   a hardware motor-fault input, UART with FIFOs, SPI master, a full SPI-NOR flash
   controller (read/program/erase/CRC), interrupt controller with priority and an
-  8-entry vector table ([PERIPHERALS.md](docs/PERIPHERALS.md)).
+  8-entry vector table, and a **windowed, key-protected watchdog** that restarts
+  the SoC if the application hangs ([PERIPHERALS.md](docs/PERIPHERALS.md#watchdog-0xf080)).
 * **Real boot flow** — power-on → hardware loader validates and copies the flash
   image → CPU released at the application's entry point with the application's
   stack pointer; any failure falls back to the resident monitor
@@ -66,7 +68,9 @@ SV-16 monitor v1
   hex protocol a human can type, or `make upload` with `scripts/sv16_mon.py`.
 * **Recoverable by design** — the monitor and the loader are in the FPGA
   configuration, so a broken application cannot brick the board; reset causes,
-  fault addresses and a CPU state snapshot are all readable registers.
+  fault addresses and a CPU state snapshot are all readable registers. A hung
+  application is restarted by the watchdog, which the application cannot disarm
+  and which re-arms itself after every bite.
 
 ## Build targets
 
@@ -87,7 +91,7 @@ divisor follows automatically so the console is always 115200).
 
 ```text
 docs/            operator manual, memory map, peripherals, flow, verification, ADRs
-rtl/             24 SystemVerilog files: CPU, bus, memory, peripherals, SoC top
+rtl/             25 SystemVerilog files: CPU, bus, memory, peripherals, SoC top
 simulation/      Verilator testbenches (unit + regression) and the SPI flash model
 firmware/        monitor assembler source, examples, drivers header, image packer
 constraints/     ecp5_144tqfp.lpf — verified pin map for the TQFP-144 part
@@ -101,7 +105,7 @@ build/           generated: ROM image, firmware images, netlist, bitstream (untr
 | :--- | :--- |
 | Simulation | 113 checks, 0 failures (`flash_ctrl_tb`, `boot_tb`, `soc_boot_tb`, `monitor_tb`) |
 | Synthesis / P&R | places, routes, packs for the target part; 30 % LUTs, 18 % FFs |
-| Timing | 14.43 MHz Fmax measured; shipped at 12.5 MHz with margin; 25 MHz does not close |
+| Timing | 14.68 MHz Fmax measured; shipped at 12.5 MHz with margin; 25 MHz does not close |
 | Silicon | **never run on hardware** — simulation and static timing only |
 
 What is still missing for a production-grade MCU (watchdog in the reset path,

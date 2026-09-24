@@ -170,6 +170,7 @@ module sv16_top (
 
     // Interrupt lines
     logic        timer0_irq, uart0_rx_irq, uart0_tx_irq, spi0_irq, flash_irq;
+    logic        wdt_irq, wdt_timeout;
     logic        irq_req;
     logic [2:0]  irq_index;
     logic [7:0]  irq_lines_ext;
@@ -191,6 +192,7 @@ module sv16_top (
         .boot_stack(boot_stack),
         .boot_go(boot_go),
         .soft_rst_req(soft_rst_req),
+        .wdt_timeout(wdt_timeout),
         .rst_n(rst_n),
         .cpu_rst_n(cpu_rst_n),
         .cpu_halt_req(cpu_halt_req),
@@ -287,12 +289,12 @@ module sv16_top (
 
     // ------------------------------------------------------ Bus interconnect
     // block index: 0 SYS, 1 GPIO0, 2 TIMER0, 3 PWM0, 4 UART0, 5 SPI0,
-    //              6 FLASH, 7 GPIO1, 8 -none-, 9 IRQ, 10 BOOT
+    //              6 FLASH, 7 GPIO1, 8 WDT, 9 IRQ, 10 BOOT
     //
     // MMIO_PRESENT gates both the read mux and the ack: a block that is
     // marked absent is answered by the interconnect's unmapped-access
     // handler instead of the peripheral.  It must match the ack OR below
-    // exactly (blk 8 has no watchdog in Rev B, so it stays 0).
+    // exactly.
     assign mmio_ack = {5'b0,
                        ack_boot,      // 0xA
                        ack_irq,       // 0x9
@@ -306,7 +308,7 @@ module sv16_top (
                        ack_gpio0,     // 0x1
                        ack_sys};      // 0x0
 
-    localparam logic [15:0] MMIO_PRESENT = 16'b0000_0110_1111_1111;  // 0x6FF
+    localparam logic [15:0] MMIO_PRESENT = 16'b0000_0111_1111_1111;  // 0x7FF
 
     sv16_bus_interconnect u_bus (
         .clk(clk), .rst_n(rst_n),
@@ -454,7 +456,7 @@ module sv16_top (
 
     // ------------------------------------------------- Interrupt controller
     assign irq_lines_ext = {1'b0,          // 7: TRAP (handled inside the CPU)
-                            1'b0,          // 6: watchdog (not implemented)
+                            wdt_irq,       // 6: watchdog early warning
                             1'b0,          // 5: GPIO (no pin interrupts in Rev B)
                             flash_irq,     // 4: flash command complete
                             spi0_irq,      // 3: SPI0 byte received
@@ -473,8 +475,17 @@ module sv16_top (
         .irq_ack(cpu_irq_ack)
     );
 
-    // Unused blocks decode to zero (handled by the interconnect)
-    assign rd_wdt = 16'h0000;
-    assign ack_wdt = 1'b0;
+    // ------------------------------------------------------------- Watchdog
+    // Reset by the external pin only (rst_n), never by cpu_rst_n: an
+    // application must not be able to escape its own watchdog with a restart.
+    // A bite pulses `wdt_timeout`, which the sequencer turns into a full
+    // restart of the boot sequence plus RSTCAUSE.WDT (ADR-017).
+    sv16_wdt u_wdt (
+        .clk(clk), .rst_n(rst_n),
+        .addr(mmio_reg), .wdata(mmio_wdata), .rdata(rd_wdt),
+        .req(mmio_req[BLK_WDT]), .we(mmio_we), .ack(ack_wdt),
+        .irq(wdt_irq),
+        .timeout(wdt_timeout)
+    );
 
 endmodule : sv16_top

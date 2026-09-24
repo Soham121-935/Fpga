@@ -40,6 +40,8 @@ ROM_LST     = $(ROM_DIR)/monitor.lst
 FW_DIR      = $(BUILD)/fw
 APP         = $(FW_DIR)/motor_test
 APP_IMG     = $(APP)_img.hex
+HANG        = $(FW_DIR)/wdt_hang
+HANG_IMG    = $(HANG)_img.hex
 
 CONSTRAINTS = constraints/ecp5_144tqfp.lpf
 
@@ -49,6 +51,7 @@ PACK = $(PY) scripts/sv16_fwpack.py
 
 MONITOR_SRC = firmware/monitor/monitor.s
 APP_SRC     = firmware/examples/motor_test.s
+HANG_SRC    = firmware/examples/wdt_hang.s
 BOOTROM_HEX = firmware/bootrom.hex
 
 RTL_SRCS = \
@@ -74,15 +77,18 @@ RTL_SRCS = \
 	rtl/sv16_gpio.sv \
 	rtl/sv16_timer.sv \
 	rtl/sv16_pwm.sv \
+	rtl/sv16_wdt.sv \
 	rtl/sv16_bus_interconnect.sv \
 	rtl/sv16_top.sv
 
 # name:source pairs for `make sim` (add new testbenches here)
 TESTBENCHES = \
+	wdt_tb:simulation/unit/wdt_tb.sv \
 	flash_ctrl_tb:simulation/unit/flash_ctrl_tb.sv \
 	boot_tb:simulation/unit/boot_tb.sv \
 	soc_boot_tb:simulation/regression/soc_boot_tb.sv \
-	monitor_tb:simulation/regression/monitor_tb.sv
+	monitor_tb:simulation/regression/monitor_tb.sv \
+	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
 
 .PHONY: all firmware rom app lint vlint test sim iss bitstream synth prog \
 	upload mon-verify mon-boot mon-term clean help
@@ -97,7 +103,7 @@ firmware: rom app
 
 rom: $(ROM_HEX)
 
-app: $(APP_IMG)
+app: $(APP_IMG) $(HANG_IMG)
 
 $(ROM_HEX): $(MONITOR_SRC) scripts/sv16_as.py
 	@mkdir -p $(ROM_DIR)
@@ -107,6 +113,12 @@ $(APP_IMG): $(APP_SRC) scripts/sv16_as.py scripts/sv16_fwpack.py
 	@mkdir -p $(FW_DIR)
 	$(AS) $(APP_SRC) $(APP).hex --listing $(APP).lst
 	$(PACK) $(APP).hex -o $(APP) --name MOTORTST
+
+# watchdog-recovery example: used by wdt_reset_tb, harmless elsewhere
+$(HANG_IMG): $(HANG_SRC) scripts/sv16_as.py scripts/sv16_fwpack.py
+	@mkdir -p $(FW_DIR)
+	$(AS) $(HANG_SRC) $(HANG).hex --listing $(HANG).lst
+	$(PACK) $(HANG).hex -o $(HANG) --name WDTHANG
 
 # --------------------------------------------------------------- checks
 lint:
