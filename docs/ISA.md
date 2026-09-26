@@ -19,6 +19,14 @@ SV-16 uses 16-bit baseline instruction words. Certain instructions (e.g. 16-bit 
 - Used for 3-operand or 2-operand ALU operations (`Rd <= Rs1 OP Rs2`).
 
 ### Format I (Register-Immediate Operations)
+
+The immediate is **nine-bit two's complement**: bit 8 is the sign, so the field
+covers `-256..255`. Write a negative constant either as a negative literal
+(`ADDI R5, -5`) or as its nine-bit form (`ADDI R5, 0x1FB`); the assembler accepts
+both and rejects anything outside the range rather than masking it.
+`ADDI`/`SUBI` also take the destination register as their first operand —
+`ADDI Rd, imm` — because there is no third register field to name one
+([ADR-020](ARCHITECTURE_DECISIONS.md#adr-020-the-i-format-source-operand-and-a-latched-alu-result-for-writeback)).
 ```text
 15    12 11   9 8                  0
 ┌───────┬──────┬────────────────────┐

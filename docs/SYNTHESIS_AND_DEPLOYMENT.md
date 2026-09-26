@@ -115,8 +115,8 @@ make bitstream CLKDIV=2     # 12.5 MHz fallback (fabric divider, 50 % duty)
 
 | Configuration | Achieved Fmax | Requirement | Result |
 | :--- | ---: | ---: | :--- |
-| `CLKDIV=1`, 25 MHz, heap placer (**default**) | **46.58 MHz** post-route (35.15 pre-route) | 25 MHz | **PASS, ~86 % margin** |
-| `CLKDIV=2`, 12.5 MHz, heap placer | 46.58 MHz | 12.5 MHz | PASS |
+| `CLKDIV=1`, 25 MHz, heap placer (**default**) | **46.17 MHz** post-route (38.41 pre-route) | 25 MHz | **PASS, ~85 % margin** |
+| `CLKDIV=2`, 12.5 MHz, heap placer | 46.17 MHz | 12.5 MHz | PASS |
 | `CLKDIV=1`, heap `--placer-heap-timingweight 50` | 13.15 / 14.18 MHz | 25 MHz | worse; not used |
 | simulated annealing (`--placer sa`) | — | — | **fails to place** carry chains |
 | `CLKDIV=1`, **before** the divider fix (ADR-018) | 14.38 MHz | 25 MHz | FAIL — why the part shipped at 12.5 MHz |
@@ -140,7 +140,7 @@ driven by a `div_start`/`div_busy` handshake and held by the new `S_DIV_WAIT`
 state of the control unit. DIV and MOD keep their encodings, results and flags;
 they simply take 18 cycles instead of 1. Every other operation is unchanged and
 still single-cycle. That is what took the design from 12.5 MHz to the full 25 MHz
-and left ~86 % timing margin for future logic.
+and left ~85 % timing margin for future logic.
 
 Remaining headroom work, in increasing order of effort: instantiate an `EHXPLLL`
 to replace the fabric divider and run 40–50 MHz (the fabric now supports it), and

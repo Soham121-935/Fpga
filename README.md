@@ -27,7 +27,7 @@ and can be reprogrammed over a plain serial port.
 
 ```sh
 source scripts/sv16_venv.sh    # fetches Verilator + Yosys + nextpnr + ecppack
-make test                      # lint + 8 simulation suites (277 checks)
+make test                      # lint + 15 simulation suites (423 checks)
 make bitstream                 # -> build/sv16_top.bit (boot ROM baked in)
 make prog                      # openFPGALoader over JTAG
 make app                       # build the example application image
@@ -78,7 +78,7 @@ SV-16 monitor v1
 
 | Command | Result |
 | :--- | :--- |
-| `make test` | lint + all eight Verilator suites (277 checks) |
+| `make test` | lint + all fifteen Verilator suites (423 checks) |
 | `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 25 MHz |
 | `make synth` | Yosys only (fast synthesizability check) |
 | `make prog` | program the FPGA over JTAG |
@@ -88,8 +88,8 @@ SV-16 monitor v1
 | `make iss` | instruction-set simulator on the legacy ROM image |
 
 Clocking: `CLKDIV` (default **1**) runs the SoC straight from the 25 MHz
-oscillator — no fabric divider at all — with ~86 % timing margin (measured Fmax
-46.58 MHz). `make bitstream CLKDIV=2` builds a 12.5 MHz fallback. The UART divisor
+oscillator — no fabric divider at all — with ~85 % timing margin (measured Fmax
+46.17 MHz). `make bitstream CLKDIV=2` builds a 12.5 MHz fallback. The UART divisor
 follows the same constant automatically, so the console is always 115200.
 
 ## Repository layout
@@ -108,9 +108,9 @@ build/           generated: ROM image, firmware images, netlist, bitstream (untr
 
 | | |
 | :--- | :--- |
-| Simulation | 277 checks, 0 failures across 8 suites (CPU, ALU/divider, bus, RAM, watchdog, flash controller, boot loader, A/B slots, monitor) |
+| Simulation | 423 checks, 0 failures across 15 suites (CPU/ISA, ALU/divider, RAM, timer, PWM, GPIO, UART, watchdog, flash controller, boot loader, A/B slots, monitor) |
 | Synthesis / P&R | places, routes, packs for the target part; 30 % LUTs, 18 % FFs |
-| Timing | 46.58 MHz Fmax measured; shipped at the full 25 MHz with ~86 % margin |
+| Timing | 46.17 MHz Fmax measured; shipped at the full 25 MHz with ~85 % margin |
 | Silicon | **never run on hardware** — simulation and static timing only |
 
 What is still missing for a production-grade MCU (JTAG debug, image signing,

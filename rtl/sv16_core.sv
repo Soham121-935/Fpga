@@ -157,6 +157,15 @@ module sv16_core (
     logic [15:0] reg_rdata2;
     logic [15:0] reg_wdata;
 
+    // Result register: the ALU's output is combinational on operands that come
+    // from the instruction register and the register file, so it is only valid
+    // in the cycle the control unit asserts the operand select and the flags
+    // are captured (S_EXECUTE, or the last S_DIV_WAIT cycle for DIV/MOD).  The
+    // register file commits one state later, so the value travels through here.
+    // Without it ADDI/SUBI committed the ALU recomputed with B = the Rs2-field
+    // register instead of the immediate.
+    logic [15:0] alu_result_r;
+
     // ALU wires
     logic [15:0] alu_in_a;
     logic [15:0] alu_in_b;
@@ -381,14 +390,25 @@ module sv16_core (
         .flag_ie(flag_ie)
     );
 
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            alu_result_r <= 16'h0000;
+        end else if (flag_update_en) begin
+            // flag_update_en marks the cycle the ALU's operands and operation
+            // are the instruction's own -- exactly when the flags are latched,
+            // so the result and the flags always belong to the same evaluation
+            alu_result_r <= alu_result;
+        end
+    end
+
     // Register Writeback Multiplexer
     always_comb begin
         case (reg_wdata_sel)
-            2'b00: reg_wdata = (is_mov) ? reg_rdata1 : alu_result;
+            2'b00: reg_wdata = (is_mov) ? reg_rdata1 : alu_result_r;
             2'b01: reg_wdata = rd_data_reg;  // latched on the slave's ack
             2'b10: reg_wdata = imm_reg; // 16-bit immediate from LDI
             2'b11: reg_wdata = pc_val;
-            default: reg_wdata = alu_result;
+            default: reg_wdata = alu_result_r;
         endcase
     end
 

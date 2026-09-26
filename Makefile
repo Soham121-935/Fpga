@@ -60,6 +60,11 @@ PACK = $(PY) scripts/sv16_fwpack.py
 MONITOR_SRC = firmware/monitor/monitor.s
 APP_SRC     = firmware/examples/motor_test.s
 HANG_SRC    = firmware/examples/wdt_hang.s
+# ISA-level regression program (run by simulation/regression/isa_tb.sv): the
+# instruction-level test is written in assembly and assembled by the real
+# assembler, so what the testbench executes is what a developer would type.
+ISA_SRC     = firmware/tests/isa_regress.s
+ISA_HEX     = $(FW_DIR)/isa_regress.hex
 BOOTROM_HEX = firmware/bootrom.hex
 
 RTL_SRCS = \
@@ -96,6 +101,13 @@ TESTBENCHES = \
 	flash_ctrl_tb:simulation/unit/flash_ctrl_tb.sv \
 	boot_tb:simulation/unit/boot_tb.sv \
 	slot_tb:simulation/unit/slot_tb.sv \
+	sv16_alu_tb:simulation/unit/sv16_alu_tb.sv \
+	sv16_ram_tb:simulation/unit/sv16_ram_tb.sv \
+	sv16_timer_tb:simulation/unit/sv16_timer_tb.sv \
+	sv16_pwm_tb:simulation/unit/sv16_pwm_tb.sv \
+	sv16_gpio_tb:simulation/unit/sv16_gpio_tb.sv \
+	sv16_uart_tb:simulation/unit/sv16_uart_tb.sv \
+	isa_tb:simulation/regression/isa_tb.sv \
 	soc_boot_tb:simulation/regression/soc_boot_tb.sv \
 	monitor_tb:simulation/regression/monitor_tb.sv \
 	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
@@ -114,7 +126,11 @@ firmware: rom app
 
 rom: $(ROM_HEX)
 
-app: $(APP_IMG) $(HANG_IMG)
+app: $(APP_IMG) $(HANG_IMG) $(ISA_HEX)
+
+$(ISA_HEX): $(ISA_SRC) scripts/sv16_as.py
+	@mkdir -p $(FW_DIR)
+	$(AS) $< $@ --listing $(FW_DIR)/isa_regress.lst
 
 $(ROM_HEX): $(MONITOR_SRC) scripts/sv16_as.py
 	@mkdir -p $(ROM_DIR)

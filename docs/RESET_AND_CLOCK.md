@@ -17,7 +17,7 @@ clk_25m ──► divider (SV16_CLKDIV) ──► clk ──► CPU, RAM, ROM, a
 
 * `SV16_CLKDIV = 1` → **the shipped default**: the SoC clock *is* the 25 MHz
   oscillator, no divider, no generated clock (`make bitstream`). It closes with
-  ~86 % margin (measured Fmax 46.58 MHz) since DIV/MOD became multi-cycle
+  ~85 % margin (measured Fmax 46.17 MHz) since DIV/MOD became multi-cycle
   (ADR-018).
 * `SV16_CLKDIV = 2` → 12.5 MHz fallback (`make bitstream CLKDIV=2`) for a board
   that cannot run at 25 MHz; the fabric divider then produces a 50 % duty clock.

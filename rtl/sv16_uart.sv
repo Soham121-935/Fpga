@@ -23,7 +23,10 @@
 //                        Bit 5: LOOPBACK (TX output is fed back into RX)
 //                        Bit 6: TX_FIFO clear (self-clearing)
 //                        Bit 7: RX_FIFO clear (self-clearing)
-//   Offset 4 (0xF044): UART0_FIFO   — {TX count[7:4], RX count[3:0]}
+//   Offset 4 (0xF044): UART0_FIFO   — {9'b0, TX count[2:0], 1'b0, RX count[2:0]}:
+//                                      TX count in bits [6:4], RX count in bits
+//                                      [2:0] (3-bit counts of 4-deep FIFOs),
+//                                      bit 3 reserved
 //
 // Framing: 8-N-1 (8 data bits, no parity, 1 stop bit). 4-byte TX and RX FIFOs.
 //
@@ -135,7 +138,10 @@ module sv16_uart (
             case (addr[2:0])
                 3'd0: ;                            // DATA write: handled in TX path
                 3'd2: baud_div_reg <= (wdata < 16'd4) ? 16'd4 : wdata;
-                3'd3: ctrl_reg     <= wdata;
+                // CTRL[7:6] are write-only, self-clearing FIFO-clear pulses:
+                // storing them would make a read-modify-write of CTRL (the
+                // natural way to set an interrupt enable) clear both FIFOs.
+                3'd3: ctrl_reg     <= wdata & 16'h003F;
                 default: ;
             endcase
         end
@@ -316,7 +322,14 @@ module sv16_uart (
                         if (rx_timer >= baud_div_safe - 16'd1) begin
                             rx_timer <= 16'd0;
                             if (!rx_sync2) begin
-                                rx_frame_err <= 1'b1;   // stop bit missing
+                                // Stop bit low.  The byte is still pushed (the
+                                // owner gets it *and* the error flag) because
+                                // that is what a real UART does and it keeps the
+                                // receiver from silently eating a byte; the
+                                // monitor's CRC16 is what rejects a corrupted
+                                // command, so a dropped byte would only look
+                                // like a stall.
+                                rx_frame_err <= 1'b1;
                             end
                             rx_state <= RX_IDLE;
                         end else begin

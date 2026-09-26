@@ -272,7 +272,7 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
     machine-level one forbids a 68 ns path.
   - With the divider out of the way, **the shipped clock becomes the full
     25 MHz** (the oscillator, no fabric divider at all: `CLKDIV=1`), at a
-    measured Fmax of 46.58 MHz — ~86 % margin. The divided-clock option stays in
+    measured Fmax of 46.17 MHz — ~85 % margin. The divided-clock option stays in
     the build (`make bitstream CLKDIV=2`) as a fallback for a board that cannot
     run at 25 MHz, and the clock divider RTL is unchanged.
 - **Consequences**: The CPU is twice as fast as the part shipped an hour earlier,
@@ -377,3 +377,58 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
   records are not written while the application runs (a write costs one page
   program, so the update tool decides when), there is no signed image (ADR-019
   is integrity, not authenticity), and the rollback depth is one generation.
+
+## ADR-020: The I-format source operand, and a latched ALU result for writeback
+
+- **Status**: **ACCEPTED** (Rev B, bug fix)
+- **Context**: until this ADR, no test in the repository had ever checked what an
+  `ADDI` or `SUBI` instruction *computes*. The program suites exercised branches,
+  loads, stores, the stack and every peripheral, but not immediate arithmetic:
+  the boot ROM, the monitor and the example firmware all reach for `LDI` + `ADD`
+  when they need a constant, so nothing ever executed the instruction with an
+  immediate the decoder could get wrong. Writing the first ISA-level regression
+  program (`firmware/tests/isa_regress.s`) exposed two independent defects, both
+  visible on `ADDI R5, 0x0025` on top of `R5 = 0x0100`:
+
+  1. **The source operand came from the immediate field.** The register-selection
+     block in `sv16_decoder.sv` mapped the I-format read port with the default
+     `instr[8:6]` — which is the *top three bits of the nine-bit immediate* — so
+     `ADDI Rd, imm` read `R{imm[8:6]}` instead of `Rd`. With a small immediate
+     (`imm < 0x40`) that is `R0`, which is why firmware that never used the form
+     with a large immediate did not notice: the arithmetic may have been wrong,
+     but with `imm[8:6] == 0` the read port still resolved to a real register and
+     nothing faulted. The ISA table has always said `Rd <= Rd + sign_ext(imm9)`
+     ([ISA.md](ISA.md#format-i-register-immediate-operations)); the RTL now does
+     that. The I-format has its own entry in the selection expression, keyed on
+     opcode `0x2`/`0x3`.
+  2. **Writeback re-evaluated the ALU.** `reg_wdata` took the combinational
+     `alu_result` in `S_WRITEBACK`, but `alu_src_b_sel` is already deasserted by
+     then, so the ALU re-computed on the *register* second operand: `ADDI Rd, n`
+     committed `Rd + R_{Rs2 field}`. The flags were never affected (they are
+     captured in `S_EXECUTE`) and the ALU's own unit tests pass because they
+     drive the ALU directly, one operation at a time. The result is now latched
+     into `alu_result_r` on `flag_update_en` — the existing writeback pulse — and
+     both writeback mux entries read the latch. That removes the longest
+     combinational path in the core as a side effect: the post-route critical
+     path is no longer the ALU (Fmax 46.17 MHz, ~85 % margin at 25 MHz).
+
+- **Decision**:
+  - The I-format read port selects `instr[11:9]` (the destination, which is also
+    the first source) for opcodes `0x2` and `0x3`; everything else keeps its
+    existing mapping. No ISA change, no encoding change, no assembler change —
+    the documentation was right and the hardware was wrong.
+  - Writeback uses clocked `alu_result_r`, never the live ALU output.
+  - The regression program is checked in as `firmware/tests/isa_regress.s` and
+    run by `simulation/regression/isa_tb.sv` (9 checks) as part of `make sim`.
+- **Consequences**: `ADDI`/`SUBI` are now usable by firmware (the C path in
+  [MCU_READINESS.md](MCU_READINESS.md) benefits: it need not route every constant
+  through `LDI`), and the instruction is covered by a test that fails if either
+  defect returns. The blast radius was checked rather than assumed: every one of
+  the 15 suites passes afterwards, so no shipped behaviour depended on the bug.
+  Two usability notes were added to [ISA.md](ISA.md): that `imm9` is nine-bit
+  **two's complement** (`-5` must be written `0x1FB`, not `0x0FB` — the mistake
+  this work originally made), and that the assembler rejects values outside
+  `0x000..0x1FF`. Limitation: the regression still runs on the four-condition
+  matrix plus arithmetic, not on an exhaustive per-instruction golden model —
+  the executable-definition approach in [VERIFICATION.md](VERIFICATION.md) stays
+  the recommendation for a production library.

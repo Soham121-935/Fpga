@@ -72,8 +72,17 @@ module sv16_decoder (
     assign ctrl_subop = instr[8:0];
 
     // Read port 1: base register for LOAD/STORE, pushed register for PUSH,
-    // first compare operand for CMP, otherwise the format-R/I source.
-    assign rs1 = (opcode == 4'h5) ? instr[8:6] :   // LOAD   : base Rb
+    // first compare operand for CMP, destination register for the immediate
+    // ALU ops, otherwise the format-R source.
+    //
+    // ADDI/SUBI are the reason the I-format has its own entry here: their
+    // immediate occupies bits [8:0], so the default mapping (bits [8:6]) would
+    // read the top three bits of the *immediate* as a register number and
+    // compute `Rn + imm` for the wrong Rn.  The ISA says `Rd <= Rd + imm9`, and
+    // the encoder puts Rd in bits [11:9] -- so Rd is the source.
+    assign rs1 = (opcode == 4'h2) ? instr[11:9] :  // ADDI : Rd (source = dest)
+                 (opcode == 4'h3) ? instr[11:9] :  // SUBI : Rd (source = dest)
+                 (opcode == 4'h5) ? instr[8:6] :   // LOAD   : base Rb
                  (opcode == 4'h6) ? instr[8:6] :   // STORE  : base Rb
                  (opcode == 4'hC) ? instr[11:9] :  // PUSH   : data Rx
                  (opcode == 4'hE) ? instr[11:9] :  // CMP    : Rs1

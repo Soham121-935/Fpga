@@ -11,7 +11,7 @@ the tables below is aspirational.
 
 ```sh
 source scripts/sv16_venv.sh
-make test            # lint + firmware + all seven simulation suites
+make test            # lint + firmware + all fifteen simulation suites
 make sim TB=wdt_tb   # a single suite
 ```
 
@@ -25,10 +25,20 @@ make sim TB=wdt_tb   # a single suite
 | `slot_tb` | `simulation/unit/slot_tb.sv` | 57 | PASS | the A/B policy end to end (ADR-019), with the loader, the flash controller and the flash model wired as `sv16_top` wires them, including the slot-record program handshake: the pick order (pending > trial > good > no record > bad), a pending image being marked TRIED *before* the CPU is released, a restart inside the trial retiring it to BAD and booting the other slot, a confirmed update retiring the previous image so the update sticks, a torn record being refused, and `BOOT_CTRL[4]` booting `BOOT_SRC` with the records ignored |
 | `soc_boot_tb` | `simulation/regression/soc_boot_tb.sv` | 21 | PASS | end-to-end: reset → boot engine → SRAM contains the image → CPU released at the entry point with the image's stack pointer |
 | `monitor_tb` | `simulation/regression/monitor_tb.sv` | 21 | PASS | the whole field-programming story over a bit-banged UART: banner, `?`, `C` upload of a real image, `R` readback, `E` erase, `V` CRC, `K` confirm (ADR-019), `B` boot, the application actually running and driving GPIO/PWM/direction pins, and the monitor being the fallback |
+| `sv16_alu_tb` | `simulation/unit/sv16_alu_tb.sv` | 35 | PASS | the ALU as an instruction sees it: every arithmetic and logic operation, the flag rules (including `MUL` overflow setting both C and V), shifts with their count field, and the divider's `DIV`/`MOD` results cross-checked against a software model |
+| `sv16_ram_tb` | `simulation/unit/sv16_ram_tb.sv` | 11 | PASS | the SRAM at the CPU's real geometry (32 KB, 14-bit address): the read-first behaviour the bus depends on, byte-write masking, out-of-range wrapping, and the `INIT_FILE` path the loader uses |
+| `sv16_timer_tb` | `simulation/unit/sv16_timer_tb.sv` | 21 | PASS | timer 0's full register set: prescaler, reload, up/down counting, the compare and overflow interrupts, write-1-to-clear flags, one-shot mode, the enable gating every other bit obeys, and the IRQ output |
+| `sv16_pwm_tb` | `simulation/unit/sv16_pwm_tb.sv` | 23 | PASS | PWM 0's waveform rather than its registers: the period and duty counts are measured edge to edge, duty 0 % and 100 % extremes, the fault input stopping the output, dead-time, and the interrupt |
+| `sv16_gpio_tb` | `simulation/unit/sv16_gpio_tb.sv` | 20 | PASS | the GPIO block's direction/data/interrupt registers, the two-clock input synchroniser on every pin, the read-modify-write behaviour of a write to `DATA`, and the pin-change interrupt |
+| `sv16_uart_tb` | `simulation/unit/sv16_uart_tb.sv` | 27 | PASS | the UART end to end at the bit level: divisor, TX/RX FIFOs and their level fields, framing, the loopback of a byte, overrun and frame-error flags, and that the self-clearing FIFO-clear pulse bits can never be latched by a read-modify-write |
+| `isa_tb` | `simulation/regression/isa_tb.sv` | 9 | PASS | the ISA itself, running `firmware/tests/isa_regress.s` on the CPU with an SRAM: reset state, every conditional branch in both its taken and fall-through form, ADDI/SUBI values including a negative immediate, PUSH/POP, CALL/RET, stack balance and the final self-loop. This is the suite that found the two defects in [ADR-020](ARCHITECTURE_DECISIONS.md#adr-020-the-i-format-source-operand-and-a-latched-alu-result-for-writeback) |
 | `sv16_rtl_lint.py` | `scripts/sv16_rtl_lint.py` | 25 files | clean | structural checks: multiple drivers, missing `default` in combinational `case`, `always_ff` without reset, latches, etc. |
 | Verilator elaboration | `make vlint` | top | clean | the whole SoC (package + 25 modules) elaborates as one design |
 
-Total: **277 checks, 0 failures.**
+Total: **423 checks, 0 failures.** Every suite is registered in the Makefile's
+`TESTBENCHES` list, so `make sim` is the whole regression; `sv16_run_tb.sh`
+fails a suite unless it prints `RESULT: PASS`, which means a testbench that
+crashes or times out can no longer be mistaken for a pass.
 
 The SPI flash model implements the physics the A/B record depends on: a page
 program can only clear bits (`mem <= mem & data`) and an erase sets a whole
@@ -43,8 +53,8 @@ protocol byte by byte with the ack/dot handshake, verifies the flash contents,
 and then checks that a `B` command hands control to the uploaded application with
 the expected side effects on the peripherals. `wdt_reset_tb` is the other system
 test: it boots a deliberately hanging application out of flash and watches the
-watchdog recover it, twice, with no host involved. All six suites are run from
-the repository root (they read files from `build/`).
+watchdog recover it, twice, with no host involved. All suites are run from the
+repository root (they read files from `build/`).
 
 ### Testbench infrastructure
 
@@ -52,6 +62,15 @@ the repository root (they read files from `build/`).
   adding `rtl/*.sv` (package first, top last), the SoC top, and the SPI flash
   model when the testbench instantiates it. Testbenches must run from the repo
   root because they `$readmemh` from `build/`.
+* **The runner decides pass or fail itself.** Every run is teed to
+  `build/vlt/<top>/run.log`, and the script exits non-zero unless a suite
+  explicitly prints `RESULT: PASS` — a testbench that crashes, hangs past its own
+  watchdog or `$finish`es early can no longer be mistaken for a pass. Peripheral
+  suites share `simulation/unit/periph_tb.svh`, which also carries a per-suite
+  absolute timeout.
+* Peripheral and CPU-side suites sample `always_ff` outputs at `negedge` (or
+  after `#1`) — reading at the active edge returns the pre-edge value and was the
+  cause of several early "failures" in the rewritten suites.
 * `simulation/unit/sv16_flash_model.sv` is a behavioural SPI NOR (64 KB,
   256-byte pages, 4 KB sectors, `tPROG`/`tERASE` modelled in clocks, JEDEC ID
   `0xEF4018`) shared by `flash_ctrl_tb`, `boot_tb`, `soc_boot_tb` and
@@ -94,13 +113,23 @@ Worth recording, because they are the reason the boot path is trustworthy now:
 8. **The window was enforced on the very first feed**, which would have reset a
    correctly written application one period after arming the watchdog; the first
    period after `ENABLE` is now exempt.
-9. **The 25 MHz timing failure was misdiagnosed in the documentation.** It was
+9. **`ADDI`/`SUBI` computed the wrong thing** (found by the new `isa_tb`): the
+   I-format read port was decoded from the immediate field, so the source was
+   `R{imm[8:6]}` instead of `Rd`, *and* writeback re-evaluated the ALU one state
+   after its operand select had dropped, committing `Rd + R_{Rs2 field}`. Neither
+   the 277 checks that existed at the time nor any shipped firmware noticed,
+   because no program in the repository had ever executed an immediate
+   arithmetic instruction — production code reaches for `LDI` + `ADD`. Both are
+   fixed ([ADR-020](ARCHITECTURE_DECISIONS.md#adr-020-the-i-format-source-operand-and-a-latched-alu-result-for-writeback));
+   the regression that caught them is `isa_tb`.
+10. **The 25 MHz timing failure was misdiagnosed in the documentation.** It was
    attributed to the CPU's flag/branch path (`u_sys.illegal_pc`'s decrement), with
    "split the flag decision" offered as the fix; the nextpnr critical-path report
    plus a constant-folding experiment showed the culprit was the ALU's
    combinational 16/16 divider. Fixing that (multi-cycle DIV/MOD, ADR-018) took
-   Fmax from 14.68 MHz to 46.58 MHz and the shipped clock from 12.5 MHz to
-   25 MHz — `div_tb`.
+   Fmax from 14.68 MHz to 46.17 MHz and the shipped clock from 12.5 MHz to
+   25 MHz — `div_tb`. The writeback latch from ADR-020 shortened the path
+   further: the ALU is no longer on it at all.
 
 ---
 
@@ -114,13 +143,13 @@ Being explicit about coverage gaps is part of the verification story:
 | Reset glitch / power sequencing | only clean pulses are simulated; no brown-out or runt-pulse testing |
 | UART framing errors, overrun, break conditions | the model drives clean 8-N-1 only |
 | Interrupt latency | the IRQ controller and vector fetch are exercised indirectly; no timing-bound test exists |
-| Timer/PWM boundaries | `simulation/unit/*` has older Rev A testbenches for these; they are **not** in the Rev B regression (some of them do not build under Verilator 5) |
+| Timer/PWM/GPIO/UART boundaries | covered functionally by `sv16_timer_tb`/`sv16_pwm_tb`/`sv16_gpio_tb`/`sv16_uart_tb`; still no randomised or constrained-random stimulus, and no cross-peripheral concurrency test (two peripherals interrupting at once) |
 | Watchdog under a fault-injection campaign | window, lock and interrupt paths are covered functionally, but not with randomised timing or injected faults |
 | Divider performance | DIV/MOD take 18 cycles by construction; no measured worst-case instruction-time table exists yet (OQ-15) |
 | The 12.5 MHz fallback configuration | `CLKDIV=2` still builds and the RTL divider is unchanged, but only `CLKDIV=1` is exercised in simulation and by the default bitstream |
 | Software (monitor) | exercised through `monitor_tb` only; no unit tests for the assembler, packer or `sv16_mon.py` against a golden corpus |
 | Flash endurance / power-loss during program | not modelled |
-| Timing | closed by nextpnr's static analysis at 25 MHz (Fmax 46.58 MHz); no SDF/back-annotated simulation and no on-board measurement |
+| Timing | closed by nextpnr's static analysis at 25 MHz (Fmax 46.17 MHz); no SDF/back-annotated simulation and no on-board measurement |
 
 The Rev A testbenches that remain in `simulation/unit/` and `test_*.py` scripts
 document the earlier module-level work; they are excluded from `make sim`

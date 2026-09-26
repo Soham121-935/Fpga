@@ -316,7 +316,6 @@ boot engine are part of the bitstream, not of the application image.
 * **Slot B has to be programmed over UART or an external programmer**, and the
   monitor's `C` command writes the 64 KB window only — slot A/B fits, a larger
   data area would not.
-* **No image signing** — CRC16 detects corruption, not tampering.
 * **No self-programming of the FPGA configuration** — the bitstream is loaded
   over JTAG only; there is no "application updates the FPGA" path.
 * **The monitor is single-ported**: no flow control, no autobaud, no XMODEM.

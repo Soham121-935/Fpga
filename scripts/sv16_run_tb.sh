@@ -37,12 +37,30 @@ if [ ${#extras[@]} -eq 0 ] && grep -q 'sv16_flash_model' "$tb_file"; then
 fi
 
 out="build/vlt/$top"
+log="$out/run.log"
 mkdir -p "$out"
 
 verilator-cli --binary -Wno-fatal -Wno-WIDTHEXPAND -Wno-UNUSEDSIGNAL \
     -Wno-UNUSEDPARAM -Wno-IMPORTSTAR -Wno-CASEINCOMPLETE \
-    --Mdir "$out" -Irtl "${rtl_files[@]}" rtl/sv16_top.sv \
+    --Mdir "$out" -Irtl -Isimulation/unit "${rtl_files[@]}" rtl/sv16_top.sv \
     "${extras[@]}" "$tb_file" --top-module "$top" -o "$top" >/dev/null
 
 make -C "$out" -f "V$top.mk" -j 4 >/dev/null
-exec "./$out/$top"
+
+# A testbench reports its verdict on stdout, so the exit status alone is not
+# enough: a suite whose checks failed used to print RESULT: FAIL and exit 0,
+# which meant `make test` could never fail.  The verdict line is now the
+# contract -- no RESULT: PASS, no pass.
+set +e
+"./$out/$top" 2>&1 | tee "$log"
+status=${PIPESTATUS[0]}
+set -e
+
+if [ $status -ne 0 ]; then
+    echo "sv16_run_tb: $top aborted (exit $status) - see $log" >&2
+    exit $status
+fi
+if ! grep -q 'RESULT: PASS' "$log"; then
+    echo "sv16_run_tb: $top did not report RESULT: PASS - see $log" >&2
+    exit 1
+fi

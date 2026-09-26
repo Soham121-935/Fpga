@@ -203,8 +203,18 @@ def assemble(lines):
             memory_words[curr_addr] = code
 
         elif fmt == 'I':
+            # The nine-bit immediate is two's complement, so both the unsigned
+            # nine-bit form (0x000..0x1FF) and a plain negative number (-256..-1)
+            # are accepted.  Anything else used to be masked silently, which
+            # turned a typo like `ADDI R1, 0x0200` into `ADDI R1, 0x000`.
             rd = REGISTERS[args[0].upper()]
-            imm = parse_num(args[1], symbols) & 0x1FF
+            value = parse_num(args[1], symbols)
+            if value < -256 or value > 0x1FF:
+                raise ValueError(
+                    f"immediate out of range at 0x{curr_addr:04X}: {mnemonic} "
+                    f"{args[1]} is {value}; the nine-bit immediate covers "
+                    f"-256..255, written as 0x000..0x1FF")
+            imm = value & 0x1FF
             code = (opcode << 12) | (rd << 9) | imm
             memory_words[curr_addr] = code
 

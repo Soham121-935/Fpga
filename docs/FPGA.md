@@ -32,8 +32,8 @@
 * `SV16_CLKDIV` divides it in fabric; **`CLKDIV=1` is the shipped default**, so
   the SoC clock *is* the oscillator and there is no generated clock at all.
   `CLKDIV=2` (12.5 MHz) remains available as a conservative fallback.
-* Measured Fmax: **46.58 MHz** (nextpnr, heap placer, speed grade 6) since the
-  ALU's divider became iterative (ADR-018) — ~86 % margin at 25 MHz. Before that
+* Measured Fmax: **46.17 MHz** (nextpnr, heap placer, speed grade 6) since the
+  ALU's divider became iterative (ADR-018) — ~85 % margin at 25 MHz. Before that
   change the same flow measured 14.68 MHz, which is why the part shipped at
   12.5 MHz for most of Rev B.
 * An `EHXPLLL` could now be used to run 40–50 MHz or to feed a stable clock to
