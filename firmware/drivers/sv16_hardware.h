@@ -104,6 +104,8 @@
 #define SYS_STAT_FLASH_OK     SV16_BIT(5)
 #define SYS_STAT_FAULT_HALT   SV16_BIT(6)
 #define SYS_STAT_ILLEGAL_SEEN SV16_BIT(7)
+#define SYS_STAT_PLL_LOCKED   SV16_BIT(8)   /* clock source is up (no PLL: always 1) */
+#define SYS_STAT_CLK_SRC_PLL  SV16_BIT(9)   /* 1 = the system clock is the PLL  */
 
 /* SYS_RSTCAUSE bits (write 1s to clear) */
 #define RSTCAUSE_PIN      SV16_BIT(0)
@@ -176,9 +178,12 @@
  * give 115200 8-N-1.  Only write UART0_BAUD if you want a different rate;
  * values below 4 are clamped.  The default build is 25 MHz (CLKDIV=1), which is
  * also what every testbench simulates; 12.5 MHz only appears with an explicit
- * `make bitstream CLKDIV=2`. */
+ * `make bitstream CLKDIV=2`, and 40 MHz with `make bitstream CLKSRC=pll
+ * PLLMHZ=40` (ADR-021).  SYS_STAT_PLL_LOCKED / SYS_STAT_CLK_SRC_PLL tell the
+ * application which clock it actually got. */
 #define UART0_BAUD_115200_AT_25MHZ   217u   /* 25_000_000 / 115200 rounded */
 #define UART0_BAUD_115200_AT_12_5MHZ 109u   /* 12_500_000 / 115200 rounded */
+#define UART0_BAUD_115200_AT_40MHZ   347u   /* 40_000_000 / 115200 rounded */
 
 /* ------------------------------------------------------------------- SPI 0xF050 */
 #define SPI0_DATA   SV16_MMIO(SV16_BLK_SPI0, 0)

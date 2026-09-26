@@ -7,32 +7,49 @@ makes the clock a build-time decision that is shared with the console baud rate.
 
 ## 1. Clocking
 
-There is **no PLL in the design**. The board's 25 MHz oscillator (`clk_25m`,
-pin 133) is divided in fabric by `SV16_CLKDIV` in `rtl/sv16_top.sv` and drives
-every flip-flop in the SoC from one clock domain:
+The system clock comes from one of two build-time sources, selected with
+`CLKSRC`, and then (optionally) divided in fabric by `SV16_CLKDIV`
+(`rtl/sv16_top.sv`, ADR-021):
 
 ```
-clk_25m ──► divider (SV16_CLKDIV) ──► clk ──► CPU, RAM, ROM, all peripherals
+clk_25m ─┬─ osc: ─────────────────────────┐
+         └─ pll: EHXPLLL ──► (CLKDIV) ──► clk ──► CPU, RAM, ROM, peripherals
 ```
 
-* `SV16_CLKDIV = 1` → **the shipped default**: the SoC clock *is* the 25 MHz
-  oscillator, no divider, no generated clock (`make bitstream`). It closes with
-  ~85 % margin (measured Fmax 46.17 MHz) since DIV/MOD became multi-cycle
-  (ADR-018).
-* `SV16_CLKDIV = 2` → 12.5 MHz fallback (`make bitstream CLKDIV=2`) for a board
-  that cannot run at 25 MHz; the fabric divider then produces a 50 % duty clock.
-* Larger values are legal (integer divide) but slow the part down.
-* Every testbench simulates `SV16_CLKDIV = 1`: they drive `clk_25m` at 25 MHz and
-  assume 217 cycles per UART bit, so the bitstream and the simulation now run at
-  the same frequency.
+* `CLKSRC = osc` → **the shipped default**: the 25 MHz oscillator *is* the SoC
+  clock, no PLL, no divider, no generated clock (`make bitstream`). It closes
+  with ~75 % margin (measured Fmax 43.7 MHz, 46.2 MHz before the PLL option was
+  added — the difference is synthesis ordering, not logic).
+* `CLKSRC = pll` → the on-chip `EHXPLLL` multiplies the 25 MHz reference up:
+  `make bitstream CLKSRC=pll PLLMHZ=37.5` builds a **37.5 MHz** system clock
+  (12.5 MHz PFD, ×3 feedback, ÷16 VCO divider, VCO 600 MHz), which closes timing
+  at 44.87 MHz measured (~20 % margin). The reference reaches multiples of
+  25 MHz and of 12.5 MHz exactly; 50 MHz is reachable but does not close on this
+  speed grade. The synthesis script reports the requested and achieved frequency
+  and refuses an illegal VCO.
+* `SV16_CLKDIV = 2` halves whichever source is selected
+  (`make bitstream CLKDIV=2`) — the conservative fallback for a board that
+  cannot run at speed; the fabric divider then produces a 50 % duty clock.
+* Every testbench simulates the default configuration (25 MHz, 217 clocks per
+  UART bit); `simulation/regression/pll_clock_tb.sv` covers the PLL one.
 
-The divider output is promoted to a global clock network by nextpnr, so it has
-global clock skew characteristics even though it is generated in fabric.
+The divider output (or the PLL output) is promoted to a global clock network by
+nextpnr, so it has global clock skew characteristics even when generated in
+fabric.
+
+**Reset waits for the clock.** `sv16_startup` takes a `clk_ready` input and
+holds the entire SoC in reset while it is low; with `CLKSRC=pll` that is the
+PLL's `LOCK`, so the machine never starts executing on a clock that is not
+there yet. The gate is compiled out in the oscillator configuration
+(`GATE_ON_CLK_READY`), and the PLL's own `RST` is the raw reset — never gated on
+its own lock signal, which would deadlock the PLL.
 
 Because the UART's reset baud divisor is *computed in `sv16_top`* from the same
-constant, the console stays 115200 8-N-1 whatever the divider is — firmware does
-not have to know the system clock to talk to the monitor. What does scale with
-the clock: timer counts, PWM period, SPI bit rates, and instruction throughput.
+constants, the console stays 115200 8-N-1 whatever is selected — 217 clocks per
+bit at 25 MHz, 326 at 37.5 MHz — and firmware does not have to know which clock
+it is running on. `SYS_STAT[9:8]` (CLK_SRC_PLL, PLL_LOCKED) lets software check
+if it cares. What does scale with the clock: timer counts, PWM period, SPI bit
+rates, and instruction throughput.
 
 Asynchronous inputs (`uart_rx`, `flash_miso`, `spi0_miso`, `motor_fault_n`,
 `ext_rst_n`) are synchronised at the top level; there are no other clock domains

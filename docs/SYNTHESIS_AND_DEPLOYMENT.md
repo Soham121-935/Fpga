@@ -74,56 +74,90 @@ only for synthesis experiments.
 make bitstream        # == scripts/sv16_synth.sh --clkdiv 1 --freq 25
 ```
 
-1. **Yosys** (`synth_ecp5`, ABC9): 7,233 LUT4 + 1,130 carry cells, 4,631 FFs,
-   18 `DP16KD` block RAMs (16 for SRAM, 2 for the boot ROM), 1 `MULT18X18D` for
-   the ALU multiplier, 52 I/O buffers. The synthesis script, its log and the
+1. **Yosys** (`synth_ecp5`, ABC9): 8,509 logic LUT4 + 1,114 carry cells, 4,771
+   FFs, 18 `DP16KD` block RAMs (16 for SRAM, 2 for the boot ROM), 1 `MULT18X18D`
+   for the ALU multiplier, 52 I/O buffers. The synthesis script, its log and the
    netlist are kept: `build/sv16_synth.ys`, `build/sv16_yosys.log`,
    `build/sv16_top.json`.
 2. **nextpnr-ecp5** `--12k --package TQFP144 --speed 6 --freq 25` with
    `constraints/ecp5_144tqfp.lpf`. Report: `build/sv16_nextpnr.log`,
    `build/sv16_top.timing.json`.
-3. **ecppack** `--compress` → `build/sv16_top.bit` (~286 KB, ~1.5 Mbit stream
-   for a 12F).
+3. **ecppack** `--compress` → `build/sv16_top.bit` (304 KB, ~1.5 Mbit stream
+   for a 12F; the `CLKSRC=pll` build packs to 294 KB).
 
 ### Device utilisation (measured)
 
-| Resource | Used | Available | % |
+| Resource | Used (default build) | Available | % |
 | :--- | ---: | ---: | ---: |
-| LUT4 (incl. carry) | 8,363 | 24,288 | 34 % |
-| Flip-flops | 4,631 | 24,288 | 19 % |
+| LUT4 (incl. carry) | 9,623 | 24,288 | 39 % |
+| Flip-flops | 4,771 | 24,288 | 19 % |
 | `DP16KD` block RAM | 18 | 56 | 32 % |
 | `MULT18X18D` | 1 | 28 | 3 % |
 | I/O buffers | 52 | 197 | 26 % |
-| `EHXPLLL` | 0 | 2 | 0 % |
+| `EHXPLLL` | 0 (1 with `CLKSRC=pll`) | 2 | 0 % (50 %) |
 
-Roughly two thirds of the part is still free, which is what funds the roadmap
-items in [MCU_READINESS.md](MCU_READINESS.md).
+The `CLKSRC=pll` build uses 9,040 LUT4 (37 %) — the PLL itself is a hard macro,
+so it costs nothing in fabric. Roughly three fifths of the part is still free,
+which is what funds the roadmap items in [MCU_READINESS.md](MCU_READINESS.md).
 
 ### Timing
 
-The board oscillator is 25 MHz and there is **no PLL in the design**. By default
-(`CLKDIV=1`) the SoC runs directly from that oscillator with no fabric divider at
-all, so the whole machine — CPU, RAM, ROM and every peripheral — is one 25 MHz
-clock domain promoted to a global network by nextpnr:
+The board oscillator is 25 MHz. By default (`CLKSRC=osc`, `CLKDIV=1`) the SoC
+runs directly from that oscillator with no PLL and no fabric divider, so the whole
+machine — CPU, RAM, ROM and every peripheral — is one 25 MHz clock domain promoted
+to a global network by nextpnr. The on-chip PLL is available as an alternative
+source (ADR-021): the fabric has ~43 MHz of Fmax, so a faster clock has to come
+from the PLL rather than from the oscillator.
 
 ```sh
-make bitstream              # == scripts/sv16_synth.sh --clkdiv 1 --freq 25
-make bitstream CLKDIV=2     # 12.5 MHz fallback (fabric divider, 50 % duty)
+make bitstream                          # 25 MHz from the oscillator (default)
+make bitstream CLKSRC=pll PLLMHZ=37.5   # 37.5 MHz from the EHXPLLL
+make bitstream CLKDIV=2                 # 12.5 MHz fallback (fabric divider)
 ```
+
+The PLL relations are `fPFD = 25/CLKI_DIV` (10–400 MHz), `fOUT = fPFD × CLKFB_DIV`
+and `fVCO = fOUT × CLKOP_DIV` (400–800 MHz) — the CLKOP divider is inside the
+feedback loop, so `CLKFB_DIV` sets the output frequency. `scripts/sv16_synth.sh`
+searches the divider pair for the requested frequency, prints
+`PLL: 37.5 MHz = 25 / 2 x 3 (VCO 600 MHz), requested 37.5 MHz, error 0.00%`, and
+refuses a configuration whose VCO would be illegal. Multiples of 25 MHz and of
+12.5 MHz are exact; anything else is rounded, and the achieved frequency is what
+the RTL uses (so the console stays at 115200 either way).
 
 **Measured, on an LFE5U-12F-6 (speed grade 6):**
 
 | Configuration | Achieved Fmax | Requirement | Result |
 | :--- | ---: | ---: | :--- |
-| `CLKDIV=1`, 25 MHz, heap placer (**default**) | **46.17 MHz** post-route (38.41 pre-route) | 25 MHz | **PASS, ~85 % margin** |
-| `CLKDIV=2`, 12.5 MHz, heap placer | 46.17 MHz | 12.5 MHz | PASS |
+| `CLKSRC=osc`, 25 MHz, heap placer (**default**) | **43.73 MHz** post-route (34.05 pre-route) | 25 MHz | **PASS, ~75 % margin** |
+| `CLKSRC=pll PLLMHZ=37.5` | **44.87 MHz** post-route (36.75 pre-route) | 37.5 MHz | **PASS, ~20 % margin** |
+| `CLKSRC=osc`, 25 MHz, before the PLL option (P9) | 46.17 MHz post-route | 25 MHz | PASS — the ~2 MHz difference is synthesis ordering, not logic |
+| `CLKDIV=2`, 12.5 MHz, heap placer | 43.73 MHz | 12.5 MHz | PASS |
 | `CLKDIV=1`, heap `--placer-heap-timingweight 50` | 13.15 / 14.18 MHz | 25 MHz | worse; not used |
 | simulated annealing (`--placer sa`) | — | — | **fails to place** carry chains |
 | `CLKDIV=1`, **before** the divider fix (ADR-018) | 14.38 MHz | 25 MHz | FAIL — why the part shipped at 12.5 MHz |
 
-`make bitstream` is expected to exit 0 with `PASS`; if a board ever turns out not
-to run at 25 MHz, `CLKDIV=2` is the fallback and the console keeps working because
-the UART's divisor is recomputed from the same constant.
+`make bitstream` is expected to exit 0 with `PASS`. The flow is deterministic:
+nextpnr runs with its default fixed seed, so re-running the same sources
+reproduces the same Fmax and the same bitstream byte count (verified by building
+twice into different directories). If a board ever turns out not to run at 25 MHz,
+`CLKDIV=2` is the fallback and the console keeps working because the UART's
+divisor is recomputed from the same constant.
+
+Unverified on silicon: the PLL build has never been programmed into a part, and
+the internal feedback tap (see `rtl/sv16_pll.sv`) is the one thing this flow
+cannot check — bring-up should confirm the console rate with a scope or by
+measuring the banner timing, which is why the PLL is opt-in and the oscillator
+remains the default.
+
+**A note on these numbers.** They move by ~10 % whenever the RTL changes, even
+when the change is semantically empty: appending two *constant-driven* status
+bits to `sv16_sys` (no gates, nothing observable) took Yosys from 7,569 to 8,382
+LUT4 and post-route Fmax from 46.17 to 43.73 MHz. That is ABC's LUT mapping and
+the placer responding to a perturbed netlist, not a regression in the design —
+which is why this document quotes current measurements *and* what they used to
+be. The flow is deterministic for a given source tree (two builds of the same
+sources produce identical numbers and identical bitstream sizes); only *changing*
+the sources moves them.
 
 #### Why 25 MHz was impossible before (the corrected diagnosis)
 

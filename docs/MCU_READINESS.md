@@ -25,7 +25,7 @@ to a production-grade part.
 | Interrupt controller with priority + vectors | **MCU-like** | 8 sources, priority, per-source enable, global enable, `RETI` |
 | Watchdog | **MCU-like** | `sv16_wdt` at `0xF080`: windowed, key-protected, restarts the SoC, survives soft restarts, early-warning interrupt; verified end to end by `wdt_reset_tb` |
 | Low-power / clock scaling | **soft-core gap** | one clock; build-time divider only, no runtime clock control, no sleep modes |
-| Multiple clock options (PLL, 50–100 MHz) | **soft-core gap** | runs at 25 MHz with 85 % margin (Fmax 46.17 MHz) so a `EHXPLLL` for 40–50 MHz is now a build change rather than a redesign; still no PLL, no runtime clock scaling |
+| Multiple clock options | **present, one preset** | `CLKSRC=pll PLLMHZ=37.5` builds a 37.5 MHz system clock from the on-chip `EHXPLLL` (ADR-021) with the reset gated on lock and the derived constants (UART divisor, timer rates) following it; the default remains the 25 MHz oscillator. Still build-time only: no runtime clock switching, no power-down/standby clock, no `CLKOS` outputs, and no silicon verification of the PLL build |
 | Hardware debug interface (JTAG/SWD, breakpoints, memory access while halted) | **soft-core gap** | single-step and halt exist (`SYS_CTRL`), but only from firmware/console — no JTAG TAP, no GDB stub |
 | Memory protection / privilege levels | **soft-core gap** | no MPU; any code can write any MMIO register |
 | In-application programming from the app | **partially MCU-like** | the app can drive `0xF0A0` itself, but the monitor/loader is the only tested path |
@@ -77,8 +77,10 @@ Ordered by what would unlock the most value per unit of risk:
    constants moved Fmax from 14.68 MHz to 44.31 MHz in one experiment. DIV/MOD
    now run on an iterative divider behind a start/busy handshake with a
    `S_DIV_WAIT` FSM state, and **the part ships at the full 25 MHz** (measured
-   Fmax 46.17 MHz, ~85 % margin). An `EHXPLLL` for 40–50 MHz is now a build
-   change, not a redesign; nothing else is on the critical path worth splitting.
+   Fmax 43.73 MHz, ~75 % margin). ~~An `EHXPLLL` for 40–50 MHz is now a build
+   change, not a redesign~~ **DONE (ADR-021)**: `CLKSRC=pll PLLMHZ=37.5` builds a
+   37.5 MHz clock from the PLL and closes at 44.87 MHz; the oscillator stays the
+   default until the PLL build has been on a board.
 2. ~~**A/B images with rollback.**~~ **DONE (ADR-019).** Two 32 KB slots inside
    the 64 KB the monitor can address, a 2-byte slot record in the reserved
    header bytes (`0x18` sync, `0x19` state: pending → tried → good/bad, every

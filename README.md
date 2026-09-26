@@ -27,7 +27,7 @@ and can be reprogrammed over a plain serial port.
 
 ```sh
 source scripts/sv16_venv.sh    # fetches Verilator + Yosys + nextpnr + ecppack
-make test                      # lint + 15 simulation suites (423 checks)
+make test                      # lint + 16 simulation suites (431 checks)
 make bitstream                 # -> build/sv16_top.bit (boot ROM baked in)
 make prog                      # openFPGALoader over JTAG
 make app                       # build the example application image
@@ -78,7 +78,7 @@ SV-16 monitor v1
 
 | Command | Result |
 | :--- | :--- |
-| `make test` | lint + all fifteen Verilator suites (423 checks) |
+| `make test` | lint + all sixteen Verilator suites (431 checks) |
 | `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 25 MHz |
 | `make synth` | Yosys only (fast synthesizability check) |
 | `make prog` | program the FPGA over JTAG |
@@ -87,16 +87,18 @@ SV-16 monitor v1
 | `make commit` | commit a trial image (monitor `K`) |
 | `make iss` | instruction-set simulator on the legacy ROM image |
 
-Clocking: `CLKDIV` (default **1**) runs the SoC straight from the 25 MHz
-oscillator — no fabric divider at all — with ~85 % timing margin (measured Fmax
-46.17 MHz). `make bitstream CLKDIV=2` builds a 12.5 MHz fallback. The UART divisor
-follows the same constant automatically, so the console is always 115200.
+Clocking: `CLKSRC=osc` (default) runs the SoC straight from the 25 MHz oscillator
+— no PLL, no fabric divider — with ~75 % timing margin (measured Fmax 43.7 MHz);
+`make bitstream CLKSRC=pll PLLMHZ=37.5` builds a **37.5 MHz** version from the
+on-chip PLL (ADR-021), and `CLKDIV=2` halves whichever source is selected. The
+UART divisor is derived from the built clock automatically (217 at 25 MHz, 326 at
+37.5 MHz), so the console is always 115200 and firmware does not care.
 
 ## Repository layout
 
 ```text
 docs/            operator manual, memory map, peripherals, flow, verification, ADRs
-rtl/             25 SystemVerilog files: CPU, bus, memory, peripherals, SoC top
+rtl/             26 SystemVerilog files: CPU, bus, memory, peripherals, PLL, SoC top
 simulation/      Verilator testbenches (unit + regression) and the SPI flash model
 firmware/        monitor assembler source, examples, drivers header, image packer
 constraints/     ecp5_144tqfp.lpf — verified pin map for the TQFP-144 part
@@ -108,9 +110,9 @@ build/           generated: ROM image, firmware images, netlist, bitstream (untr
 
 | | |
 | :--- | :--- |
-| Simulation | 423 checks, 0 failures across 15 suites (CPU/ISA, ALU/divider, RAM, timer, PWM, GPIO, UART, watchdog, flash controller, boot loader, A/B slots, monitor) |
+| Simulation | 431 checks, 0 failures across 16 suites (CPU/ISA, ALU/divider, RAM, timer, PWM, GPIO, UART, watchdog, flash controller, boot loader, A/B slots, PLL clock, monitor) |
 | Synthesis / P&R | places, routes, packs for the target part; 30 % LUTs, 18 % FFs |
-| Timing | 46.17 MHz Fmax measured; shipped at the full 25 MHz with ~85 % margin |
+| Timing | 43.73 MHz Fmax measured at 25 MHz (~75 % margin); 44.87 MHz at `CLKSRC=pll PLLMHZ=37.5` (~20 % margin) |
 | Silicon | **never run on hardware** — simulation and static timing only |
 
 What is still missing for a production-grade MCU (JTAG debug, image signing,

@@ -78,7 +78,7 @@ pin constraints if it reaches a pin.
 | :--- | :--- | :--- | :--- |
 | `0x0` | `SYS_ID` | RO | `0x1602` — family `0x16`, major 0, minor 2 |
 | `0x1` | `SYS_CTRL` | RW | `[0]` SOFTRST (restart the boot sequence), `[1]` HALT, `[2]` STEP, `[3]` IRQEN (global interrupt enable), `[4]` RAMREMAP (defined, unused). Unkeyed writes may only touch bits `[3:0]`; bits `[15:8]` must be `0xA5` to change `[15:4]` |
-| `0x2` | `SYS_STAT` | RO | `[0]` HALTED, `[1]` STEP_TAKEN, `[2]` IMAGE_OK, `[3]` BOOT_FAIL, `[4]` ROM_MONITOR, `[5]` FLASH_OK, `[6]` FAULT_HALT, `[7]` ILLEGAL_SEEN |
+| `0x2` | `SYS_STAT` | RO | `[0]` HALTED, `[1]` STEP_TAKEN, `[2]` IMAGE_OK, `[3]` BOOT_FAIL, `[4]` ROM_MONITOR, `[5]` FLASH_OK, `[6]` FAULT_HALT, `[7]` ILLEGAL_SEEN, `[8]` PLL_LOCKED (always 1 without a PLL), `[9]` CLK_SRC_PLL |
 | `0x3` | `SYS_RSTCAUSE` | RW1C | `[0]` pin, `[1]` software, `[2]` CPU fault/illegal opcode, `[3]` watchdog, `[4]` no valid image, `[5]` image loaded |
 | `0x4-0x7` | `SYS_DBG_PC/SP/SR/IR` | RO | CPU program counter, stack pointer, status register, instruction register |
 | `0x8` | `SYS_FAULT_ADDR` | RO | address of the last illegal instruction |

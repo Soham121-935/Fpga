@@ -26,15 +26,26 @@ FPGA_FAMILY = ecp5
 FPGA_TYPE   = 12k
 FPGA_PKG    = TQFP144
 FPGA_SPEED  = 6
-# System clock = 25 MHz oscillator / CLKDIV.  CLKDIV=1 (the shipped default) runs
-# the SoC directly from the oscillator with no fabric divider, which is also the
-# configuration every testbench simulates (they drive clk_25m and assume 115200
-# at 217 clocks/bit).  Since the ALU's divider went multi-cycle (ADR-018) the
-# design closes at 25 MHz with ~86% margin (measured Fmax 46.6 MHz); set CLKDIV=2
-# only if a board turns out not to run at 25 MHz (see
-# docs/SYNTHESIS_AND_DEPLOYMENT.md#timing).
+# System clock.  Two independent knobs, both build-time (ADR-018, ADR-021):
+#
+#   CLKSRC = osc   the 25 MHz oscillator straight into the fabric (default)
+#   CLKSRC = pll   the on-chip PLL multiplying it to PLLMHZ.  The 25 MHz
+#                  reference reaches multiples of 25 MHz and of 12.5 MHz
+#                  exactly, so 37.5 MHz is the useful step up (Fmax measured
+#                  46.17 MHz); 50 MHz is reachable but does not close.
+#   CLKDIV = 1     no fabric divider (default); 2 halves whatever the source is
+#
+# The default configuration is what every testbench simulates.  Firmware is
+# clock-rate agnostic: rtl/sv16_top.sv derives the UART divisor (217 at 25 MHz,
+# 347 at 40 MHz) from whichever clock is built, so the console comes up at
+# 115200 without software doing anything -- see docs/RESET_AND_CLOCK.md.
+#   make bitstream CLKSRC=pll PLLMHZ=37.5
 CLKDIV      = 1
-FPGA_FREQ   = 25
+CLKSRC      = osc
+PLLMHZ      = 37.5
+# Timing target: the oscillator frequency for CLKSRC=osc, the generated clock
+# for CLKSRC=pll.  Override with FPGA_FREQ=... if you know better.
+FPGA_FREQ   ?= $(if $(filter pll,$(CLKSRC)),$(PLLMHZ),25)
 
 BUILD       = build
 ROM_DIR     = $(BUILD)/rom
@@ -91,6 +102,7 @@ RTL_SRCS = \
 	rtl/sv16_timer.sv \
 	rtl/sv16_pwm.sv \
 	rtl/sv16_wdt.sv \
+	rtl/sv16_pll.sv \
 	rtl/sv16_bus_interconnect.sv \
 	rtl/sv16_top.sv
 
@@ -108,6 +120,7 @@ TESTBENCHES = \
 	sv16_gpio_tb:simulation/unit/sv16_gpio_tb.sv \
 	sv16_uart_tb:simulation/unit/sv16_uart_tb.sv \
 	isa_tb:simulation/regression/isa_tb.sv \
+	pll_clock_tb:simulation/regression/pll_clock_tb.sv \
 	soc_boot_tb:simulation/regression/soc_boot_tb.sv \
 	monitor_tb:simulation/regression/monitor_tb.sv \
 	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
@@ -180,13 +193,14 @@ bitstream: firmware $(BUILD)/$(PROJECT).bit
 
 $(BUILD)/$(PROJECT).bit: $(RTL_SRCS) $(ROM_HEX) $(CONSTRAINTS) scripts/sv16_synth.sh
 	@scripts/sv16_synth.sh --out $(BUILD) --rom $(ROM_HEX) --lpf $(CONSTRAINTS) \
-	    --freq $(FPGA_FREQ) --clkdiv $(CLKDIV) --speed $(FPGA_SPEED) \
-	    --top $(PROJECT)
+	    --freq $(FPGA_FREQ) --clkdiv $(CLKDIV) --clksrc $(CLKSRC) \
+	    --pllmhz $(PLLMHZ) --speed $(FPGA_SPEED) --top $(PROJECT)
 
 # Synthesis only (fast check that the RTL is synthesizable for this device)
 synth: $(ROM_HEX)
 	@scripts/sv16_synth.sh --out $(BUILD) --rom $(ROM_HEX) --freq $(FPGA_FREQ) \
-	    --clkdiv $(CLKDIV) --speed $(FPGA_SPEED) --top $(PROJECT) --yosys-only
+	    --clkdiv $(CLKDIV) --clksrc $(CLKSRC) --pllmhz $(PLLMHZ) \
+	    --speed $(FPGA_SPEED) --top $(PROJECT) --yosys-only
 
 # Program the device (openFPGALoader; BOARD/CABLE can be overridden)
 OPENFPGALOADER ?= openFPGALoader

@@ -16,13 +16,14 @@ serial cable, and reports why it restarted.
 | Peripherals | GPIO ×2, timer, PWM (with hardware fault input), UART, SPI master, flash controller, watchdog, IRQ controller, system control, boot engine | [PERIPHERALS.md](PERIPHERALS.md) |
 | Non-volatile program store | SPI NOR + hardware boot loader + CRC-checked images | [BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md) |
 | Field update | ROM monitor over UART (`C`/`R`/`E`/`V`/`B`/`K`) + `make upload`; **A/B slots with a trial period and hardware rollback** (ADR-019) via `make upload-slot` / `make commit` | `scripts/sv16_mon.py` |
-| Reset and startup | reset-cause register, soft reset, fault halt, auto-boot, RX-low escape to the monitor, **watchdog restart of a hung application** | [RESET_AND_CLOCK.md](RESET_AND_CLOCK.md) |
-| Verification | **423 checks, 0 failures** across 15 Verilator suites + lint | [VERIFICATION.md](VERIFICATION.md) |
-| Bitstream | builds, places, routes and packs for the target part; timing PASS at the full 25 MHz | [SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md) |
+| Reset and startup | reset-cause register, soft reset, fault halt, auto-boot, RX-low escape to the monitor, **watchdog restart of a hung application**, reset held until the clock source is up | [RESET_AND_CLOCK.md](RESET_AND_CLOCK.md) |
+| Verification | **431 checks, 0 failures** across 16 Verilator suites + lint | [VERIFICATION.md](VERIFICATION.md) |
+| Clock source | 25 MHz oscillator by default; **optional on-chip PLL at 37.5 MHz** (`make bitstream CLKSRC=pll PLLMHZ=37.5`, ADR-021) with the UART divisor derived from either | [RESET_AND_CLOCK.md](RESET_AND_CLOCK.md) |
+| Bitstream | builds, places, routes and packs for the target part; timing PASS at 25 MHz and at 37.5 MHz (`CLKSRC=pll`) | [SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md) |
 | Documentation | operator manual, memory map, peripherals, flow, verification, ADRs | `docs/` |
 
-**Headline result:** `make bitstream` produces `build/sv16_top.bit` (291 KB,
-LFE5U-12F-6TG144C, 35 % LUTs, 19 % FFs, timing PASS at 25 MHz) containing a
+**Headline result:** `make bitstream` produces `build/sv16_top.bit` (304 KB,
+LFE5U-12F-6TG144C, 39 % LUTs, 19 % FFs, timing PASS at 25 MHz) containing a
 boot ROM monitor; program it, open a serial terminal, and the chip is a
 microcontroller you can flash new firmware into with `make upload`.
 
@@ -95,6 +96,7 @@ Full reasoning, and what "production grade" would still require, is in
 | `wdt_reset_tb` | 14 |
 | `sv16_ram_tb` | 11 |
 | `isa_tb` | 9 |
-| **Total** | **423 passing, 0 failing** |
+| `pll_clock_tb` | 8 |
+| **Total** | **431 passing, 0 failing** |
 
-Plus RTL lint (25 files clean) and whole-SoC Verilator elaboration.
+Plus RTL lint (26 files clean) and whole-SoC Verilator elaboration.

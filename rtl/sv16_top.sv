@@ -45,10 +45,40 @@
 `ifndef SV16_CLKDIV
   `define SV16_CLKDIV 1
 `endif
+// Clock source: 0 = the 25 MHz oscillator straight into the fabric (default),
+// 1 = the on-chip PLL multiplying it up to SV16_PLL_MHZ (ADR-021).  Both are
+// build-time choices; firmware does not care, because the UART divisor and the
+// clock-derived constants below follow whichever clock was built.
+`ifndef SV16_CLKSRC
+  `define SV16_CLKSRC 0
+`endif
+// PLL dividers (see rtl/sv16_pll.sv): fPFD = 25/CLKI_DIV, fOUT = fPFD*CLKFB_DIV,
+// fVCO = fOUT*CLKOP_DIV.  SV16_PLL_KHZ is the frequency the dividers actually
+// produce, which is what the derived constants below must use.
+`ifndef SV16_PLL_CLKI_DIV
+  `define SV16_PLL_CLKI_DIV 1
+`endif
+`ifndef SV16_PLL_CLKFB_DIV
+  `define SV16_PLL_CLKFB_DIV 2
+`endif
+`ifndef SV16_PLL_CLKOP_DIV
+  `define SV16_PLL_CLKOP_DIV 12
+`endif
+`ifndef SV16_PLL_KHZ
+  `define SV16_PLL_KHZ 50000
+`endif
 
 import sv16_pkg::*;
 
-module sv16_top (
+module sv16_top #(
+    // 0 = oscillator, 1 = PLL.  Parameters rather than only macros so a
+    // testbench can elaborate the PLL configuration directly.
+    parameter int CLK_SRC    = `SV16_CLKSRC,
+    parameter int PLL_CLKI   = `SV16_PLL_CLKI_DIV,
+    parameter int PLL_CLKFB  = `SV16_PLL_CLKFB_DIV,
+    parameter int PLL_CLKOP  = `SV16_PLL_CLKOP_DIV,
+    parameter int PLL_KHZ    = `SV16_PLL_KHZ
+) (
     input  logic        clk_25m,        // 25 MHz board oscillator
     input  logic        ext_rst_n,      // active low external reset
 
@@ -88,18 +118,48 @@ module sv16_top (
     // Rev B: the SoC clock is the board oscillator divided by CLK_DIV.  At the
     // default (1) this is a straight wire; at 2 the design runs at 12.5 MHz,
     // which is the configuration that meets timing on this device/speed grade.
-    localparam int CLK_DIV  = `SV16_CLKDIV;   // 1 = 25 MHz, 2 = 12.5 MHz, ...
-    localparam int CLK_HZ   = 25_000_000 / CLK_DIV;      // system clock, Hz
-    localparam int BAUD_HZ  = 115_200;                   // fixed console rate
-    // rounded divisor so the console stays at 115200 for any divider
-    localparam int UART_BAUD_DIV = (CLK_HZ + BAUD_HZ / 2) / BAUD_HZ;
+    localparam int  CLK_DIV   = `SV16_CLKDIV;   // 1 = as-is, 2 = half, ...
+    localparam bit  USE_PLL   = (CLK_SRC != 0);
+    localparam int  REF_MHZ   = 25;                       // board oscillator
+    localparam int  SRC_HZ    = USE_PLL ? (PLL_KHZ * 1000) : (REF_MHZ * 1_000_000);
+    localparam int  CLK_HZ    = SRC_HZ / CLK_DIV;         // system clock, Hz
+    localparam int  BAUD_HZ   = 115_200;                  // fixed console rate
+    // Rounded divisor, so the console stays at 115200 whatever the clock is.
+    // This is what makes firmware clock-rate agnostic: the UART comes up at the
+    // right rate at 25 MHz, at 40 MHz with the PLL, or at 12.5 MHz with
+    // CLKDIV=2, and no software has to know.
+    localparam int  UART_BAUD_DIV = (CLK_HZ + BAUD_HZ / 2) / BAUD_HZ;
 
+    logic              clk_pre;     // clock source, before the fabric divider
     logic              clk;
+    logic              pll_locked;
     logic [15:0]       div_cnt;
     localparam logic [15:0] CLK_DIV_W = CLK_DIV[15:0];
     localparam logic [15:0] DIV_HALF  = CLK_DIV_W >> 1;
 
-    always_ff @(posedge clk_25m or negedge ext_rst_n) begin
+    generate
+        if (USE_PLL) begin : g_pll
+            // RST is the raw reset, never gated by lock: a PLL held in reset by
+            // its own lock signal can never start.  The rest of the SoC waits
+            // for `locked` through sv16_startup's clk_ready input instead.
+            sv16_pll #(
+                .REF_MHZ   (REF_MHZ),
+                .CLKI_DIV  (PLL_CLKI),
+                .CLKFB_DIV (PLL_CLKFB),
+                .CLKOP_DIV (PLL_CLKOP)
+            ) u_pll (
+                .clk_ref (clk_25m),
+                .rst     (~ext_rst_n),
+                .clk_out (clk_pre),
+                .locked  (pll_locked)
+            );
+        end else begin : g_osc
+            assign clk_pre    = clk_25m;
+            assign pll_locked = 1'b1;   // nothing to wait for
+        end
+    endgenerate
+
+    always_ff @(posedge clk_pre or negedge ext_rst_n) begin
         if (!ext_rst_n) begin
             div_cnt <= 16'd0;
         end else if (div_cnt == CLK_DIV_W - 16'd1) begin
@@ -111,7 +171,7 @@ module sv16_top (
 
     // 50 % duty cycle; a straight wire when the divider is 1 (the counter is
     // constant-folded away in that configuration)
-    assign clk = (CLK_DIV <= 1) ? clk_25m : (div_cnt < DIV_HALF);
+    assign clk = (CLK_DIV <= 1) ? clk_pre : (div_cnt < DIV_HALF);
 
     // ------------------------------------------------- reset / startup state
     logic        rst_n;             // hard reset (whole device)
@@ -180,9 +240,14 @@ module sv16_top (
     logic [23:0] flash_jedec_id;
 
     // ------------------------------------------------------------ Startup
-    sv16_startup u_startup (
+    sv16_startup #(
+        // Only the PLL configuration has something to wait for; the oscillator
+        // path keeps the reset net free of fabric logic.
+        .GATE_ON_CLK_READY(USE_PLL)
+    ) u_startup (
         .clk(clk),
         .ext_rst_n(ext_rst_n),
+        .clk_ready(pll_locked),      // PLL: hold the SoC down until it locks
         .uart_rx(uart_rx),
         .auto_boot(boot_auto),
         .boot_busy(boot_busy),
@@ -259,6 +324,8 @@ module sv16_top (
         .fault_halt(cpu_fault_halt),
         .illegal_irq(cpu_illegal_irq),
         .illegal_pc(cpu_illegal_pc),
+        .pll_locked(pll_locked),
+        .clk_src_pll(USE_PLL),
         .img_ok(img_ok),
         .boot_fail(boot_failed),
         .rom_monitor(rom_monitor),

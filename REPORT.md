@@ -15,8 +15,8 @@ prototype* into a *practical, MCU-style programmable system* on the Lattice ECP5
 | Branch | `arena/01a0ce9b-fpga` (this session), one commit ahead of `arena/Rv2` |
 | Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) · `e664a0c` branch-rename note · `62f432a` watchdog in the reset path (P1) · `56a8b62` multi-cycle divider + full 25 MHz (P2) · `bd83c92` A/B image slots with rollback (P3) · `f49dbdf` monitor `K` confirm check · P9 peripheral regression + ISA suite (ADR-020, this revision) |
 | Remote state | On GitHub this work stream was renamed **`arena/01a0ce9b-fpga` → `arena/Rv2`**, so `arena/Rv2` holds the Rev B work up to `a07f62e`. This session pushed `arena/01a0ce9b-fpga` again (P1 watchdog, then P2 timing) and it is a direct descendant of `arena/Rv2`, so it can be fast-forwarded or merged without conflicts. |
-| Test status | **423 checks, 0 failures** across 15 suites; RTL lint 25/25 clean |
-| Bitstream | `make bitstream` → `build/sv16_top.bit`, 291,414 bytes, **timing PASS at the full 25 MHz** (Fmax 46.17 MHz, ~85 % margin) |
+| Test status | **431 checks, 0 failures** across 16 suites; RTL lint 26/26 clean |
+| Bitstream | `make bitstream` → `build/sv16_top.bit`, 303,962 bytes, **timing PASS at the full 25 MHz** (Fmax 43.73 MHz, ~75 % margin); `CLKSRC=pll PLLMHZ=37.5` → 294,124 bytes, PASS at 37.5 MHz (44.87 MHz) |
 | Silicon | **never run on hardware** — simulation + static timing only |
 
 ---
@@ -53,9 +53,9 @@ it breaks:
 | Metric | Value |
 | :--- | :--- |
 | FPGA utilization | 8,757 / 24,288 LUT4 (**36 %**), 4,765 FFs (19 %), 18/56 block RAMs, 1 multiplier, 52 I/O |
-| Timing | Fmax **46.17 MHz** measured (38.41 pre-route); shipped at **25 MHz ⇒ PASS** with ~85 % margin |
-| Bitstream | **291,414 bytes** (`build/sv16_top.bit`), boot ROM baked in |
-| Verification | **423 checks, 0 failures** across 15 suites (`49+48+41+26+57+35+11+21+23+20+27+9+21+21+14`), plus lint (25/25) + whole-SoC elaboration |
+| Timing | Fmax **43.73 MHz** measured at 25 MHz (34.05 pre-route, ~75 % margin) and **44.87 MHz** at the PLL's 37.5 MHz (~20 % margin); both PASS |
+| Bitstream | **303,962 bytes** (`build/sv16_top.bit`), boot ROM baked in |
+| Verification | **431 checks, 0 failures** across 16 suites (`49+48+41+26+57+35+11+21+23+20+27+9+8+21+21+14`), plus lint (26/26) + whole-SoC elaboration |
 | Code | 25 RTL files / 7,145 lines, 14 scripts / 2,369 lines, 24 testbenches / 4,532 lines, 15 documents + this report / 3,144 lines |
 
 **The one honest headline:** this is functionally a microcontroller now, it
@@ -200,7 +200,7 @@ silicon), which the request explicitly asked to be enumerated rather than built.
 
 ## 4. Everything that was built (inventory)
 
-### 4.1 RTL — 25 files, 6,470 lines (`rtl/`)
+### 4.1 RTL — 26 files, 7,437 lines (`rtl/`)
 
 | Module | Lines | What it is | New in Rev B |
 | :--- | ---: | :--- | :---: |
@@ -227,7 +227,8 @@ silicon), which the request explicitly asked to be enumerated rather than built.
 | `sv16_wdt.sv` | 265 | windowed, key-protected watchdog: preset/prescaler/window registers, magic-word feed, early-warning interrupt, `LOCK`, reset request into the startup FSM | **new** |
 | `sv16_gpio.sv` | 89 | atomic set/clear, sync'd inputs (2 ports) | reused ×2 |
 | `sv16_timer.sv` / `sv16_pwm.sv` | 119 / 118 | timer with compare IRQ; PWM with hardware fault input | — |
-| `sv16_top.sv` | 480 | SoC top: clock divider, reset, 2 SPI ports, 32 GPIO, LED/motor pins | rewritten |
+| `sv16_pll.sv` | 158 | optional `EHXPLLL` system clock (ADR-021) with a delay-based simulation model behind `ifdef VERILATOR` | **new** |
+| `sv16_top.sv` | 519 | SoC top: clock source + divider, reset, 2 SPI ports, 32 GPIO, LED/motor pins | rewritten |
 
 ### 4.2 Scripts — 7 new/reworked (`scripts/`, ~1,470 lines)
 
@@ -283,8 +284,8 @@ tasks, `check`, a per-suite watchdog and the `RESULT: PASS` contract);
 `monitor_tb.sv` (521), `wdt_tb.sv` (367), `flash_ctrl_tb.sv` (272),
 `boot_tb.sv` (265), `soc_boot_tb.sv` (240), `wdt_reset_tb.sv` (188), plus the
 rewritten `sv16_alu_tb`/`sv16_timer_tb`/`sv16_pwm_tb`/`sv16_gpio_tb`/
-`sv16_uart_tb`/`sv16_ram_tb` and the new `isa_tb` — 15 suites registered in
-`make sim`, 423 checks, all of them run by `scripts/sv16_run_tb.sh`, which now
+`sv16_uart_tb`/`sv16_ram_tb`, `isa_tb` and `pll_clock_tb` — 16 suites registered
+in `make sim`, 431 checks, all of them run by `scripts/sv16_run_tb.sh`, which now
 refuses to report a pass unless the suite itself says `RESULT: PASS`.
 
 ### 4.6 Constraints
@@ -364,20 +365,22 @@ single-step (`SYS_CTRL.HALT` + `STEP`).
 | `slot_tb` | **57** | 0 | **the A/B policy end to end** (ADR-019) with the loader, flash controller and flash model wired as the SoC wires them: pick order, TRIED written before the CPU is released, a restart inside the trial rolling back to the other slot, a confirmed update retiring the previous image, a torn record refused, `BOOT_CTRL[4]` bypassing the policy |
 | `soc_boot_tb` | **21** | 0 | reset → loader → SRAM content → CPU released at the right entry/SP |
 | `monitor_tb` | **21** | 0 | the entire field-update story over a bit-banged UART: upload, read-back, erase, verify, `K` confirm, boot, the uploaded app actually running and driving GPIO/PWM/direction |
-| **Total** | **423** | **0** | `make sim` — every suite is in the Makefile list, and the runner fails any suite that does not print `RESULT: PASS` |
+| `pll_clock_tb` | **8** | 0 | the PLL clock configuration (ADR-021): reset held while the PLL is unlocked, the generated clock measured at 1.5x the reference, the UART divisor derived from 37.5 MHz, and a real monitor frame decoded at that divisor |
+| **Total** | **431** | **0** | `make sim` — every suite is in the Makefile list, and the runner fails any suite that does not print `RESULT: PASS` |
 
-Plus: `sv16_rtl_lint.py` **25/25 files clean** (multiple drivers, latches, missing
+Plus: `sv16_rtl_lint.py` **26/26 files clean** (multiple drivers, latches, missing
 resets, incomplete case) and Verilator elaboration of the whole SoC clean.
 
 ### 6.2 Implementation (measured, reproducible)
 
 | Stage | Result |
 | :--- | :--- |
-| Yosys `synth_ecp5` | 7,627 logic LUT4 + 1,130 carry, 4,765 FFs, 18 `DP16KD`, 1 `MULT18X18D`, netlist written |
-| nextpnr-ecp5 (`--12k --package TQFP144 --speed 6 --freq 25`) | places, routes, **timing PASS at 25 MHz** |
-| ecppack `--compress` | `build/sv16_top.bit`, **291,414 bytes** |
-| Placer comparison | heap default = **46.17 MHz** (PASS at 25 MHz, 38.41 pre-route) · heap `timingweight 50` = 13.15/14.18 MHz (worse) · SA = fails to place chains |
+| Yosys `synth_ecp5` | 8,509 logic LUT4, 4,771 FFs, 18 `DP16KD`, 1 `MULT18X18D` (default build, `build/sv16_yosys.log`) |
+| nextpnr-ecp5 (`--12k --package TQFP144 --speed 6 --freq 25`) | places, routes, **timing PASS at 25 MHz**; device utilisation 9,623/24,288 LUT4 (39 %), 4,771 FF (19 %), 18 `DP16KD`, 1 `MULT18X18D`, 52 I/O; the PLL build uses 9,040 LUT4 (37 %) |
+| ecppack `--compress` | `build/sv16_top.bit`, **303,962 bytes** |
+| Placer comparison | heap default = **43.73 MHz** at 25 MHz (PASS, 34.05 pre-route) · **44.87 MHz** at the PLL's 37.5 MHz (PASS) · heap `timingweight 50` = 13.15/14.18 MHz (worse) · SA = fails to place chains |
 | 25 MHz attempt **before** ADR-018 | 14.38 MHz → FAIL; a constant-folding experiment (`a/b`, `a%b` → constants) measured 44.31 MHz — which is how the real culprit was found |
+| Mapping sensitivity (measured, ADR-021) | adding two constant-driven `SYS_STAT` bits to the P9 tree — no logic, nothing observable — took Yosys 7,569 → 8,382 LUT4 and Fmax 46.17 → 43.73 MHz. The flow is deterministic for a given source tree, but absolute numbers move ~10 % whenever the sources change |
 
 ### 6.3 Real defects found and fixed by this work
 
@@ -424,7 +427,7 @@ git clone https://github.com/Soham121-935/Fpga.git && cd Fpga
 git checkout arena/Rv2                 # or this session's arena/01a0ce9b-fpga
 
 source scripts/sv16_venv.sh            # Verilator + Yosys + nextpnr + ecppack
-make test                              # lint + 423 checks           (~5 min)
+make test                              # lint + 431 checks           (~6 min)
 make bitstream                         # Yosys→PnR→pack, timing report (~2 min)
 make prog                              # program the FPGA over JTAG
 make upload PORT=/dev/ttyUSB0          # program the *firmware* over UART
@@ -455,7 +458,7 @@ be audited or replayed.
 | :--- | :--- | :--- | :--- |
 | ~~P1~~ | ~~**Watchdog in the reset path**~~ — **DONE** (`sv16_wdt.sv`, MMIO block 8, `RSTCAUSE.WDT` live, `MMIO_PRESENT = 0x7FF`) | A software hang used to mean manual intervention; now the hardware restarts the boot sequence and re-boots the application, and the application cannot disarm it | 265-line block + 49 unit checks + 14 system checks + ADR-017; lint and timing re-verified |
 | ~~P2~~ | ~~**Timing headroom → 25 MHz+**~~ — **DONE**: the real critical path was the ALU's combinational divider, not the CPU flag/branch path | The 12.5 MHz default was a workaround; the part now runs at the full oscillator frequency | multi-cycle DIV/MOD + `S_DIV_WAIT` (ADR-018), 41 new checks, Fmax 14.68 → **46.17 MHz**, shipped at 25 MHz |
-| P2b | **`EHXPLLL` for 40–50 MHz** (or a jitter-free SPI clock) | The fabric now supports it and it would make the clock programmable, but nothing needs it yet | 1-2 days: instance the PLL, constrain it, re-measure |
+| ~~P2b~~ | ~~**`EHXPLLL` for 40–50 MHz**~~ — **DONE (ADR-021)**: `CLKSRC=pll PLLMHZ=37.5` instantiates the `EHXPLLL`; the synthesis script searches the divider pair for the requested frequency (the CLKOP divider is inside the feedback loop, so `CLKFB_DIV` — not `CLKOP_DIV` — sets the output), reports requested vs achieved and refuses an illegal VCO. Reset is gated on lock, `SYS_STAT[9:8]` tells firmware which clock it got, and `pll_clock_tb` (8 checks) proves the derived constants follow it | The fabric closes at ~43.7 MHz from the oscillator, so 37.5 MHz is the useful step up; the console, the timers and every other clock-derived constant follow the built clock automatically, which is what makes this an MCU clock rather than just a faster one | 158 lines of RTL + one TB; measured 44.87 MHz at 37.5 MHz, PASS; the 25 MHz oscillator stays the default until the PLL build has been on silicon |
 | ~~P3~~ | ~~**A/B images with rollback**~~ — **DONE**: two 32 KB slots (A `0x0000`, B `0x8000`) with a 2-byte slot record in the image header, a trial period that lives *in flash*, hardware rollback on the next restart, `BOOT_CTRL[6]` confirmation, monitor `K`, packer `--slot`, `make upload-slot` / `make commit` | A power cut or a hang during an update no longer loses the only application: the part boots the previous image by itself, with no host attached | ~430 lines of RTL across `sv16_boot`/`sv16_flash_ctrl`, `slot_tb` (57 checks) + boot_tb additions, ADR-019, docs; timing re-verified (46.17 MHz, PASS) |
 | P4 | **JTAG debug bridge** over the ECP5 TAP using the existing `SYS_CTRL.HALT` / `SYS_DBG_*` hooks | Biggest quality-of-life gap vs a real MCU: halt, resume, peek/poke, breakpoints | 1-2 weeks: TAP shift-register bridge + host tool |
 | P5 | **C toolchain** (or an ISA extension to make C practical: register-indirect call, more registers) | Assembly-only is the main practical limit | weeks; ISA change needs its own ADR |

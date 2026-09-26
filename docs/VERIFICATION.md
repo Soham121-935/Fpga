@@ -11,7 +11,7 @@ the tables below is aspirational.
 
 ```sh
 source scripts/sv16_venv.sh
-make test            # lint + firmware + all fifteen simulation suites
+make test            # lint + firmware + all sixteen simulation suites
 make sim TB=wdt_tb   # a single suite
 ```
 
@@ -32,10 +32,11 @@ make sim TB=wdt_tb   # a single suite
 | `sv16_gpio_tb` | `simulation/unit/sv16_gpio_tb.sv` | 20 | PASS | the GPIO block's direction/data/interrupt registers, the two-clock input synchroniser on every pin, the read-modify-write behaviour of a write to `DATA`, and the pin-change interrupt |
 | `sv16_uart_tb` | `simulation/unit/sv16_uart_tb.sv` | 27 | PASS | the UART end to end at the bit level: divisor, TX/RX FIFOs and their level fields, framing, the loopback of a byte, overrun and frame-error flags, and that the self-clearing FIFO-clear pulse bits can never be latched by a read-modify-write |
 | `isa_tb` | `simulation/regression/isa_tb.sv` | 9 | PASS | the ISA itself, running `firmware/tests/isa_regress.s` on the CPU with an SRAM: reset state, every conditional branch in both its taken and fall-through form, ADDI/SUBI values including a negative immediate, PUSH/POP, CALL/RET, stack balance and the final self-loop. This is the suite that found the two defects in [ADR-020](ARCHITECTURE_DECISIONS.md#adr-020-the-i-format-source-operand-and-a-latched-alu-result-for-writeback) |
-| `sv16_rtl_lint.py` | `scripts/sv16_rtl_lint.py` | 25 files | clean | structural checks: multiple drivers, missing `default` in combinational `case`, `always_ff` without reset, latches, etc. |
+| `pll_clock_tb` | `simulation/regression/pll_clock_tb.sv` | 8 | PASS | the PLL clock configuration end to end (ADR-021): the SoC is elaborated with `CLKSRC=pll` and really holds `rst_n` low while the PLL is unlocked, the generated clock measures 1.5x the 25 MHz reference, the UART divisor is the one derived from 37.5 MHz (326), and a real monitor frame decodes at that divisor — which is what makes firmware clock-rate agnostic rather than a claim |
+| `sv16_rtl_lint.py` | `scripts/sv16_rtl_lint.py` | 26 files | clean | structural checks: multiple drivers, missing `default` in combinational `case`, `always_ff` without reset, latches, etc. |
 | Verilator elaboration | `make vlint` | top | clean | the whole SoC (package + 25 modules) elaborates as one design |
 
-Total: **423 checks, 0 failures.** Every suite is registered in the Makefile's
+Total: **431 checks, 0 failures.** Every suite is registered in the Makefile's
 `TESTBENCHES` list, so `make sim` is the whole regression; `sv16_run_tb.sh`
 fails a suite unless it prints `RESULT: PASS`, which means a testbench that
 crashes or times out can no longer be mistaken for a pass.
@@ -129,7 +130,10 @@ Worth recording, because they are the reason the boot path is trustworthy now:
    combinational 16/16 divider. Fixing that (multi-cycle DIV/MOD, ADR-018) took
    Fmax from 14.68 MHz to 46.17 MHz and the shipped clock from 12.5 MHz to
    25 MHz — `div_tb`. The writeback latch from ADR-020 shortened the path
-   further: the ALU is no longer on it at all.
+   further: the ALU is no longer on it at all. (The P9→PLL builds measure
+   43.73 MHz for the same logic: Yosys/nextpnr results shift by a few percent
+   when the file set changes. The flow itself is deterministic — the same
+   sources produce the same number on every run.)
 
 ---
 
@@ -146,10 +150,11 @@ Being explicit about coverage gaps is part of the verification story:
 | Timer/PWM/GPIO/UART boundaries | covered functionally by `sv16_timer_tb`/`sv16_pwm_tb`/`sv16_gpio_tb`/`sv16_uart_tb`; still no randomised or constrained-random stimulus, and no cross-peripheral concurrency test (two peripherals interrupting at once) |
 | Watchdog under a fault-injection campaign | window, lock and interrupt paths are covered functionally, but not with randomised timing or injected faults |
 | Divider performance | DIV/MOD take 18 cycles by construction; no measured worst-case instruction-time table exists yet (OQ-15) |
-| The 12.5 MHz fallback configuration | `CLKDIV=2` still builds and the RTL divider is unchanged, but only `CLKDIV=1` is exercised in simulation and by the default bitstream |
+| The 12.5 MHz fallback configuration | `CLKDIV=2` still builds and the RTL divider is unchanged, but only the default configuration is exercised in simulation and by the default bitstream |
+| The PLL on silicon | `pll_clock_tb` proves the logic and the derived constants, but the ECP5's internal feedback tap cannot be verified in simulation: bring-up must confirm the actual console rate. The PLL model is a delay-based oscillator, not an analog/jitter/lock-time model |
 | Software (monitor) | exercised through `monitor_tb` only; no unit tests for the assembler, packer or `sv16_mon.py` against a golden corpus |
 | Flash endurance / power-loss during program | not modelled |
-| Timing | closed by nextpnr's static analysis at 25 MHz (Fmax 46.17 MHz); no SDF/back-annotated simulation and no on-board measurement |
+| Timing | closed by nextpnr's static analysis at 25 MHz (Fmax 43.73 MHz) and at 37.5 MHz with `CLKSRC=pll` (44.87 MHz); no SDF/back-annotated simulation and no on-board measurement |
 
 The Rev A testbenches that remain in `simulation/unit/` and `test_*.py` scripts
 document the earlier module-level work; they are excluded from `make sim`

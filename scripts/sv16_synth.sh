@@ -7,9 +7,13 @@
 #   scripts/sv16_synth.sh --no-rom        # synthesize with an empty boot ROM
 #   scripts/sv16_synth.sh --clkdiv 2      # build the 12.5 MHz conservatively-clocked SoC
 #   scripts/sv16_synth.sh --freq 40       # different timing target
+#   scripts/sv16_synth.sh --clksrc pll --pllmhz 37.5 # run from the on-chip PLL
 #
-# Defaults: --clkdiv 1 (SoC clock = the 25 MHz oscillator, Fmax measured 46.6 MHz
-# after the ALU divider became multi-cycle, ADR-018), --freq = 25/clkdiv.
+# Defaults: --clkdiv 1 (SoC clock = the 25 MHz oscillator, Fmax measured 46.17 MHz
+# after the ALU divider became multi-cycle, ADR-018), --clksrc osc, --freq =
+# reference/clkdiv.  --clksrc pll instantiates the ECP5 PLL (ADR-021) and the
+# reference pin stays constrained at 25 MHz; nextpnr derives the generated clock
+# from the PLL configuration, so the reported Fmax is for the built frequency.
 #
 # The boot ROM contents are compiled into the bitstream: the ROM's init file is
 # a synthesis-time macro (SV16_ROM_INIT_FILE), so the monitor that comes up on
@@ -39,6 +43,8 @@ top="sv16_top"
 unconstrained=""
 yosys_only=""
 clkdiv="1"
+clksrc="osc"
+pllmhz="40"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -47,6 +53,8 @@ while [ $# -gt 0 ]; do
         --lpf)     lpf="$2"; shift 2 ;;
         --freq)    freq="$2"; shift 2 ;;
         --clkdiv)  clkdiv="$2"; shift 2 ;;
+        --clksrc)  clksrc="$2"; shift 2 ;;
+        --pllmhz)  pllmhz="$2"; shift 2 ;;
         --speed)   speed="$2"; shift 2 ;;
         --top)     top="$2"; shift 2 ;;
         --no-rom)  rom=""; shift ;;
@@ -83,8 +91,70 @@ ys="$out/sv16_synth.ys"
 # bitstream.  It is supplied through a generated header instead of a `-D` on the
 # command line: the path is then a normal Verilog string literal and no shell or
 # Yosys-script quoting is involved.
+# Which clock source the top level should build.
+case "$clksrc" in
+    osc) clksrc_def=0 ;;
+    pll) clksrc_def=1 ;;
+    *) echo "[sv16] --clksrc must be 'osc' or 'pll' (got '$clksrc')" >&2; exit 2 ;;
+esac
+
+# ---------------------------------------------------------------- PLL search
+# The ECP5 relations (rtl/sv16_pll.sv has the details):
+#   fPFD = fREF / CLKI_DIV      10..400 MHz
+#   fOUT = fPFD * CLKFB_DIV     feedback from CLKOP, so CLKOP_DIV cancels
+#   fVCO = fOUT * CLKOP_DIV     400..800 MHz
+# Search for the divider pair that hits the requested frequency most closely,
+# then put the VCO near the middle of its range.  The achieved frequency is
+# reported and passed to the RTL, which derives the UART divisor from it -- a
+# requested frequency that cannot be hit exactly never changes the clock behind
+# the user's back without saying so.
+pll_clki=1; pll_clkfb=2; pll_clkop=12; pll_out="50"; pll_err="0"
+if [ "$clksrc" = "pll" ]; then
+    read -r pll_clki pll_clkfb pll_clkop pll_vco pll_out pll_err <<< "$(awk -v ref=25 -v want="$pllmhz" -v vcocentre=600 '
+        BEGIN {
+            best = ""; besterr = 1e9;
+            for (cd = 1; cd <= 16; cd++) {
+                pfd = ref / cd;
+                if (pfd < 10 || pfd > 400) continue;
+                for (fd = 1; fd <= 128; fd++) {
+                    out = pfd * fd;
+                    if (out < 3.125 || out > 400) continue;
+                    err = (out - want) / want; if (err < 0) err = -err;
+                    if (err < besterr) { besterr = err; best = cd " " fd " " out; }
+                    if (err < 1e-9) break;
+                }
+            }
+            if (best == "") { print "1 2 12 600 25 1"; exit }
+            split(best, b, " ");
+            cd = b[1]; fd = b[2]; out = b[3];
+            div = int(vcocentre / out + 0.5);
+            if (div < 1) div = 1; if (div > 128) div = 128;
+            vco = out * div;
+            while (vco > 800 && div > 1) { div--; vco = out * div; }
+            while (vco < 400 && div < 128) { div++; vco = out * div; }
+            printf "%d %d %d %d %.4f %.4f\n", cd, fd, div, vco, out, besterr;
+        }')"
+    if [ "$pll_clkop" -lt 1 ] || [ "$pll_clkop" -gt 128 ] || \
+       [ "$(awk -v v="$pll_out" -v d="$pll_clkop" 'BEGIN{printf "%d", (v*d > 800 || v*d < 400)}')" = "1" ]; then
+        echo "[sv16] --pllmhz $pllmhz has no legal ECP5 PLL configuration (VCO must stay in 400..800 MHz)" >&2
+        exit 2
+    fi
+    achieved=$(printf '%.4g' "$pll_out")
+    errpct=$(awk -v e="$pll_err" 'BEGIN{printf "%.2f", e*100}')
+    echo "[sv16] PLL: ${achieved} MHz = 25 / ${pll_clki} x ${pll_clkfb} (VCO ${pll_vco} MHz), requested ${pllmhz} MHz, error ${errpct}%"
+    if [ "$(awk -v e="$pll_err" 'BEGIN{print (e > 0.001) ? 1 : 0}')" = "1" ]; then
+        echo "[sv16] note: the 25 MHz reference cannot hit ${pllmhz} MHz exactly with integer" \
+             "dividers; building ${achieved} MHz. Exact values are multiples of 25 MHz and of 12.5 MHz." >&2
+    fi
+    pllmhz=$achieved
+fi
+
 if [ -z "$freq" ]; then
-    freq=$(( 25 / clkdiv ))
+    if [ "$clksrc" = "pll" ]; then
+        freq=$pllmhz                  # the generated clock is the constraint
+    else
+        freq=$(( 25 / clkdiv ))
+    fi
 fi
 
 defines="$out/sv16_defines.svh"
@@ -95,6 +165,11 @@ defines="$out/sv16_defines.svh"
         printf '`define SV16_ROM_INIT_FILE ""\n'
     fi
     printf '`define SV16_CLKDIV %s\n' "$clkdiv"
+    printf '`define SV16_CLKSRC %s\n' "$clksrc_def"
+    printf '`define SV16_PLL_CLKI_DIV %s\n' "$pll_clki"
+    printf '`define SV16_PLL_CLKFB_DIV %s\n' "$pll_clkfb"
+    printf '`define SV16_PLL_CLKOP_DIV %s\n' "$pll_clkop"
+    printf '`define SV16_PLL_KHZ %s\n' "$(awk -v m="$pllmhz" 'BEGIN{printf "%d", m*1000}')"
 } > "$defines"
 
 {
@@ -105,7 +180,8 @@ defines="$out/sv16_defines.svh"
     echo "synth_ecp5 -top $top -json $out/$top.json"
 } > "$ys"
 
-echo "[sv16] synthesizing $top: LFE5U-12F-$speed $package, ${freq} MHz system clock (ROM: ${rom:-<empty>})"
+echo "[sv16] synthesizing $top: LFE5U-12F-$speed $package, ${freq} MHz system clock" \
+     "(${clksrc} clock source, ROM: ${rom:-<empty>})" 
 yosys -q -l "$out/sv16_yosys.log" -s "$ys"
 if grep -qiE "warning: unable to (open|find).*monitor|failed to open" "$out/sv16_yosys.log"; then
     echo "[sv16] the boot ROM init file could not be read by Yosys:" >&2

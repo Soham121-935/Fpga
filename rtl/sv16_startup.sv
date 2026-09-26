@@ -17,6 +17,8 @@
 //      (ADR-017)
 //      without reconfiguring the FPGA, and keeps the peripherals/CPU in reset
 //      until the CPU is released
+//   7. holds the whole SoC in reset until the clock source is up (clk_ready:
+//      the PLL has locked, or there is no PLL) — ADR-021
 //
 // CPU reset domain: cpu_rst_n. The boot engine, flash controller and system
 // control block are only reset by the external reset, so boot status and
@@ -29,13 +31,18 @@
 import sv16_pkg::*;
 
 module sv16_startup #(
+    // When the system clock comes from a PLL, reset must be held until it locks.
+    // With the plain oscillator there is nothing to wait for, and leaving the
+    // AND gate in would put fabric logic in front of the reset net for nothing.
+    parameter bit GATE_ON_CLK_READY   = 1'b0,
     parameter int BOOT_DELAY_CYCLES   = 32768,      // ~1.3 ms @25 MHz (tVSL)
     parameter int SOFT_RST_CYCLES     = 16,
     parameter int BOOT_TIMEOUT_CYCLES = 1 << 21,    // ~84 ms @25 MHz
     parameter int RX_HOLD_CYCLES      = 4096
 )(
-    input  logic        clk,            // 25 MHz system clock
+    input  logic        clk,            // system clock
     input  logic        ext_rst_n,      // raw external reset pin (active low)
+    input  logic        clk_ready,      // clock source is up (PLL locked; 1 without a PLL)
 
     // Escape hatch: keep the serial RX line low during reset to force the
     // ROM monitor instead of booting the stored image.
@@ -71,8 +78,20 @@ module sv16_startup #(
     // ------------------------------------------------- Reset synchronizer
     logic rst_sync1, rst_sync2;
 
-    always_ff @(posedge clk or negedge ext_rst_n) begin
-        if (!ext_rst_n) begin
+    // clk_ready takes part in the *asynchronous* term: while the PLL is
+    // unlocked its output clock may not be running at all, so the reset must be
+    // held by a level rather than by a clocked decision.  Release stays
+    // synchronous, as usual.  The two active-low sources are combined in fabric
+    // because a flop has exactly one asynchronous reset (and Yosys rejects an
+    // always block with two edge-sensitive reset events).
+    logic hard_rst_n;
+    generate
+        if (GATE_ON_CLK_READY) assign hard_rst_n = ext_rst_n & clk_ready;
+        else                   assign hard_rst_n = ext_rst_n;
+    endgenerate
+
+    always_ff @(posedge clk or negedge hard_rst_n) begin
+        if (!hard_rst_n) begin
             rst_sync1 <= 1'b0;
             rst_sync2 <= 1'b0;
         end else begin

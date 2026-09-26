@@ -432,3 +432,75 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
   matrix plus arithmetic, not on an exhaustive per-instruction golden model —
   the executable-definition approach in [VERIFICATION.md](VERIFICATION.md) stays
   the recommendation for a production library.
+
+## ADR-021: An optional PLL system clock (ECP5 `EHXPLLL`), off by default
+
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: the SoC has always run from the 25 MHz board oscillator, wired
+  straight into the fabric (`CLKDIV=1`). ADR-018 made that the *default* by
+  giving the design 46 MHz of Fmax headroom, and every document since then has
+  said "an `EHXPLLL` could take it to 40–50 MHz, but nothing needs it yet". That
+  is a real MCU gap: a microcontroller's clock is programmable, and the SoC was
+  buying a hard macro's worth of capability and leaving it unused.
+- **Decision**:
+  - `rtl/sv16_pll.sv` wraps one `EHXPLLL` and is instantiated only when
+    `CLKSRC=pll`; the default build (`osc`) does not instantiate it at all, so
+    the shipped configuration, its timing closure and every existing testbench
+    keep the clock they had. `make bitstream CLKSRC=pll PLLMHZ=37.5` builds the
+    faster one.
+  - **The frequency arithmetic is the one the hardware implements, and it is not
+    the obvious one.** With the feedback taken from CLKOP (internal, via
+    `CLKINTFB`), the CLKOP divider sits *inside* the loop:
+    `fPFD = fREF/CLKI_DIV`, `fOUT = fPFD * CLKFB_DIV`, `fVCO = fOUT * CLKOP_DIV`
+    ∈ 400–800 MHz. So `CLKFB_DIV` — not `CLKOP_DIV` — sets the output frequency,
+    and `CLKOP_DIV` only positions the VCO. The first version of the module
+    assumed `fOUT = fVCO/CLKOP_DIV`, which made nextpnr derive a 16 GHz VCO,
+    clamp the fabric clock to 800 MHz and fail the build; the corrected form is
+    the one LiteX uses (`clk_freq = vco_freq/clkofb_div`) and the one
+    prjtrellis's own `pll_120` example demonstrates (25 MHz × 24/5 with the
+    CLKOP divider in the loop = 120 MHz, VCO 600 MHz).
+  - Consequently the 25 MHz reference reaches multiples of 25 MHz and of
+    12.5 MHz exactly; 37.5 MHz is the useful step for this part because 50 MHz
+    is above the fabric's measured Fmax. The search for the divider pair lives
+    in `scripts/sv16_synth.sh`, which prints the requested and achieved
+    frequency and refuses a configuration whose VCO would be illegal — it never
+    silently builds a different clock.
+  - **Reset is gated on lock, and only when there is a PLL.** `sv16_startup`
+    takes `clk_ready` and holds the whole SoC down until it is high; the
+    parameter `GATE_ON_CLK_READY` (driven by `USE_PLL`) removes the AND gate
+    entirely in the oscillator configuration, so the shipped build keeps its
+    reset net free of fabric logic. The PLL's own `RST` is the raw external
+    reset and is never gated on `locked` — a PLL held in reset by its own lock
+    signal can never start.
+  - The clock source is visible to firmware: `SYS_STAT[8]` PLL_LOCKED and
+    `SYS_STAT[9]` CLK_SRC_PLL (plus `SYS_STAT_PLL_LOCKED` /
+    `SYS_STAT_CLK_SRC_PLL` in `firmware/drivers/sv16_hardware.h`).
+  - **Simulation gets a model, not the macro.** `rtl/sv16_pll.sv` contains a
+    delay-based behavioural oscillator (`HALF_NS` from the divider ratio) behind
+    `` `ifdef VERILATOR ``: the real primitive cannot be simulated here and a
+    clocked model *cannot* produce more edges than its reference supplies (the
+    first attempt at an accumulator model produced 12.5 MHz instead of 37.5 MHz
+    and is still explained in the file so nobody repeats it).
+    `simulation/regression/pll_clock_tb.sv` elaborates the PLL configuration and
+    checks the lock-gated reset, the measured 1.5× clock ratio, the derived
+    UART divisor and a real monitor frame decoded at that divisor.
+- **Consequences**: the part can be built at 37.5 MHz with an exact divider
+  configuration (12.5 MHz PFD, ×3 feedback, /16 VCO divider → VCO 600 MHz),
+  closing timing at 44.87 MHz (PASS, ~20 % margin) and producing a 294,124-byte
+  bitstream; the default 25 MHz build is untouched apart from a ~2 MHz Fmax
+  difference that comes from synthesis mapping, not from the logic — measured,
+  not assumed: adding two *constant-driven* status bits to the previous design
+  (no logic) moved Yosys from 7,569 to 8,382 LUT4 and nextpnr from 46.17 to
+  43.73 MHz, so this flow's absolute numbers move by ~10 % whenever the RTL
+  changes at all. The netlist itself is deterministic for a given source tree. Because
+  `rtl/sv16_top.sv` derives `CLK_HZ` (and therefore the UART divisor: 217 at
+  25 MHz, 326 at 37.5 MHz) from whatever was built, the console, the boot ROM
+  monitor and every piece of firmware work at either frequency with no software
+  change — that is the point of the exercise, not the extra 50 % throughput.
+  Limits, stated plainly: the PLL build has **never run on silicon**, and the
+  one thing simulation cannot check is the internal feedback tap, so the first
+  bring-up step must be a scope/serial check of the actual console rate; the PLL
+  adds a hard macro (1 of 2) and a lock dependency to the reset path, which is
+  why it is not the default; `PLLMHZ` values that the reference cannot reach
+  exactly are rounded with the achieved frequency reported, and there is no
+  runtime clock switching, no power-down/standby mode and no `CLKOS` outputs.

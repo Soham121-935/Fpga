@@ -14,6 +14,7 @@
 //                         [2] STEP    (single step while halted, self clearing)
 //                         [3] IRQEN   (0 = inhibit all interrupts)
 //   0x2 SYS_STAT     (RO) [0] HALTED [1] STEP_TAKEN [2] BOOT_IMAGE
+//                        [8] PLL_LOCKED [9] CLK_SRC_PLL  (ADR-021)
 //                         [3] BOOT_FAIL [4] ROM_MONITOR [5] FLASH_OK
 //                         [6] FAULT_HALT [7] ILLEGAL_SEEN
 //   0x3 SYS_RSTCAUSE (RW1C) [0] POR [1] SOFT [2] CPU fault [3] watchdog
@@ -72,6 +73,10 @@ module sv16_sys (
     input  logic        fault_halt,
     input  logic        illegal_irq,
     input  logic [15:0] illegal_pc,
+
+    // Clock / startup status inputs
+    input  logic        pll_locked,     // clock source is up (PLL lock, or no PLL)
+    input  logic        clk_src_pll,    // 1 = the system clock comes from the PLL
 
     // Startup / boot status inputs
     input  logic        img_ok,         // boot engine loaded a valid image
@@ -184,7 +189,8 @@ module sv16_sys (
         case (addr)
             SYS_ID:        rdata = SV16_ID;
             SYS_CTRL:      rdata = ctrl_reg;
-            SYS_STAT:      rdata = {8'h00, illegal_seen, fault_halt, flash_ok,
+            SYS_STAT:      rdata = {6'h00, clk_src_pll, pll_locked,
+                                    illegal_seen, fault_halt, flash_ok,
                                     rom_monitor, boot_fail_q, img_ok,
                                     step_taken, core_halted};
             SYS_RSTCAUSE:  rdata = {8'h00, rst_cause};
