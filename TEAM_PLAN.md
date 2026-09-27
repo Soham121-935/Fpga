@@ -4,18 +4,21 @@
 hardware) to a working hand-held microcontroller board — split into roles, work packages and gates so
 four people can work in parallel without blocking each other.
 
-**If you have one month, not three:** go straight to §12 — it re-cuts everything below for a 4-week
-deadline and tells you what to drop. Sections 1–11 are the full plan it is derived from.
+**If you have one month, not three:** §13 is the dated four-week plan for a board that actually runs
+(chip bought week 1, PCB ordered day 10, bring-up in week 3), and §12 is the safety-net cut if any of it
+slips. Sections 1–11 are the full plan both are derived from.
 
 **What it is not:** a schedule promise. The durations assume 4 people at roughly **8–10 hours a week
 each** (evenings + one weekend half-day) and no prior PCB experience. Compress or stretch §9 to your
 reality; the *order* and the *gates* matter more than the dates.
 
-**The deadline constraint that decides everything (read this first):** the Lattice LFE5U-12F on
-`digikey.in` had a **40-week lead time** when this was written. In one month you can design a board, order
-it and have it fabricated — but you **cannot** have that specific chip in your hand. So a one-month plan
-must produce a complete *software* deliverable plus a *fabricable* board, and can only show real ECP5
-silicon if you buy a ready-made ECP5 board (see §12.3).
+**The deadline constraint that decides everything (read this first):** the LFE5U-12F-6TG144C has a
+**40-week standard lead time**, but the distributor was showing **372 pieces of live stock** when this was
+checked (27 Sep 2026). Single pieces therefore ship in days; a back-order would take most of a year. So a
+one-month plan **can** put real silicon on your desk — provided you buy the chip on day 1 and buy two, and
+provided the two things that usually slip (fab time, 0.5 mm QFP assembly) have a fallback. §12 is the
+safety-net plan (software + design only); **§13 is the dated four-week plan for real hardware**, which is
+what you need if the review requires the board running.
 
 **Current position (measured, not estimated):**
 
@@ -300,6 +303,10 @@ it down to a one-page chart for your group.
 
 ## 12. One month, four people — the realistic cut
 
+**§12 assumes the chip could not be obtained in time.** It can (§13): the distributor had 372 pieces of
+live stock on 27 Sep 2026. Treat §12 as the fallback, and read §13 if you are buying the chip — then come
+back here for the capacity arithmetic and the cut list.
+
 You said the deadline is one month. Here is the arithmetic first, then the plan.
 
 **Capacity.** Four people × four weeks:
@@ -313,8 +320,9 @@ You said the deadline is one month. Here is the arithmetic first, then the plan.
 The full plan in §1–§11 is **≈71 person-days**. A month gives you 24–50 of them. So the first decision is
 not *how* to do everything, it is **what to leave out**, and the answer is decided by one fact:
 
-> **In four weeks you can have a working software system and a finished, orderable board design. You
-> cannot have that board built, assembled and running, because the FPGA itself takes 40 weeks to arrive.**
+> **If you cannot lay hands on the FPGA itself, four weeks gets you a working software system and a
+> finished, orderable board design — but not a board that runs.** (The reorder lead time is 40 weeks; the
+> plan for actually getting the chip is §13.)
 
 Everything below works with that fact instead of pretending otherwise.
 
@@ -330,6 +338,10 @@ memory map as the silicon would run), and the hardware is *designed* (it is the 
 P3's four weeks). What it is not is a photo of a soldered board with a blinking LED — say that out loud
 in the first 30 seconds of your demo and you control the conversation, instead of being asked why there
 is no board on the table at minute 5.
+
+> **Status change (27 Sep 2026):** this was written when the chip looked unobtainable in a month. It is
+> obtainable (§13). §12.1 is therefore now the **fallback** the project falls back *to* if fab or assembly
+> slips — not the target. Keep it in your pocket; aim at §13.
 
 **Two levels, pick one now:**
 
@@ -406,8 +418,9 @@ and do not revisit it in week 3.
    look like a product.
 3. **1 min — the hardware:** schematic page, layout, 3D render, gerbers, the India-sourced BOM with
    prices, and `BOARD.pdf` on the table.
-4. **1 min — the honest part:** FPGA lead time 40 weeks, so the board is designed and ordered, rails
-   verified, bring-up checklist ready; here is the Colorlight plan (or the lab board) for real silicon.
+4. **1 min — the honest part:** the FPGA could not be secured in time (40-week reorder lead time), so the
+   board is designed and ordered, rails verified, bring-up checklist ready; here is the Colorlight plan
+   (or the lab board) for real silicon.
 5. **30 s — next month:** the C compiler, JTAG debug, RAM expansion — from `REPORT.md` §8.
 
 Record it on video on day 27. Live demos fail; a video in your pocket does not.
@@ -431,12 +444,111 @@ Record it on video on day 27. Live demos fail; a video in your pocket does not.
 > **Week 2:** layout, DRC, order (day 10); pin map frozen; A/B rollback demoed.
 > **Week 3:** assemble what arrives, verify rails; polish the demo firmware; run the acceptance matrix.
 > **Week 4:** buffer, video, release tag, one-page summary.
-> **Not in this month:** the C compiler, the extra RAM work, the JTAG bridge, and the FPGA chip itself
-> — 40-week lead time, so the board ships as a design and the software runs in simulation.
+> **Not in this month:** the C compiler, the extra RAM work, the JTAG bridge, and the FPGA chip itself —
+> unless you secure distributor stock on day 1 (§13), in which case the board runs and this section is only
+> the fallback.
 
 ---
 
-_Revision 1.1 — written against commit `1fb108c` (project state: RTL complete, 473 checks green, bitstream
-builds, no hardware). §12 is the one-month cut added after the deadline was given as four weeks;
-§1–§11 remain the full plan. Effort estimates are for a first-time hardware team — the figures taken
+## 13. Four weeks with real hardware — the dated plan
+
+You said three things: **the board must run**, you can work **~20 h per person per week** (≈40 person-days
+total), and you can buy the chip and the components. Those three facts make the aggressive plan viable —
+with two dates in it that cannot move.
+
+**Dates below assume D1 = Monday 28 Sep 2026 and a review on D28 = Sunday 25 Oct 2026.** Slide the whole
+table if your start or review date differs; keep the *gaps* (D10 and D17) exactly as they are, because
+they are derived from fab lead time and assembly risk, not from optimism.
+
+### 13.1 The critical path with hard dates
+
+| | Date | What must happen | If it slips |
+| :--- | :--- | :--- | :--- |
+| **D1** | Mon 28 Sep | **Order everything, today:** 2 × LFE5U-12F-6TG144C (digikey.in — 2 because a dead FPGA otherwise ends the project), FT232H/FT2232H JTAG adapter, ₹100 QFP-144 practice breakout, and the whole `BOARD.md` §3 BOM from Robu/Hubtronics/Sharvie/iFutureTech. Create `hardware/ORDER.md` with order numbers | every day of delay here is a day off the end |
+| **D2–D5** | Tue 30 Sep – Fri 02 Oct | P3: schematic (power tree → FPGA → USB → flash → connectors, using `BOARD.md` §6's net table and `constraints/ecp5_144tqfp.lpf` as the pin truth). P1: `make vboard`. P2: upload path. P4: acceptance matrix. **Chip usually lands D4–D5** — verify it is genuine (Lattice marking, digikey packing) before touching it | schematic slipping past D5 costs layout days |
+| **D5** | Fri 02 Oct | **Gate S:** schematic ERC-clean and reviewed by P1+P4. If the chip did not ship: order a Colorlight 5A-75B *today* as the demo hedge (§12.3) | — |
+| **D6–D10** | Sat 04 – Wed 07 Oct | P3: layout — 4-layer, follow `BOARD.md` §11 (decoupling, plane splits, via-per-pin). P1: review nets against the LPF. P4: DRC + DFM checklist. **Also this week: practice-solder the ₹100 breakout** | layout is 8 person-days in 5 calendar days — protect it |
+| **D10** | Wed 07 Oct | **HARD DATE — order the PCB** (5 pcs, stencil, ~₹3,000, JLCPCB). ~7 days fab + shipping | order on D11 and you lose the demo, not just a day |
+| **D10–D17** | Thu 08 – Wed 14 Oct | Software sprint while the board is in fab: `make vboard` demoable, upload ≥20 KB/s, A/B rollback in simulation, host-tool tests green. P3: assembly prep — stencil, paste, hot air, find a local rework shop as backup (₹500–1,500 to have a QFP placed professionally) | — |
+| **D17** | Wed 14 Oct | **Boards in hand.** Inspect and assemble 2 (fit U1 **last**). Practice parts first | if fab or customs slips: demo path = Colorlight (S-switch), board becomes "arriving" |
+| **D19** | Fri 16 Oct | **Rails verified with U1 not fitted** — 3V3, 1V1 at 1.10 V ±3 %, 2V5, sequencing on a scope (`BOARD.md` §4.3 timeline), oscillator running, USB enumerates (CH340C) | this is where a layout error is cheapest to find and fix |
+| **D20–D21** | Sat 17 – Sun 18 Oct | Fit U1. JTAG detect (`openFPGALoader --detect`), then `make prog FPGA_PART=LFE5U-12F`. **DONE LED lights, console prints the monitor banner** | if JTAG cannot see the chip: reflow the QFP, check all four rails again — do not start rework roulette without a plan |
+| **D22–D24** | Mon 19 – Wed 21 Oct | On hardware: `?` menu, flash ID, upload a firmware image over UART, verify, boot from flash, then the **deliberate corrupt-image rollback** | if the console works but flash does not, demo the RAM path and say so |
+| **D25–D27** | Thu 22 – Sat 24 Oct | Run the acceptance matrix on the real board, record the video, tag the release, update `REPORT.md` with measured results | video on D27 is not optional |
+| **D28** | Sun 25 Oct | Buffer / demo day | — |
+
+**Total spend for this path: ₹15,000–25,000** — chip ×2 ≈ ₹4,000 landed, JTAG adapter ₹700–1,500, PCB +
+stencil ₹3,000, components ₹5,000, Colorlight hedge ₹2,000–5,000, rework-shop contingency ₹1,000, tools if
+you do not own hot air/meter/current-limited supply ₹4,500+. If that is too much, cut the hedge and the
+second chip last — they are the two things that convert "we nearly made it" into "we made it".
+
+### 13.2 Three work packages per person, in order (≈40 person-days)
+
+| | P1 — systems/RTL | P2 — firmware/tooling | P3 — hardware | P4 — verification |
+| :--- | :--- | :--- | :--- | :--- |
+| **Priority 1** | `make vboard` (5 d) | upload path ≥20 KB/s (4 d) | schematic (6 d) | acceptance matrix (3 d) |
+| **Priority 2** | LPF ↔ layout net review (2 d) | monitor protocol + host docs (2 d) | layout + DRC (8 d) | host-tool tests (3 d) |
+| **Priority 3** | bring-up support: JTAG, config, timing (4 d) | demo firmware + rollback test (3 d) | assembly + rails verification (5 d) | run matrix on hardware + evidence (4 d) |
+| **Cut first** | capacity/RAM work | C compiler | 3D render polish | pretty docs |
+| **Total** | 11 d | 9 d | 19 d | 10 d |
+
+P3 carries 19 of the 40 person-days. That is the honest shape of a hardware deadline: **the board is the
+project.** If someone has spare time in week 1, it goes to P3 (schematic), not into a new feature.
+
+### 13.3 The three switch points
+
+Write these into the plan now so nobody has to decide under pressure:
+
+| Switch | When | Condition | Action |
+| :--- | :--- | :--- | :--- |
+| **S-chip** | D5 | chip not shipped, or stock gone | order a Colorlight 5A-75B from Amazon.in / a local LED-panel supplier (same week), port the LPF to BG381 in 3–4 d; **the custom board still gets built** — it just stops being the demo path |
+| **S-fab** | D17 | boards not in hand | demo runs on the Colorlight; show gerbers + render + the fab tracking page; assemble and bring up the custom board later |
+| **S-assembly** | D21 | both assembled boards fail to configure | pay a local rework shop to redo the QFP on board #3 (₹500–1,500), keep the Colorlight as the live demo, and present the failure analysis — a documented failure with a fix beats a silent one |
+
+**Never let the demo depend on one board.** Two assembled boards, one alternative board, one recorded
+video — that is the entire risk story of a one-month hardware deadline.
+
+### 13.4 Why this can work (and what it would take to break it)
+
+Working for you:
+
+* The RTL, the ISA, the memory map, the monitor, the bootloader and the flash driver already exist and are
+  verified — 473 checks. There is no design work left in the chip.
+* The pin map **is already written** as `constraints/ecp5_144tqfp.lpf` (52 constrained pins) and printed
+  as the net-by-net table in `BOARD.md` §6/Appendix B. Layout is a translation job, not an invention.
+* The BOM is India-sourced with prices and stock already recorded (`BOARD.md` §3) — nobody spends week 1
+  emailing distributors.
+* The board is specified down to the passives (`BOARD.md` §3.3, §4–§7): five sheets of connection
+  diagrams, bring-up steps 1–14, and a five-condition rule for the Master-SPI pins.
+
+Working against you (in order of how likely it is to hurt):
+
+1. **First-time 0.5 mm QFP assembly.** Practice on the ₹100 breakout; use stencil + paste + hot air; inspect
+   at 10×; and have the rework shop's number before you need it.
+2. **Layout complexity with 8 person-days available.** Mitigate by following `BOARD.md` §11 literally and
+   by not inventing footprints — and by keeping the power section on the module-first option (§3.5) if the
+   schematic review reveals trouble.
+3. **Two-person dependency on the critical path** (P3 layout, P1 bring-up). Both must be contactable in
+   week 2 and week 3 — a two-day silence in either role costs the month.
+4. **The review date moving earlier.** If it moves, cut the custom board to "awaiting fab" and demo on the
+   Colorlight without hesitation.
+
+### 13.5 What to show on demo day (real-hardware version)
+
+1. **30 s:** what it is — ECP5 microcontroller, RISC CPU, flash boot, A/B slots, UART monitor, 473 checks.
+2. **2 min:** power the board on camera → DONE LED → console banner → `?` → upload a new firmware image →
+   verify → boot → application prints. Then upload a corrupt image and let the rollback recover it.
+3. **1 min:** the board itself in hand: with the schematic page, the layout, and the net table that proves
+   every pin came from the constraint file.
+4. **1 min:** the honest engineering: rails measured against `BOARD.md` §4.3's timeline, JTAG chain, flash
+   ID, and where the design would go next (C compiler, JTAG debug, RAM expansion — `REPORT.md` §8).
+5. **30 s:** the plan that survives: if this exact board had failed, here is the fallback (Colorlight) and
+   here is the evidence of the failure — that is what "engineering" sounds like.
+
+---
+
+_Revision 1.2 — written against commit `fceb533` (project state: RTL complete, 473 checks green, bitstream
+builds, no hardware). §12 is the one-month cut; **§13 is the dated four-week hardware plan** (the deadline
+requires the board to run, the team has ~20 h/week each, and the FPGA is purchasable — 372 pieces of live
+distributor stock on 27 Sep 2026; the 40-week figure is the reorder lead time); §1–§11 remain the full plan. Effort estimates are for a first-time hardware team — the figures taken
 from real measurements are the 473 checks and the 49.53 MHz speed-7 timing run._
