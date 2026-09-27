@@ -19,8 +19,8 @@
 
 | Resource | Used | Where |
 | :--- | ---: | :--- |
-| LUT4 | 9,623 (39 %, incl. carry) | CPU datapath and control, boot loader, flash controller, watchdog, monitor's ROM decoding, the iterative divider |
-| Flip-flops | 4,771 (19 %) | CPU state, FIFOs, peripherals, watchdog counters, divider registers |
+| LUT4 | 9,407 (38 %, incl. carry) | CPU datapath and control, boot loader, flash controller, watchdog, monitor's ROM decoding, the iterative divider |
+| Flip-flops | 4,772 (19 %) | CPU state, FIFOs, peripherals, watchdog counters, divider registers |
 | `DP16KD` | 18 (32 %) | 16 for the 32 KB SRAM, 2 for the 4 KB boot ROM |
 | `MULT18X18D` | 1 (3 %) | the ALU's single-cycle 16×16 multiply |
 | I/O | 52 (26 %) | UART, two SPI ports, GPIO A/B, PWM, motor control, LEDs, clock, reset |
@@ -33,12 +33,12 @@
   the fabric; `pll` instantiates the `EHXPLLL` hard macro and multiplies it up
   (`make bitstream CLKSRC=pll PLLMHZ=37.5` → 37.5 MHz, VCO 600 MHz). `CLKDIV`
   then optionally halves it in fabric (12.5 MHz fallback).
-* Measured Fmax, default (`osc`, 25 MHz): **43.73 MHz** post-route (34.05
+* Measured Fmax, default (`osc`, 25 MHz): **44.70 MHz** post-route (36.29
   pre-route, nextpnr heap placer, speed grade 6) since the ALU's divider became
   iterative (ADR-018) — ~75 % margin at 25 MHz. The same flow measured 46.17 MHz
   before the PLL option was added; both are well clear of 25 MHz and the
   difference is synthesis ordering, not logic.
-* Measured Fmax, `CLKSRC=pll PLLMHZ=37.5`: **44.87 MHz** post-route (36.75
+* Measured Fmax, `CLKSRC=pll PLLMHZ=37.5`: **45.45 MHz** post-route (37.73
   pre-route) → **PASS at 37.5 MHz** (~20 % margin), the same 2 of 27 blocks.
 * The PLL output could also feed the SPI pins or drive `CLKOS` outputs later;
   the design point does not need either.

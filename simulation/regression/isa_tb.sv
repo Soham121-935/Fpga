@@ -74,8 +74,12 @@ module isa_tb;
     endtask
 
     // Run for up to `max` clocks and stop as soon as the PC has been unchanged
-    // for `settle` clocks: the program ends in a `JMP self` loop, which is the
-    // only way to stop on a machine with no HALT instruction.
+    // for `settle` clocks: the program ends in a `JMP self` loop.
+    //
+    // The threshold has to exceed the longest quiet stretch *outside* the loop,
+    // which is a DIV/MOD waiting in S_DIV_WAIT (22 cycles, ADR-022).  A smaller
+    // value made the harness stop in the middle of the divider and then measure
+    // its "self-loop" window over the instructions that followed.
     task automatic run_until_settled(input int max, input int settle);
         logic [15:0] last;
         int quiet, i;
@@ -119,7 +123,7 @@ module isa_tb;
 
         // ---- 2..5 run the program -----------------------------------------
         $display("-- 2. run firmware/tests/isa_regress.s --");
-        run_until_settled(4000, 20);
+        run_until_settled(6000, 30);
 
         check(u_cpu.u_regfile.registers[7] === 16'h00FF,
               $sformatf("every branch took the right path (R7 = 0x%04X, want 0x00FF)",
@@ -133,6 +137,12 @@ module isa_tb;
         check(u_cpu.u_regfile.registers[6] === 16'h002A,
               $sformatf("the subroutine returned 21*2 = 42 (R6 = 0x%04X)",
                         u_cpu.u_regfile.registers[6]));
+        check(u_cpu.u_regfile.registers[3] === 16'h000E,
+              $sformatf("DIV wrote the quotient (R3 = 0x%04X, want 0x000E)",
+                        u_cpu.u_regfile.registers[3]));
+        check(u_cpu.u_regfile.registers[1] === 16'h0002,
+              $sformatf("MOD wrote the remainder (R1 = 0x%04X, want 0x0002)",
+                        u_cpu.u_regfile.registers[1]));
         check(u_cpu.u_regfile.registers[0] === 16'h0055,
               $sformatf("the subroutine left the caller's R0 intact (R0 = 0x%04X, want 0x0055)",
                         u_cpu.u_regfile.registers[0]));

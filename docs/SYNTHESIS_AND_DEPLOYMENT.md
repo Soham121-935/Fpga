@@ -74,30 +74,32 @@ only for synthesis experiments.
 make bitstream        # == scripts/sv16_synth.sh --clkdiv 1 --freq 25
 ```
 
-1. **Yosys** (`synth_ecp5`, ABC9): 8,509 logic LUT4 + 1,114 carry cells, 4,771
-   FFs, 18 `DP16KD` block RAMs (16 for SRAM, 2 for the boot ROM), 1 `MULT18X18D`
+1. **Yosys** (`synth_ecp5`, ABC9): 7,931 logic LUT4, 4,772 FFs, 18 `DP16KD`
+   block RAMs (16 for SRAM, 2 for the boot ROM), 1 `MULT18X18D`
    for the ALU multiplier, 52 I/O buffers. The synthesis script, its log and the
    netlist are kept: `build/sv16_synth.ys`, `build/sv16_yosys.log`,
    `build/sv16_top.json`.
 2. **nextpnr-ecp5** `--12k --package TQFP144 --speed 6 --freq 25` with
    `constraints/ecp5_144tqfp.lpf`. Report: `build/sv16_nextpnr.log`,
    `build/sv16_top.timing.json`.
-3. **ecppack** `--compress` → `build/sv16_top.bit` (304 KB, ~1.5 Mbit stream
-   for a 12F; the `CLKSRC=pll` build packs to 294 KB).
+3. **ecppack** `--compress` → `build/sv16_top.bit` (295,665 bytes, ~1.5 Mbit
+   stream for a 12F; the `CLKSRC=pll PLLMHZ=37.5` build packs to 292,752
+   bytes).
 
 ### Device utilisation (measured)
 
 | Resource | Used (default build) | Available | % |
 | :--- | ---: | ---: | ---: |
-| LUT4 (incl. carry) | 9,623 | 24,288 | 39 % |
-| Flip-flops | 4,771 | 24,288 | 19 % |
+| LUT4 (incl. carry) | 9,407 | 24,288 | 38 % |
+| Flip-flops | 4,772 | 24,288 | 19 % |
 | `DP16KD` block RAM | 18 | 56 | 32 % |
 | `MULT18X18D` | 1 | 28 | 3 % |
 | I/O buffers | 52 | 197 | 26 % |
 | `EHXPLLL` | 0 (1 with `CLKSRC=pll`) | 2 | 0 % (50 %) |
 
-The `CLKSRC=pll` build uses 9,040 LUT4 (37 %) — the PLL itself is a hard macro,
-so it costs nothing in fabric. Roughly three fifths of the part is still free,
+The `CLKSRC=pll PLLMHZ=37.5` build uses 9,191 LUT4 (37 %) — the PLL is a hard macro,
+so it costs nothing in fabric (the difference from the oscillator build is netlist
+mapping, not the PLL). Roughly three fifths of the part is still free,
 which is what funds the roadmap items in [MCU_READINESS.md](MCU_READINESS.md).
 
 ### Timing
@@ -128,8 +130,8 @@ the RTL uses (so the console stays at 115200 either way).
 
 | Configuration | Achieved Fmax | Requirement | Result |
 | :--- | ---: | ---: | :--- |
-| `CLKSRC=osc`, 25 MHz, heap placer (**default**) | **43.73 MHz** post-route (34.05 pre-route) | 25 MHz | **PASS, ~75 % margin** |
-| `CLKSRC=pll PLLMHZ=37.5` | **44.87 MHz** post-route (36.75 pre-route) | 37.5 MHz | **PASS, ~20 % margin** |
+| `CLKSRC=osc`, 25 MHz, heap placer (**default**) | **44.70 MHz** post-route (36.29 pre-route) | 25 MHz | **PASS, ~79 % margin** |
+| `CLKSRC=pll PLLMHZ=37.5` | **45.45 MHz** post-route (37.73 pre-route) | 37.5 MHz | **PASS, ~21 % margin** |
 | `CLKSRC=osc`, 25 MHz, before the PLL option (P9) | 46.17 MHz post-route | 25 MHz | PASS — the ~2 MHz difference is synthesis ordering, not logic |
 | `CLKDIV=2`, 12.5 MHz, heap placer | 43.73 MHz | 12.5 MHz | PASS |
 | `CLKDIV=1`, heap `--placer-heap-timingweight 50` | 13.15 / 14.18 MHz | 25 MHz | worse; not used |
@@ -144,15 +146,19 @@ twice into different directories). If a board ever turns out not to run at 25 MH
 divisor is recomputed from the same constant.
 
 Unverified on silicon: the PLL build has never been programmed into a part, and
-the internal feedback tap (see `rtl/sv16_pll.sv`) is the one thing this flow
-cannot check — bring-up should confirm the console rate with a scope or by
+the internal feedback tap (see `rtl/sv16_pll.sv`; ADR-024 fixed it to the
+wiring `ecppll` generates, and OQ-19 tracks validating it) is the one thing this
+flow cannot check — bring-up should confirm the console rate with a scope or by
 measuring the banner timing, which is why the PLL is opt-in and the oscillator
 remains the default.
 
 **A note on these numbers.** They move by ~10 % whenever the RTL changes, even
 when the change is semantically empty: appending two *constant-driven* status
 bits to `sv16_sys` (no gates, nothing observable) took Yosys from 7,569 to 8,382
-LUT4 and post-route Fmax from 46.17 to 43.73 MHz. That is ABC's LUT mapping and
+LUT4 and post-route Fmax from 46.17 to 43.73 MHz. The same effect showed up
+again after [ADR-022](ARCHITECTURE_DECISIONS.md#adr-022-three-instruction-level-defects-control-encodings-halt-and-the-divider-wait-state):
+the functional fixes there (a HALT latch, one extra FSM branch) re-measured at
+**44.70 MHz / 7,931 LUT4**, i.e. the numbers are not comparable across trees. That is ABC's LUT mapping and
 the placer responding to a perturbed netlist, not a regression in the design —
 which is why this document quotes current measurements *and* what they used to
 be. The flow is deterministic for a given source tree (two builds of the same
@@ -172,7 +178,10 @@ every arithmetic instruction's timing path. A one-line experiment — replacing
 The fix (ADR-018) is a single iterative restoring divider inside `sv16_alu`,
 driven by a `div_start`/`div_busy` handshake and held by the new `S_DIV_WAIT`
 state of the control unit. DIV and MOD keep their encodings, results and flags;
-they simply take 18 cycles instead of 1. Every other operation is unchanged and
+they hold the core for ~22 cycles from `S_EXECUTE` to writeback instead of 1
+(measured; the FSM's wait state was unreachable until [ADR-022](ARCHITECTURE_DECISIONS.md#adr-022-three-instruction-level-defects-control-encodings-halt-and-the-divider-wait-state)
+fixed it, so the number this document used to quote was never what the hardware
+did). Every other operation is unchanged and
 still single-cycle. That is what took the design from 12.5 MHz to the full 25 MHz
 and left ~85 % timing margin for future logic.
 

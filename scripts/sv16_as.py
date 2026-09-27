@@ -68,6 +68,18 @@ OPCODES = {
     'MOD':   (0xF, 'R', 0x4)
 }
 
+# Control instructions (opcode 0x0) are distinguished by a nine-bit sub-opcode
+# in instr[8:0]; the four flag/halt names are *not* NOP.  They all encoded as
+# 0x0000 until this table was added, which made EI/DI/RETI/HALT unencodable --
+# interrupts could never be enabled from firmware and RETI never returned.
+CTRL_SUBOP = {
+    'S_NOP':  0x000,
+    'S_HALT': 0x001,
+    'S_EI':   0x002,
+    'S_DI':   0x003,
+    'S_RETI': 0x004,
+}
+
 REGISTERS = {f'R{i}': i for i in range(8)}
 
 def parse_num(token, symbols=None):
@@ -290,7 +302,10 @@ def assemble(lines):
             memory_words[curr_addr] = code
 
         elif fmt.startswith('S_'):
-            code = 0x0000
+            if fmt not in CTRL_SUBOP:
+                raise ValueError(
+                    f"unsupported control instruction at 0x{curr_addr:04X}: {mnemonic}")
+            code = CTRL_SUBOP[fmt]          # sub-opcode in instr[8:0], opcode 0
             memory_words[curr_addr] = code
 
     return memory_words, srcmap

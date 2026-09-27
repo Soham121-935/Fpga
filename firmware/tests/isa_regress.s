@@ -15,6 +15,7 @@
 ;   2. ADDI/SUBI arithmetic and their sign-extended immediate, in R5
 ;   3. PUSH/POP through the stack, in R2
 ;   4. CALL/RET with a subroutine that saves and restores the caller's register
+;   5. DIV/MOD, the multi-cycle divider instructions, in R3 and R1
 ;
 ; Contract with the testbench:
 ;
@@ -23,8 +24,11 @@
 ;   R2 = 0x0003   the pushed value came back
 ;   R6 = 0x002A   the subroutine returned 21 * 2
 ;   R0 = 0x0055   the subroutine restored the caller's R0
+;   R3 = 0x000E   100 / 7 came back from the iterative divider
+;   R1 = 0x0002   100 % 7 did too
 ;   SP = 0x3FFE   CALL/PUSH/POP left the stack pointer balanced
-;   PC = a two-cycle JMP self-loop at the end (the machine has no HALT)
+;   PC = a two-cycle JMP self-loop at the end, so the testbench can watch a
+;   stable PC (this program must not use HALT: that is covered by control.s)
 
 .ORG 0x0000
 
@@ -102,6 +106,16 @@ ge_fail:
         BNE  call_fail
         ADDI R7, 0x0080          ; bit 7: the call returned the right value
 call_fail:
+
+        ; ------------------------------------------------- DIV / MOD
+        ; The control unit must hold in S_DIV_WAIT until the ALU's iterative
+        ; divider reports done, then write back the finished quotient.  It used
+        ; to fall straight through to writeback and store a stale result, so
+        ; this section is the instruction-level guard for that path (ADR-022).
+        LDI  R1, 0x0064          ; 100
+        LDI  R4, 0x0007          ; 7 (R2 keeps the PUSH/POP value checked above)
+        DIV  R3, R1, R4          ; 100 / 7 = 14 -> R3 = 0x000E
+        MOD  R1, R1, R4          ; 100 % 7 =  2 -> R1 = 0x0002
 
 done:
         JMP  done                ; self-loop: the testbench watches the PC

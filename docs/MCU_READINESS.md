@@ -77,9 +77,9 @@ Ordered by what would unlock the most value per unit of risk:
    constants moved Fmax from 14.68 MHz to 44.31 MHz in one experiment. DIV/MOD
    now run on an iterative divider behind a start/busy handshake with a
    `S_DIV_WAIT` FSM state, and **the part ships at the full 25 MHz** (measured
-   Fmax 43.73 MHz, ~75 % margin). ~~An `EHXPLLL` for 40–50 MHz is now a build
+   Fmax 44.70 MHz, ~78 % margin). ~~An `EHXPLLL` for 40–50 MHz is now a build
    change, not a redesign~~ **DONE (ADR-021)**: `CLKSRC=pll PLLMHZ=37.5` builds a
-   37.5 MHz clock from the PLL and closes at 44.87 MHz; the oscillator stays the
+   37.5 MHz clock from the PLL and closes at 45.45 MHz; the oscillator stays the
    default until the PLL build has been on a board.
 2. ~~**A/B images with rollback.**~~ **DONE (ADR-019).** Two 32 KB slots inside
    the 64 KB the monitor can address, a 2-byte slot record in the reserved

@@ -35,7 +35,10 @@
 //   * Hardware interrupt entry and RETI with architectural SR save/restore.
 //   * Illegal opcodes trap via vector index IRQ_TRAP (7); a zero vector halts
 //     the core instead of jumping to an arbitrary address.
-//   * Debug hold (halt_req) and single step (step_en) support.
+//   * Debug hold (halt_req) and single step (step_en) support; the HALT
+//     instruction latches its own halt (sw_halt) so the core really stops
+//     until an enabled interrupt, a step, or reset -- before this, HALT fell
+//     straight through S_HALTED because `!halt_req` was already true.
 //   * DIV/MOD run on the ALU's iterative divider: S_EXECUTE pulses
 //     `alu_div_start`, S_DIV_WAIT holds until `alu_div_busy` falls, and only
 //     then are the flags updated (they would otherwise latch intermediate
@@ -199,13 +202,27 @@ module sv16_control_unit (
     assign access_done = bus_issued && bus_ack;
 
     // ------------------------------------------------------ State register
+    // A HALT instruction (and an unhandled trap) latches its own stop request:
+    // S_HALTED can otherwise be left immediately, because the debug/boot hold
+    // `halt_req` is low in normal operation.  Cleared on reset and whenever the
+    // core actually leaves S_HALTED (interrupt wake, single step, or a hold
+    // release), so a later halt re-latches cleanly.
+    logic sw_halt;
+    logic sw_halt_set;
+    assign sw_halt_set = (current_state == S_EXECUTE && is_halt) ||
+                         (current_state == S_IRQ_JUMP && vector_zero);
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             current_state <= S_FETCH;
             trap_active   <= 1'b0;
             bus_issued    <= 1'b0;
+            sw_halt       <= 1'b0;
         end else begin
             current_state <= next_state;
+
+            if (sw_halt_set) sw_halt <= 1'b1;
+            else if (current_state == S_HALTED && next_state != S_HALTED) sw_halt <= 1'b0;
 
             if (current_state == S_DECODE && is_illegal) begin
                 trap_active <= 1'b1;
@@ -261,6 +278,13 @@ module sv16_control_unit (
                     next_state = S_RETI_PC;
                 end else if (is_load || is_store || is_push || is_pop || is_call || is_ret) begin
                     next_state = S_MEMORY;
+                end else if (ext_is_div) begin
+                    // DIV/MOD run on the ALU's iterative divider: hold here until
+                    // it reports done, then latch the finished quotient/remainder
+                    // and flags.  Falling through to S_WRITEBACK instead (as this
+                    // did until ADR-022) wrote back a stale ALU result, because
+                    // nothing had latched the divider's output yet.
+                    next_state = S_DIV_WAIT;
                 end else if (is_alu_rr || is_alu_imm || is_ext_alu || is_mov ||
                              (is_two_word && opcode == 4'h4)) begin
                     next_state = S_WRITEBACK;   // includes LDI (see ADR-015)
@@ -285,13 +309,21 @@ module sv16_control_unit (
             end
 
             S_HALTED: begin
-                // Resume conditions: single step, or the halt request going
-                // away.  Without the second term a halted core could only ever
-                // move again by stepping: the reset-time handover (startup
-                // holds the CPU in halt until the boot loader has verified an
-                // image, then releases it) and any debugger "continue" would
-                // leave the CPU parked in S_HALTED forever.
-                if (step_en || !halt_req) begin
+                // Resume conditions, in priority order:
+                //   1. a single step while halted (debugger),
+                //   2. an enabled interrupt -- HALT means "stop until an
+                //      interrupt" (docs/ISA.md); the entry sequence runs from
+                //      here exactly as it does from S_FETCH, so RETI returns
+                //      to the instruction after the HALT,
+                //   3. neither hold is active: the debug/boot `halt_req` was
+                //      released, or this was never a software halt (the
+                //      reset-time handover holds the CPU in halt until the
+                //      boot loader has verified an image, then releases it).
+                if (step_en) begin
+                    next_state = S_FETCH;
+                end else if (irq_req && flag_ie) begin
+                    next_state = S_IRQ_DEC_SR;
+                end else if (!halt_req && !sw_halt) begin
                     next_state = S_FETCH;
                 end
             end

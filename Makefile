@@ -76,6 +76,10 @@ HANG_SRC    = firmware/examples/wdt_hang.s
 # assembler, so what the testbench executes is what a developer would type.
 ISA_SRC     = firmware/tests/isa_regress.s
 ISA_HEX     = $(FW_DIR)/isa_regress.hex
+IRQ_SRC     = firmware/tests/irq_latency.s
+IRQ_HEX     = $(FW_DIR)/irq_latency.hex
+CTRL_SRC    = firmware/tests/control.s
+CTRL_HEX    = $(FW_DIR)/control.hex
 BOOTROM_HEX = firmware/bootrom.hex
 
 RTL_SRCS = \
@@ -121,6 +125,8 @@ TESTBENCHES = \
 	sv16_uart_tb:simulation/unit/sv16_uart_tb.sv \
 	isa_tb:simulation/regression/isa_tb.sv \
 	pll_clock_tb:simulation/regression/pll_clock_tb.sv \
+	irq_latency_tb:simulation/regression/irq_latency_tb.sv \
+	control_tb:simulation/regression/control_tb.sv \
 	soc_boot_tb:simulation/regression/soc_boot_tb.sv \
 	monitor_tb:simulation/regression/monitor_tb.sv \
 	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
@@ -139,11 +145,19 @@ firmware: rom app
 
 rom: $(ROM_HEX)
 
-app: $(APP_IMG) $(HANG_IMG) $(ISA_HEX)
+app: $(APP_IMG) $(HANG_IMG) $(ISA_HEX) $(IRQ_HEX) $(CTRL_HEX)
 
 $(ISA_HEX): $(ISA_SRC) scripts/sv16_as.py
 	@mkdir -p $(FW_DIR)
 	$(AS) $< $@ --listing $(FW_DIR)/isa_regress.lst
+
+$(IRQ_HEX): $(IRQ_SRC) scripts/sv16_as.py
+	@mkdir -p $(FW_DIR)
+	$(AS) $< $@ --listing $(FW_DIR)/irq_latency.lst
+
+$(CTRL_HEX): $(CTRL_SRC) scripts/sv16_as.py
+	@mkdir -p $(FW_DIR)
+	$(AS) $< $@ --listing $(FW_DIR)/control.lst
 
 $(ROM_HEX): $(MONITOR_SRC) scripts/sv16_as.py
 	@mkdir -p $(ROM_DIR)

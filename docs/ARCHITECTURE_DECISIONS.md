@@ -264,9 +264,17 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
     holds until `alu_div_busy` falls and only then raises `flag_update_en` (early
     capture would latch a flag computed from an intermediate remainder) before
     continuing to S_WRITEBACK.
+    *Correction (ADR-022):* the S_EXECUTE exit condition tested `is_ext_alu`, so
+    DIV/MOD fell straight through to S_WRITEBACK and never entered this state —
+    the instruction wrote back a stale ALU result until ADR-022 fixed the branch.
+    The divider hardware and this state description were always correct; what was
+    missing was the transition into it.
   - The ISA is unchanged: DIV/MOD still exist, with identical results and flags,
     including the divide-by-zero behaviour of OQ-04 (`V=1`, quotient `0xFFFF`,
-    remainder `0x0000`). What changes is the cycle count: 18 cycles instead of 1.
+    remainder `0x0000`). What changes is the cycle count: measured **~22 cycles
+    from `S_EXECUTE` to writeback**, not the 18 this ADR first quoted (that figure
+    was arithmetic on the divider's internal counter; ADR-022 measured the
+    instruction and put the FSM into the wait state at all).
     This is exactly what a real MCU does with a hardware divider used by a rare
     instruction — an instruction-level optimisation would have shortened it, a
     machine-level one forbids a 68 ns path.
@@ -487,7 +495,10 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
 - **Consequences**: the part can be built at 37.5 MHz with an exact divider
   configuration (12.5 MHz PFD, ×3 feedback, /16 VCO divider → VCO 600 MHz),
   closing timing at 44.87 MHz (PASS, ~20 % margin) and producing a 294,124-byte
-  bitstream; the default 25 MHz build is untouched apart from a ~2 MHz Fmax
+  bitstream (re-measured on the current tree, after ADR-022 and the ADR-024
+  feedback-path fix: **45.45 MHz PASS, 292,752 bytes**; the earlier 41.40 MHz /
+  301,006-byte figure came from the CLKINTFB wiring and was a real netlist
+  difference, not only mapping noise — see ADR-024); the default 25 MHz build is untouched apart from a ~2 MHz Fmax
   difference that comes from synthesis mapping, not from the logic — measured,
   not assumed: adding two *constant-driven* status bits to the previous design
   (no logic) moved Yosys from 7,569 to 8,382 LUT4 and nextpnr from 46.17 to
@@ -498,9 +509,181 @@ storage, field update, Rev B memory map, CPU fixes, interrupt controller).
   monitor and every piece of firmware work at either frequency with no software
   change — that is the point of the exercise, not the extra 50 % throughput.
   Limits, stated plainly: the PLL build has **never run on silicon**, and the
-  one thing simulation cannot check is the internal feedback tap, so the first
-  bring-up step must be a scope/serial check of the actual console rate; the PLL
+  one thing simulation cannot check is the analog loop and its feedback tap,
+  which ADR-024 has since pinned to the wiring prjtrellis' own `ecppll` generates
+  (validating it needs a board — OQ-19), so the first bring-up step must be a
+  scope/serial check of the actual console rate; the PLL
   adds a hard macro (1 of 2) and a lock dependency to the reset path, which is
   why it is not the default; `PLLMHZ` values that the reference cannot reach
   exactly are rounded with the achieved frequency reported, and there is no
   runtime clock switching, no power-down/standby mode and no `CLKOS` outputs.
+
+---
+
+## ADR-022: Three instruction-level defects — control encodings, HALT, and the divider wait state
+
+- **Status**: Accepted — implemented, verified, and the source of `control_tb`
+  and `irq_latency_tb`.
+- **Context**: P8 (the interrupt-latency specification, ADR-023) needed the first
+  program in the repository that actually *enables an interrupt*: `EI`, a handler,
+  `RETI`. Writing it turned up three separate defects, none of which any existing
+  suite could see, because no testbenched program had ever used the instructions
+  involved. All three are the same failure mode in different places: the
+  instruction is implemented and documented, but the path from assembly to
+  execution does not carry it.
+- **Findings**:
+  1. **The assembler could not encode `HALT`, `EI`, `DI`, `RETI`.** All four, and
+     `NOP`, assembled to `0x0000`. The decoder has distinguished them by the
+     nine-bit sub-opcode in `instr[8:0]` since Rev A (`0x001`/`0x002`/`0x003`/
+     `0x004`), but `sv16_as.py`'s `S_*` handler wrote `code = 0x0000` for every
+     control mnemonic. Consequence: **interrupts were unusable from firmware** —
+     `EI` was a `NOP`, so `flag_ie` never set and `irq_enter` never fired; `RETI`
+     was a `NOP`, so a handler could not return. It also explains why no shipped
+     firmware (monitor, examples) mentions any of the five: the author hit the
+     wall and worked around it.
+  2. **`HALT` did not halt.** S_HALTED's resume condition was `step_en ||
+     !halt_req`; in normal operation `halt_req` (the debugger/boot hold) is low,
+     so the state was left on the very next clock. The instruction cost two
+     cycles and fell through. The ISA has always said "stop the core until an
+     interrupt", and the boot loader's `halt_req` handover is a different
+     mechanism that must keep working.
+  3. **`DIV`/`MOD` never entered `S_DIV_WAIT`.** The S_EXECUTE exit that is
+     supposed to hand over to the wait state tested `is_ext_alu`, which is true
+     for every extended-ALU op including DIV/MOD, and that branch (`next_state =
+     S_WRITEBACK`) came first — so the wait state was unreachable and the writeback
+     stored whatever had last been latched into `alu_result_r`. Only the ALU-level
+     `div_tb` (which drives `div_start`/`div_busy` directly) and the unit-level
+     `sv16_alu_tb` exercised the divider, so both passed while the *instruction*
+     computed nothing. `DIV`/`MOD` from firmware had never worked.
+- **Decision**:
+  - `scripts/sv16_as.py` gets an explicit `CTRL_SUBOP` table and refuses unknown
+    `S_*` mnemonics instead of silently emitting `NOP` (the same class of
+    silent-masking bug the assembler's immediate and branch range checks already
+    address).
+  - The control unit latches its own halt request (`sw_halt`) when the `HALT`
+    instruction executes or when an unhandled trap finds a zero vector, and
+    S_HALTED now leaves only on a single step, on an enabled interrupt (which
+    runs the normal entry sequence, so `RETI` returns to the instruction after
+    the `HALT`), or when neither hold is active. `halt_req` behaves exactly as
+    before, so the reset-time handover and a debugger's continue are unaffected.
+  - S_EXECUTE checks `ext_is_div` **before** the generic extended-ALU branch and
+    routes DIV/MOD to S_DIV_WAIT, which is what makes `flag_update_en` in that
+    state (and therefore the correct writeback) reachable.
+  - Two new suites pin all of it: `control_tb` (27 checks: assembler encoding,
+    decoder selection including a reserved sub-opcode, `SR.IE` transitions,
+    `HALT` really stopping with a frozen PC, an enabled interrupt waking a halted
+    core into the handler and returning, and a disabled interrupt leaving the core
+    halted with the request still pending) and `irq_latency_tb` (13 checks).
+    `isa_tb` gains `DIV`/`MOD` result checks for the instruction-level divider
+    path, and its harness now waits longer than the divider's quiet period before
+    judging that the program has reached its self-loop.
+- **Consequences**: interrupts, `HALT`-based idle and hardware division are
+  usable from assembly for the first time; three documented-but-dead paths are
+  now exercised by `make test` (473 checks / 18 suites). The measured cost of a
+  division is ~22 cycles from `S_EXECUTE` to writeback, which is what the latency
+  budget in ADR-023 uses. Two independent lesson points, both now covered by
+  tests rather than by review: *(a)* "the RTL implements it" says nothing about
+  whether the *assembler* can emit it, so every instruction group needs a
+  program-level test; *(b)* a unit test that drives a handshake directly proves
+  the block, not the integration — the FSM that is supposed to use the handshake
+  needs its own test.
+
+---
+
+## ADR-023: Interrupt latency budget
+
+- **Status**: Accepted — measured by `irq_latency_tb`; closes OQ-15 and the P8
+  remaining-work item.
+- **Context**: Open question OQ-15 asked what an interrupt costs. The answer was
+  "unknown, and the core is multi-cycle", which is not a number a control
+  application can schedule against, and every suite before this one exercised the
+  interrupt controller indirectly at best.
+- **Decision**:
+  - The budget is **measured, not derived**: `irq_latency_tb` sweeps the moment a
+    peripheral line rises across the instruction stream (24 arrival points over
+    `DIV`/`NOP`/`JMP`) and measures from the line going high to the first handler
+    instruction being fetched.
+  - Measured on the current tree: **controller 1 cycle**, **entry sequence 6
+    cycles**, **request → handler 11 … 31 cycles**, and **16 cycles for a
+    3-word handler plus `RETI`** (entry, handler, return). The spread is the
+    interrupted instruction: the core takes an interrupt only at an instruction
+    boundary (`irq_enter` in S_FETCH), so `DIV` — 22 cycles, not abandoned
+    mid-flight — is the worst case, and a request arriving just as the current
+    instruction ends is the best case.
+  - The suite *enforces* the bounds (minimum ≥ 5, maximum ≤ 34 cycles) instead of
+    only printing them, so this document cannot silently go stale: lengthening
+    the entry path or the divider fails `make test`.
+  - Consequences that firmware can rely on: an interrupt cannot preempt an
+    instruction, `SR`/`PC` are pushed and restored atomically by hardware, a
+    peripheral's line stays latched pending if the core arrives late, and the
+    handler must clear the peripheral's own pending condition (the controller's
+    pending bit is cleared by hardware acknowledge). Nesting is still not
+    supported — `flag_ie` is cleared on entry and restored by `RETI` — and there
+    is no latency guarantee for a request that arrives while another interrupt is
+    being serviced beyond that pending-bit behaviour.
+- **Consequences**: OQ-15 is closed with numbers, `SYS_STAT`/`IRQ_*` behaviour is
+  now test-backed rather than implied, and the remaining interrupt gap is nesting
+  and per-source prioritisation policy (fixed priority today, index 0 wins).
+
+---
+
+## ADR-024: The PLL feedback path — `CLKFB` driven by the `CLKOP` net, not `CLKINTFB`
+
+**Context**: [ADR-021](#adr-021-an-optional-pll-system-clock-ecp5-ehxpll-off-by-default)
+instantiated `EHXPLLL` with `FEEDBK_PATH("CLKOP")` — the configuration bits say
+"the feedback signal is the CLKOP output, returned on the `CLKFB` input" — but
+wired that input from the primitive's *internal feedback* output:
+
+```verilog
+logic clk_fb;
+EHXPLLL #(.FEEDBK_PATH("CLKOP"), ...) u_pll (
+    .CLKFB (clk_fb),
+    .CLKINTFB (clk_fb),   // internal-feedback output driving the feedback input
+    ...
+```
+
+**Decision**: drive `CLKFB` from the same net `CLKOP` drives, and leave
+`CLKINTFB` unconnected:
+
+```verilog
+.CLKFB (clk_out),   // feedback from the CLKOP net
+.CLKINTFB (),       // internal feedback path not used
+```
+
+**Why**:
+- `CLKINTFB` is the *internal* feedback tap (the OP divider output routed inside
+  the primitive). `FEEDBK_PATH("CLKOP")` instead selects the *external* return
+  path, whose signal must arrive on the `CLKFB` input — that is what prjtrellis'
+  own PLL generator (`ecppll`, Project Trellis) emits, and what the Project F and
+  pa3fwm ECP5 clock examples write: `.CLKOP(clkout0), .CLKFB(clkout0), .CLKINTFB()`.
+  LiteX uses the other self-consistent combination (`FEEDBK_PATH("INT_O0")` with
+  `CLKINTFB` driving `CLKFB`). Mixing the two — internal tap wired to a
+  configuration that selects the external path — programs bits that do not
+  describe the netlist.
+- nextpnr cannot see the difference: it derives the output frequency from the
+  `FEEDBK_PATH` *string* alone (both spellings give the same arithmetic), so a
+  wrong tap is invisible in timing reports and would be found on a board, if at
+  all, as a clock that is present but out of phase or slow to lock.
+- Whatever the tap, the trims (`ICP_CURRENT`, `LPF_RESISTOR`,
+  `MFG_ENABLE_FILTEROPAMP`, `MFG_GMCREF_SEL`) must be a real loop-filter
+  configuration: prjtrellis' `ecppll` template values (`12` / `8` / `1` / `2`)
+  are kept, since they are what this toolchain is exercised with. They are
+  unverifiable without a scope — see OQ-19.
+
+**Evidence**: the oscillator build is bit-identical (295,665 bytes, 44.70 MHz —
+the PLL is not instantiated there). The PLL build changed measurably: **301,006
+→ 292,752 bytes** and, with the same 37.5 MHz constraint, **41.40 → 45.45 MHz**
+post-route (37.73 MHz pre-route) — consistent with removing a primitive-output
+→ primitive-input path and taking feedback from the clock net the fabric already
+uses, and the first time the PLL build has had as much timing margin as the
+oscillator build. `pll_clock_tb` re-passes (8 checks: lock-gated reset, measured
+1.5× ratio, derived UART divisor from the built clock, six banner bytes decoded).
+
+**Consequences**: the PLL configuration is now the one the vendor tool flow
+generates for a single-output ECP5 PLL, so a bring-up difference is much more
+likely to be the analog loop than the wiring. `docs/FPGA.md`,
+`docs/SYNTHESIS_AND_DEPLOYMENT.md`, `docs/RESET_AND_CLOCK.md` and `README.md`
+carry the re-measured numbers. The build still cannot prove lock: simulation uses
+a behavioural oscillator, and this remains the one part of the design that needs a
+board (OQ-19). No RTL outside `sv16_pll.sv` changed, no ISA-visible behaviour
+changed, and the default clock source is still the oscillator.

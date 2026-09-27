@@ -27,7 +27,7 @@ and can be reprogrammed over a plain serial port.
 
 ```sh
 source scripts/sv16_venv.sh    # fetches Verilator + Yosys + nextpnr + ecppack
-make test                      # lint + 16 simulation suites (431 checks)
+make test                      # lint + 18 simulation suites (473 checks)
 make bitstream                 # -> build/sv16_top.bit (boot ROM baked in)
 make prog                      # openFPGALoader over JTAG
 make app                       # build the example application image
@@ -78,7 +78,7 @@ SV-16 monitor v1
 
 | Command | Result |
 | :--- | :--- |
-| `make test` | lint + all sixteen Verilator suites (431 checks) |
+| `make test` | lint + all eighteen Verilator suites (473 checks) |
 | `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 25 MHz |
 | `make synth` | Yosys only (fast synthesizability check) |
 | `make prog` | program the FPGA over JTAG |
@@ -110,9 +110,9 @@ build/           generated: ROM image, firmware images, netlist, bitstream (untr
 
 | | |
 | :--- | :--- |
-| Simulation | 431 checks, 0 failures across 16 suites (CPU/ISA, ALU/divider, RAM, timer, PWM, GPIO, UART, watchdog, flash controller, boot loader, A/B slots, PLL clock, monitor) |
-| Synthesis / P&R | places, routes, packs for the target part; 30 % LUTs, 18 % FFs |
-| Timing | 43.73 MHz Fmax measured at 25 MHz (~75 % margin); 44.87 MHz at `CLKSRC=pll PLLMHZ=37.5` (~20 % margin) |
+| Simulation | 473 checks, 0 failures across 18 suites (CPU/ISA, control instructions, interrupt latency, ALU/divider, RAM, timer, PWM, GPIO, UART, watchdog, flash controller, boot loader, A/B slots, PLL clock, monitor) |
+| Synthesis / P&R | places, routes, packs for the target part; 38 % LUTs, 19 % FFs |
+| Timing | 44.70 MHz Fmax measured at 25 MHz (~79 % margin); 45.45 MHz at `CLKSRC=pll PLLMHZ=37.5` (~21 % margin) |
 | Silicon | **never run on hardware** — simulation and static timing only |
 
 What is still missing for a production-grade MCU (JTAG debug, image signing,

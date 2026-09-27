@@ -66,7 +66,13 @@ both and rejects anything outside the range rather than masking it.
 └───────┴──────┴────────────────────┘
   4-bit  3-bit         9-bit
 ```
-- Used for `PUSH Rx`, `POP Rx`, `CALL`, `RET`, `NOP`, `HALT`, `RETI`.
+- Used for `PUSH Rx`, `POP Rx`, `CALL`, `RET`, `NOP`, `HALT`, `EI`, `DI`, `RETI`.
+- Opcode `0x0` carries a nine-bit control sub-opcode in `instr[8:0]`; the five
+  values are `0x000` `NOP`, `0x001` `HALT`, `0x002` `EI`, `0x003` `DI`, `0x004`
+  `RETI`. Any other value is a reserved sub-opcode and traps as an illegal
+  instruction. The assembler emitted `0x000` for all five until
+  [ADR-022](ARCHITECTURE_DECISIONS.md#adr-022-three-instruction-level-defects-control-encodings-halt-and-the-divider-wait-state),
+  so `HALT`/`EI`/`DI`/`RETI` were unusable from assembly before that.
 
 ---
 
@@ -93,7 +99,7 @@ both and rejects anything outside the range rather than masking it.
 | `0001` (`0x1`) | `ALU_RR` | R | Register-Register ALU operations (SubOp in [2:0]) | Z, C, N, V |
 | `0010` (`0x2`) | `ADDI` | I | Add Immediate: `Rd <= Rd + sign_ext(imm9)` | Z, C, N, V |
 | `0011` (`0x3`) | `SUBI` | I | Subtract Immediate: `Rd <= Rd - sign_ext(imm9)` | Z, C, N, V |
-| `0010` (`0x4`) | `LDI` | S (2-word) | Load 16-bit Immediate: `Rd <= imm16` (word 2) | Z, N |
+| `0100` (`0x4`) | `LDI` | S (2-word) | Load 16-bit Immediate: `Rd <= imm16` (word 2) | Z, N |
 | `0101` (`0x5`) | `LOAD` | M | Memory Load: `Rd <= MEM[Rb + offset]` | Z, N |
 | `0110` (`0x6`) | `STORE`| M | Memory Store: `MEM[Rb + offset] <= Rd` | None |
 | `0111` (`0x7`) | `MOV` | R | Register Copy: `Rd <= Rs1` | Z, N |
@@ -176,7 +182,17 @@ hardware:
   handler address per source ([MEMORY_MAP.md](MEMORY_MAP.md#interrupt-vector-indices)).
   The CPU still pushes `SR` and `PC` before the vector fetch and `RETI` restores
   them; enabling an interrupt now also requires the per-source bit in `IRQ_EN`
-  (`0xF090`) and the global bit `SYS_CTRL.IRQEN` (`0xF001`).
+  (`0xF090`) and the global bit `SYS_CTRL.IRQEN` (`0xF001`). Interrupts are
+  enabled from software with `EI` and disabled with `DI` — the two instructions
+  the assembler could not encode until ADR-022. **Latency (measured): 11-31
+  cycles from the peripheral's line going high to the first handler instruction,
+  of which 1 cycle is the interrupt controller; `DIV` (22 cycles) is the worst
+  case because it is not abandoned mid-flight.** See
+  [ADR-023](ARCHITECTURE_DECISIONS.md#adr-023-interrupt-latency-budget).
+* **`HALT`.** `HALT` stops the core at an instruction boundary until an enabled
+  interrupt is taken, the debug port single-steps/continues, or reset. It is the
+  intended idle state for an application that has nothing to do; `SYS_STAT` and
+  `SYS_CTRL` expose the same halt request to a debugger.
 * **Trap.** An illegal opcode takes vector 7 and, in addition, latches the
   offending address in `SYS_FAULT_ADDR` and increments `SYS_FAULT_CNT` so a
   monitor or the application itself can diagnose the fault.
@@ -186,10 +202,12 @@ hardware:
 * **DIV and MOD are multi-cycle.** The ISA is unchanged — same encodings, same
   results, same flags (including divide-by-zero: `V=1`, quotient `0xFFFF`,
   remainder `0x0000`) — but the ALU serves them with one iterative restoring
-  divider instead of a combinational one, so they now take **18 cycles** rather
-  than 1 (ADR-018). Every other operation, including `MUL`, is still executed in
-  the single `S_EXECUTE` cycle. Firmware that counts cycles around a division
-  must allow for the extra 17; nothing else changes.
+  divider instead of a combinational one, so they hold the core for **~22
+  cycles** from `S_EXECUTE` to writeback rather than 1 (ADR-018; measured after
+  ADR-022, which is what actually put the FSM into its wait state — before that
+  the instruction wrote back a stale result). Every other operation, including
+  `MUL`, is still executed in the single `S_EXECUTE` cycle. Firmware that counts
+  cycles around a division must allow for the extra ~21; nothing else changes.
 * **No new instructions.** In particular there is still **no register-indirect
   jump or call**: `JMP` and `CALL` take a 16-bit immediate, and returns use `RET`
   through the stack. That is enough for handlers (the CPU fetches the handler

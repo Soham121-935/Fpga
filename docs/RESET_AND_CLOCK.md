@@ -23,7 +23,7 @@ clk_25m ─┬─ osc: ───────────────────
 * `CLKSRC = pll` → the on-chip `EHXPLLL` multiplies the 25 MHz reference up:
   `make bitstream CLKSRC=pll PLLMHZ=37.5` builds a **37.5 MHz** system clock
   (12.5 MHz PFD, ×3 feedback, ÷16 VCO divider, VCO 600 MHz), which closes timing
-  at 44.87 MHz measured (~20 % margin). The reference reaches multiples of
+  at 45.45 MHz measured (~21 % margin). The reference reaches multiples of
   25 MHz and of 12.5 MHz exactly; 50 MHz is reachable but does not close on this
   speed grade. The synthesis script reports the requested and achieved frequency
   and refuses an illegal VCO.

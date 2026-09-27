@@ -100,13 +100,15 @@ module sv16_pll #(
 
 `else
     // ------------------------------------------------------- ECP5 hard macro
-    // The attributes are the loop-filter settings the Lattice wizard emits for
-    // this reference range; prjtrellis reads them out of the netlist.
+    // Attributes: the reference frequency nextpnr needs for its PLL frequency
+    // derivation, plus the loop-filter trims.  The trims are not cosmetic --
+    // they program ICP_CURRENT / LPF_RESISTOR / the filter op-amp into the
+    // configuration bits -- and these are the values prjtrellis' own `ecppll`
+    // emits (Project Trellis, EHXPLLL template), i.e. the ones this toolchain is
+    // tested with.  They are unverifiable without a board; see OQ-15.
     (* FREQUENCY_PIN_CLKI = "25.0" *)
     (* ICP_CURRENT = "12" *) (* LPF_RESISTOR = "8" *)
     (* MFG_ENABLE_FILTEROPAMP = "1" *) (* MFG_GMCREF_SEL = "2" *)
-
-    logic clk_fb;
 
     EHXPLLL #(
         .CLKI_DIV(CLKI_DIV),
@@ -118,6 +120,14 @@ module sv16_pll #(
         .CLKOS_ENABLE("DISABLED"),
         .CLKOS2_ENABLE("DISABLED"),
         .CLKOS3_ENABLE("DISABLED"),
+        // FEEDBK_PATH("CLKOP") = the feedback signal is CLKOP, brought back on
+        // the CLKFB input.  The two ways of wiring that are (a) CLKFB driven by
+        // the CLKOP net, which is what prjtrellis' ecppll generates for a single
+        // output clock and what this module does, or (b) FEEDBK_PATH("INT_OP")
+        // with CLKINTFB driving CLKFB.  Either is self-consistent; mixing them
+        // (CLKINTFB wired to CLKFB while the bits select the external path) is
+        // not, and nextpnr cannot see the difference because it derives the
+        // output frequency from FEEDBK_PATH alone.
         .FEEDBK_PATH("CLKOP"),
         .OUTDIVIDER_MUXA("DIVA"),
         .OUTDIVIDER_MUXB("DIVB"),
@@ -131,8 +141,8 @@ module sv16_pll #(
         .SYNC_ENABLE("DISABLED")
     ) u_pll (
         .CLKI      (clk_ref),
-        .CLKFB     (clk_fb),
-        .CLKINTFB  (clk_fb),
+        .CLKFB     (clk_out),      // feedback from the CLKOP net (ecppll pattern)
+        .CLKINTFB  (),             // internal feedback path not used
         .RST       (rst),
         .CLKOP     (clk_out),
         .CLKOS     (),
