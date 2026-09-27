@@ -9,6 +9,10 @@ that still need bench or vendor verification are collected in §13.2.
 the SV-16 soft-core that lives in this repository into a **stand-alone MCU-class board** built around a
 single Lattice **LFE5U-12F-6TG144C** (ECP5, 144-lead TQFP, speed grade 6, commercial temperature).
 
+**Sourcing note (revision 1.1):** the component list was originally written for US/EU distributors. It
+has been re-sourced for India: every part below is available from a domestic vendor, with the electrical
+equivalent spelled out where the original choice had to be replaced. §3.6 is the change list.
+
 **It is not:** a copy of an evaluation kit, and not a general-purpose FPGA dev board. The board exists to
 run the firmware in `firmware/` — boot from non-volatile memory, talk on a serial console, be
 reprogrammed in the field, and drive a small motor — which is exactly what the SoC in `rtl/` implements.
@@ -22,7 +26,8 @@ reprogrammed in the field, and drive a small motor — which is exactly what the
 | Storage | 2 × 3.3 V SPI NOR: one for the FPGA bitstream, one for SV-16 firmware images |
 | Console / update | USB-C → CH340C → 115200 8N1 UART → ROM monitor (erase / upload / verify / boot) |
 | Debug / config | 1×10 0.1" and 2×5 0.05" JTAG headers; TCK ≤ 25 MHz (BSDL `TAP_SCAN_CLOCK`) |
-| Power in | 5–12 V DC barrel **or** USB-C 5 V; 3.3 V / 2.5 V / 1.1 V rails generated on board |
+| Power in | 7–12 V DC barrel (recommended) or USB-C 5 V; 3.3 V / 2.5 V / 1.1 V rails generated on board |
+| Sourcing | **every part is orderable from an Indian vendor** (Robu, Zbotic, QuartzComponents, Sunrom, Hubtronics, Sharvie, KTRON, iFutureTech, DNA Tech) except the FPGA and the oscillator, which come from digikey.in / mouser.in / element14 India — see §3 |
 
 ## 0.1 Where the numbers come from
 
@@ -57,27 +62,34 @@ is regenerated, so the schematic and the bitstream cannot silently disagree.
 ## 1. Board-level block diagram
 
 ```
-                   +5..12 V barrel (J9)      USB-C (J8: VBUS + D+/D-)
-                          |                        |
-                     [D1 SS34]                [D2 SS34]   CC1/CC2 = 5.1k Rd
-                          +----------+-------------+
-                                     |  VM_IN (4.6 ... 12 V)
-                              +------+------+
-                              |  U5  AP63203|  buck, 3.3 V / 2 A
-                              +------+------+  === C: 22u in, 22u out, 4.7u
-                                     |
-                    3V3 -------------+---------+----------------------------+
-                     |                          |                            |
-              +------+------+            +------+------+              +------+------+
-              | U6 TPS62823 |            | U7 LP5907   |              | oscillator  |
-              | 1.1 V / 3 A |            | 2.5 V / 250m|              | Y1 25 MHz   |
-              +------+------+            +------+------+              +------+------+
-                     |                          |                            |
-                   1V1                        2V5                         CLK25
-                     |                          |                            |
-   ==================|==========================|============================|==================
-                     |                          |                            |
-                  +--+--------------------------+----------------------------+--+
+                   +7..12 V barrel (J9)        USB-C (J8: VBUS + D+/D-)
+                          |                          |
+                     [D8 SS34]                  [D9 SS34]   CC1/CC2 = 5.1k Rd
+                          +------------+-------------+
+                                       |  VM_IN (4.6 ... 12 V)
+                    +------------------+------------------+
+                    |                                     |
+            +-------+--------+                    +-------+--------+
+            | U5 LM2596S-3.3 |                    | U6 MP1584EN    |  EN delayed ~13 ms (R41/C31)
+            | 3.3 V / 3 A    |                    | 1.1 V / 3 A    |  R38/R39 set 1.099 V
+            | + D10 catch    |                    | + D11 catch    |
+            +-------+--------+                    +-------+--------+
+                    |                                     |            (C21 100u, C2-C7 100n)
+                  3V3  (C23 470u in, C24 220u, C25 10u)  1V1  ────►  U1 VCC (6 pins)
+                    |
+            +-------+--------+   Q3 AO3401 load switch, gate RC ~50 ms (R42/C32)
+            | U7 AMS1117-2.5 |◄─────────────────────────────────────
+            | 2.5 V / 1 A    |
+            +-------+--------+
+                    |            (C22 22u, C8-C11 100n)
+                   2V5  ────►  U1 VCCAUX (4 pins)
+
+                   3V3  ────►  U1 VCCIO0/1/2/3/6/7/8 (9 pins) + Y1 oscillator + both flashes
+                    |                + CH340C + LEDs
+                    |
+   =================|=================================================================
+                    |
+                  +-+-----------------------------------------------------------------+
                   |   VCC (6)      VCCAUX (4)      VCCIO0/1/2/3/6/7/8 (9)       |
                   |                     U1  LFE5U-12F-6TG144C                  |
                   |        bank 8 = VCCIO8 = configuration + JTAG supply        |
@@ -115,10 +127,14 @@ registers — the board adds nothing the SoC cannot already drive.
    needs VCCIO 3.135–3.465 V (datasheet Table 3.11). Rather than split banks across rails (which would
    force LPF and bitstream changes), all six used banks sit on 3V3. The flash, the USB bridge and the
    25 MHz oscillator are all 3.3 V parts, so no level shifting is needed anywhere.
-2. **Power-up order is guaranteed by construction, not by a sequencer.** In Master SPI mode the datasheet
-   requires VCCIO8 to come up before (or together with) VCC/VCCAUX, or else PROGRAMN/INITN must be held
-   low until VCCIO8 is valid (§3.5). The board derives 2.5 V and 1.1 V *from* the 3.3 V rail, so VCCIO8
-   is by definition the first rail to become valid (§4.3).
+2. **Power-up order is enforced by two RC-delayed enables, not by hope.** In Master SPI mode the datasheet
+   requires VCCIO8 to be above the flash's input-high threshold before VCC *or* VCCAUX reach their POR
+   trip points, otherwise PROGRAMN/INITN must be held low until VCCIO8 is valid (§3.5 of FPGA-DS-02012-3.4).
+   The India-available regulators (LM2596, MP1584) do **not** accept a 3.3 V input, so VCC can no longer
+   be *derived* from VCCIO8 as in revision 1.0. Instead their enable pins are used: the 1.1 V buck gets an
+   RC on `EN` (≈13 ms) and the 2.5 V LDO is fed through a P-MOSFET load switch with an RC gate (≈50 ms).
+   3V3 = VCCIO8 therefore reaches the flash threshold ≈0.3 ms after power-up, long before either other
+   rail moves. §4.3 has the numbers, the bench check is bring-up step 3 in §10.
 3. **Two SPI flashes, not one.** The FPGA's configuration port is not memory-mapped: the MSPI pads
    (CCLK = pin 54, MOSI = pin 47, MISO = pin 46, CSSPIN = pin 49) belong to the configuration logic
    while `PERSISTENT` is set, and the soft-core cannot read or write the bitstream flash through them.
@@ -148,128 +164,203 @@ registers — the board adds nothing the SoC cannot already drive.
 
 ---
 
-## 3. Bill of materials
+## 3. Bill of materials — India-sourced edition
 
-Quantities are for one board. "Alt" gives a drop-in alternative; prices are indicative 1-off 2026
-distributor bands for budgeting only (verify at order time). Passives are 0402/0603 X7R/X5R unless
-stated; electrolytics are not required anywhere.
+Everything below is orderable from an Indian vendor that ships domestically: no US/EU freight, no customs
+paperwork on your side. Where revision 1.0 picked a part that only exists on the global distributors'
+shelves, it has been replaced by an electrical equivalent that is in stock in India — and because two
+regulators changed, the power tree, the sequencing scheme and the schematic sheet in §4 and §7.1 changed
+with them. §3.6 is the change list.
+
+**Sourcing tiers**
+
+| Tier | Vendors | Order from here |
+| :--- | :--- | :--- |
+| **1 — Indian component shops** (₹ pricing, 2–5 day delivery, no customs) | Robu.in · Zbotic.in · QuartzComponents.in · Sunrom.com · Hubtronics.in (the old rareComponents) · Sharvie Electronics · KTRON India · iFutureTech · Robocraze · DNA Tech · ElectronicsComp | passives, connectors, LEDs, MOSFETs, both SPI flashes, CH340C, USBLC6, LM2596S-3.3, MP1584EN, AMS1117-2.5, modules |
+| **2 — Indian storefronts of the global distributors** (INR pricing, domestic delivery, they handle customs) | digikey.in · mouser.in · in.element14.com · in.rs-online.com | **U1 (the FPGA)** and the 25 MHz oscillator — the two parts no hobby shop stocks; also anything tier 1 has run out of |
+| **3 — marketplaces** (AliExpress, IndiaMART, eBay.in, third-party Amazon.in) | use with care | last resort for passives and modules. **Never buy the FPGA here** — relabelled, refurbished and out-of-spec ECP5 parts are a known problem, and a fake costs you a board and a fortnight |
+
+Prices are indicative, single unit, GST included, from a September 2026 stock check — verify before
+ordering. Passives are **0603** (stock standard in India and hand-solderable; revision 1.0's 0402 was
+chosen for density and is a bad idea when you are soldering it yourself). Electrolytics are now required
+(the two bucks are non-synchronous and the LM2596 needs real bulk capacitance).
 
 ### 3.1 Active devices
 
-| Ref | Part number | Specification | Package | Qty | Alt / notes |
+| Ref | Part number | Specification | Package | Qty | Where (indicative ₹) |
 | :--- | :--- | :--- | :--- | :-: | :--- |
-| U1 | **LFE5U-12F-6TG144C** | ECP5 FPGA, 12,144 LUT4, 72 KB sysMEM, 28 mult, 2 PLL, VCC 1.1 V, VCCAUX 2.5 V, speed 6, commercial 0…85 °C Tj | TQFP-144 20×20 mm 0.5 mm | 1 | the part this repository is pinned to; must be the `C` (commercial) and `6` (speed) suffix |
-| U2 | **W25Q64JVSSIQ** | 64 Mbit (8 MB) 3.3 V SPI NOR, 104 MHz, 2.7–3.6 V, −40…85 °C | SOIC-8 208 mil | 1 | FPGA bitstream flash (Master SPI). **W25Q32JVSSIQ** (4 MB) is enough — the bitstream is 293 KB |
-| U3 | **W25Q64JVSSIQ** | same device, second chip | SOIC-8 208 mil | 1 | SV-16 application flash (slot A/B firmware). 1 MB (`W25Q80JV`) is already 16× more than needed |
-| U4 | **CH340C** | USB 2.0 full-speed ↔ UART bridge, 3.3 V, internal oscillator, no crystal | SOP-16 | 1 | console + firmware upload. Alt: **CP2102N-A02-GQFN24** (no crystal, 3.3 V), **FT231X** (SSOP-20) |
-| U5 | **AP63203WU-7** | synchronous buck, 3.8–32 V in, 3.3 V fixed, 2 A, 1.1 MHz | TSOT-26 | 1 | 3V3 rail. Alt: **TPS54331D** (needs a divider) |
-| U6 | **TPS62823DLR** | synchronous buck, 2.4–5.5 V in, adjustable, 3 A | SOT-583 | 1 | 1V1 core rail, fed from 3V3 (sets the power-up order, §4.3) |
-| U7 | **LP5907MFX-2.5/NOPB** | LDO, 2.5 V, 250 mA, 2.2–5.5 V in, 6.5 µV rms noise | SOT-23-5 | 1 | 2V5 (VCCAUX) rail, fed from 3V3 |
-| Y1 | **ASEMB-25.000MHZ-LC-T** | 25.000 MHz XO, 3.3 V CMOS, ±50 ppm, 15 pF, 4-pin | 3.2×2.5 mm | 1 | `clk_25m`. Alt: **SiT8008BI-23-33E-25.000000E** |
-| D1 | **LTST-C191KGKT** | green LED, "CONFIGURED" indicator (driven through Q2) | 0603 | 1 | lit = DONE high = user mode |
-| D2–D5 | **LTST-C191KGKT** | user LEDs (mirror of GPIOA[3:0]) | 0603 | 4 | active low, code already drives them (`assign led = ~gpio_a_out[3:0]`) |
-| D6 | **LTST-C191KRKT** | red LED, INITN / config-error indicator | 0603 | 1 | **optional (DNP)** — lit = INITN low (SRAM clear / config error) |
-| D7 | **LTST-C191KRKT** | red LED, 3V3 power-good | 0603 | 1 | |
-| D8, D9 | **SS34** | Schottky, 40 V / 3 A, input ORing + reverse protection | SMA | 2 | barrel and USB-C inputs into VM_IN |
-| Q1 | **2N7002** | N-MOSFET, PROGRAMN pull-down from DTR (optional auto-reconfigure) | SOT-23 | 1 | disabled by JP1; see §7.2 |
-| Q2 | **MMBT3904** | NPN, DONE indicator driver (keeps the open-drain DONE pin's logic level clean) | SOT-23 | 1 | see §7.2 |
-| Q4 | **MMBT3906** | PNP, INITN indicator driver (optional — fit only if you want a visible config-error LED) | SOT-23 | 1 | see §7.2 |
-| U8 | **USBLC6-2SC6** | USB ESD protection (D+/D−) | SOT-23-6 | 1 | |
-| — | **SN74LVC1T45** (optional) | level shifter, only if a 5 V UART adapter is used on J10 | SOT-23-6 | 0 | not fitted by default: J10 is 3.3 V-only |
+| U1 | **LFE5U-12F-6TG144C** | ECP5 FPGA, 12,144 LUT4, 72 KB sysMEM, 28 mult, 2 PLL, VCC 1.1 V, VCCAUX 2.5 V, speed 6, commercial 0–85 °C Tj | TQFP-144 20×20 mm, 0.5 mm | 1 | **digikey.in ≈ ₹1,650** incl. GST (in stock Sept 2026) · mouser.in · in.element14.com. No substitute exists — §3.4 |
+| U2 | **W25Q64JVSSIQ** | 64 Mbit (8 MB) SPI NOR, 2.7–3.6 V, standard SPI + dual/quad | SOIC-8 208 mil | 1 | Sharvie Electronics ₹75 · Hubtronics ₹117 · KTRON · Robu sells a W25Q64 breakout module for ₹77 (§3.5) |
+| U3 | **W25Q64JVSSIQ** | same device — SV-16 firmware slots. `W25Q32JVSSIQ` (4 MB) or `W25Q16JV` is already enough: the images are 32 KB per slot | SOIC-8 208 mil | 1 | as U2 |
+| U4 | **CH340C** | USB 2.0 full-speed ↔ UART, 3.3 V, internal oscillator, no crystal | SOP-16 150 mil | 1 | iFutureTech ₹45 · Hubtronics ₹47 · Robu's CH340C+USB-C breakout ₹149 (§3.5) |
+| U5 | **LM2596S-3.3** *(was AP63203)* | buck, 4.5–30 V in, **3.3 V fixed**, 3 A, 150 kHz, non-synchronous → **needs D10** | TO-263-5 | 1 | Robu ₹51 (XBLW) / ₹61 (Slkor) — listed in stock |
+| U6 | **MP1584EN-LF-Z** *(was TPS62823)* | buck, 4.5–28 V in, adjustable 0.8–20 V, 3 A, up to 1.5 MHz, non-synchronous → **needs D11 and R38/R39** | SOIC-8E | 1 | Hubtronics ₹47 (361 in stock) · Sunrom · others |
+| U7 | **AMS1117-2.5** *(was LP5907)* | LDO, 2.5 V, 1 A, needs ≥10 µF on the output | SOT-223 | 1 | Robu / QuartzComponents ₹12–20 |
+| Y1 | **YIC OSC25M-3.3I/S3-25T** *(was ASEMB)* | **25.000 MHz XO**, 3.3 V CMOS, ±25 ppm, enable/disable | 3.2×2.5 mm SMD-4 | 1 | **digikey.in ₹111** · any 25 MHz **3.3 V active** oscillator in 7050/5032 (Amazon.in / eBay.in sell the 5×7 mm 4-pin type) works |
+| D1–D5 | LED 0603, green | DONE indicator + four user LEDs (GPIOA[3:0], active low) | 0603 | 5 | Robu / Zbotic ₹1–2 each |
+| D6, D7 | LED 0603, red | INITN indicator (DNP by default) + 3V3 power LED | 0603 | 2 | as above |
+| D8, D9 | **SS34** | Schottky 40 V / 3 A — barrel and USB input ORing | SMA | 2 | Robu ₹3 |
+| D10 | **SS34** | catch diode for the 3V3 LM2596 | SMA | 1 | as above |
+| D11 | **SS34** | catch diode for the 1V1 MP1584 | SMA | 1 | as above |
+| Q1 | **2N7002** | N-MOSFET, PROGRAMN pull-down from DTR (optional auto-reconfigure) | SOT-23 | 1 | Robu / QuartzComponents ₹5 |
+| Q2, Q4 | **BC817 (NPN) / BC807 (PNP)** *(was MMBT3904/3906)* | indicator drivers for DONE and INITN — identical function, the part Indian shops actually stock | SOT-23 | 2 | Zbotic / Robu ₹2 each |
+| Q3 | **AO3401** | P-MOSFET load switch that delays the 2.5 V LDO (sequencing, §4.3) | SOT-23 | 1 | Robu / Zbotic ₹8 |
+| U8 | **USBLC6-2SC6** | USB D+/D− ESD protection, 2 channels + VBUS | SOT-23-6 | 1 | Sunrom ₹30 · DNA Tech ₹32 |
+| — | SN74LVC1T45 *(optional)* | level shifter, only if a 5 V UART adapter is used on J10 | SOT-23-6 | 0 | Robu / QuartzComponents if needed |
 
 ### 3.2 Connectors, switches, protection
 
-| Ref | Part number | Specification | Qty | Notes |
+| Ref | Item | Specification | Qty | Where / notes |
 | :--- | :--- | :--- | :-: | :--- |
-| J1 | 1×10 0.1" header, vertical | 2.54 mm, JTAG/config, Versa pinout (see §8) | 1 | primary programming header |
-| J2 | 2×5 0.05" keyed box header | 1.27 mm, Digilent/FT2232H pinout | 1 | wired in parallel with J1's JTAG pins |
-| J3 | 2×10 0.1" header | EXP-A: SPI0 + GPIOA[15:8] + 3V3/5V/GND | 1 | |
-| J4 | 2×10 0.1" header | EXP-B: GPIOB[15:0] + 3V3/5V/GND | 1 | |
-| J5 | 1×10 0.1" header | EXP-C: GPIOA[7:0] + 3V3/GND | 1 | pins 2/3/5/7 share nets with the config flash — see §6.4 |
-| J6 | 1×6 0.1" keyed header | VM, GND, PWM, DIR1, DIR2, FAULTn | 1 | keyed (polarised) to prevent reverse plugging |
-| J7 | 2×25 2.54 mm through-hole | spare-I/O breakout, 46 signals + 4 GND | 1 | footprint only, **not fitted** by default |
-| J8 | **USB-C receptacle, 16-pin (USB 2.0)** | e.g. `TYPE-C-31-M-12`; CC1/CC2 → 5.1 kΩ Rd to GND | 1 | power + console on one cable |
-| J9 | **DC barrel jack 5.5/2.1 mm** | centre-positive, 5–12 V | 1 | `CUI PJ-002AH` or equivalent |
-| J10 | 1×4 0.1" header | 3V3, UART_TX(F), UART_RX(F), GND | 1 | direct console access if you do not want to fit the CH340C (0 Ω links R21–R24 select, §8) |
-| SW1 | **SKQG** tactile switch | reset → `ext_rst_n` (pin 134, drive to GND) | 1 | |
-| SW2 | **SKQG** tactile switch | PROGRAMN to GND (reconfigure) | 1 | |
-| JP1 | 2-pin 0.1" jumper | disables Q1 (DTR auto-program) | 1 | |
-| TP1–TP6 | test points (1 mm pad or loop) | 3V3, 2V5, 1V1, GND, DONE, INITN | 6 | bring-up / scope access |
+| J1 | 1×10 header, 2.54 mm | JTAG / configuration, Versa pinout (§8) | 1 | Robu ₹10 — the header that definitely exists in India |
+| J2 | 2×5 box header, **1.27 mm** | Digilent / FT2232H-style adapter | 1 | 1.27 mm box headers are patchy in India: if you cannot find one, **leave J2 unpopulated** and use J1 with a 2.54 mm ribbon; or fit a 2×5 2.54 mm header and use an adapter cable |
+| J3, J4 | 2×10 headers, 2.54 mm | EXP-A (SPI0 + GPIOA[15:8]) and EXP-B (GPIOB[15:0]) | 2 | Robu ₹15 each |
+| J5 | 1×10 header, 2.54 mm | EXP-C: GPIOA[7:0] | 1 | pins 2/3/5/7 share nets with the config flash — §6.4 |
+| J6 | 1×6 keyed header, 2.54 mm | motor: VM, GND, PWM, DIR1, DIR2, FAULTn | 1 | Robu ₹15 |
+| J7 | 2×25 header, 2.54 mm | spare-I/O breakout (46 signals + 4 GND) | 1 | footprint only, **not fitted** |
+| J8 | **USB-C receptacle 16-pin** — or micro-USB B | power + console. With micro-USB, omit R36/R37 | 1 | Robu / Zbotic ₹25 (USB-C) or ₹10 (micro-USB, easier to hand-solder) |
+| J9 | DC barrel jack 5.5 / 2.1 mm | centre positive, 7–12 V | 1 | Robu ₹20 |
+| J10 | 1×4 header, 2.54 mm | 3V3, UART_TX, UART_RX, GND (console without the CH340C) | 1 | Robu ₹5 |
+| SW1, SW2 | 6×6 mm tactile switches | reset → `ext_rst_n`; reconfigure → PROGRAMN | 2 | Robu ₹5 each |
+| JP1 | 2-pin header + shunt | disables Q1 (DTR auto-reconfigure) | 1 | Robu ₹5 |
+| TP1–TP6 | 1 mm pads or test loops | 3V3, 2V5, 1V1, GND, DONE, INITN | 6 | — |
+| — | 0603 resistor + capacitor assortment kit | avoids buying 100 individual reels | 1 | Robu ₹500–800 — worth it once, and it covers every passive on this board |
 
-### 3.3 Passives and crystals
+### 3.3 Passives
 
-| Ref | Value / type | Package | Qty | Purpose |
+| Ref | Value | Package | Qty | Purpose |
 | :--- | :--- | :--- | :-: | :--- |
-| R1 | 10 kΩ | 0402 | 1 | `ext_rst_n` pull-up (input has internal pull-up; the external resistor is for noise and SW1) |
-| R2 | 4.7 kΩ | 0402 | 1 | PROGRAMN pull-up to VCCIO8 (TN-02038 Table 6.2) |
-| R3 | 4.7 kΩ | 0402 | 1 | INITN pull-up to VCCIO8 |
-| R4 | 4.7 kΩ | 0402 | 1 | DONE pull-up to VCCIO8 (open-drain output) |
-| R5 | 4.7 kΩ | 0402 | 1 | CFG1 = 1 strap to VCCIO8 |
-| R6, R7 | 1 kΩ | 0402 | 2 | CFG0 = 0 and CFG2 = 0 straps to GND (Master SPI = 010) |
-| R8 | 1 kΩ | 0402 | 1 | MCLK/CCLK pull-up to VCCIO8 (hardware checklist) |
-| R9–R12 | 100 Ω | 0402 | 4 | series resistors in the four Master-SPI nets (CCLK, DI, DO, CSSPIN) — damping + limits any contention with GPIOA[1]/[2]/[4]/[6] (§6.4) |
-| R13–R15 | 10 kΩ | 0402 | 3 | config-flash (U2) `/CS`, `/WP`, `/HOLD` pull-ups to 3V3 — `/CS` must stay high when the configuration port floats |
-| R16–R19 | 10 kΩ | 0402 | 4 | application-flash (U3) `/CS`, `/WP`, `/HOLD` pull-ups; `motor_fault_n` pull-up |
-| R21–R24 | 0 Ω | 0402 | 4 | UART routing select: R21/R23 = CH340C, R22/R24 = J10 (populate one pair only) |
-| R25 | 4.7 kΩ | 0402 | 1 | Q1 gate resistor (DTR auto-program) |
-| R26 | 10 kΩ | 0402 | 1 | Q1 gate pull-down (keeps PROGRAMN released when the jumper is open) |
-| R27–R30 | 470 Ω | 0402 | 4 | user LED series resistors (D2–D5), 3 mA at 3.3 V − 2.0 Vf |
-| R31–R34 | 1 kΩ | 0402 | 4 | indicator drives: R31 = Q4 base (INITN), R32 = Q2 base (DONE), R33 = D1 series, R34 = D6 series |
-| R36, R37 | 5.1 kΩ | 0402 | 2 | USB-C CC1/CC2 Rd (required: tells the host to supply 5 V) |
-| C1 | 100 nF | 0402 | 1 | `ext_rst_n` RC (with R1) |
-| C2–C7 | 100 nF | 0402 | 6 | VCC (1.1 V) decoupling, one per VCC pin (pins 20, 29, 38, 66, 83, 130) |
-| C8–C11 | 100 nF | 0402 | 4 | VCCAUX (2.5 V) decoupling, one per VCCAUX pin (17, 53, 96, 132) |
-| C12–C20 | 100 nF | 0402 | 9 | VCCIO decoupling, one per VCCIO pin (9, 16, 36, 43, 70, 86, 100, 122, 137) |
-| C21 | 4.7 µF | 0603 X5R | 1 | 1V1 bulk |
-| C22 | 4.7 µF | 0603 X5R | 1 | 2V5 bulk |
-| C23, C24 | 22 µF | 0805 X5R | 2 | AP63203 input/output bulk |
-| C25 | 4.7 µF | 0603 X5R | 1 | 3V3 bulk near banks 0/1/6/7 |
-| C26 | 100 nF | 0402 | 1 | Y1 oscillator supply decoupling |
-| C27 | 100 nF | 0402 | 1 | CH340C supply decoupling |
-| C28, C29 | 100 nF | 0402 | 2 | flash decoupling (one per device) |
-| L1 | 4.7 µH / 2 A shielded | 4×4 mm | 1 | AP63203 inductor (vendor reference-design value — re-check at layout) |
-| L2 | 2.2 µH / 3 A shielded | 4×4 mm | 1 | TPS62823 inductor (vendor reference-design value) |
-| FB1 | ferrite bead 600 Ω @ 100 MHz | 0603 | 1 | VM_IN → analog side of the input, cuts motor/USB noise |
+| R1 | 10 kΩ | 0603 | 1 | `ext_rst_n` pull-up (the pin has an internal pull-up; this is for noise and SW1) |
+| R2 | 4.7 kΩ | 0603 | 1 | PROGRAMN pull-up to 3V3 (TN-02038 Table 6.2) |
+| R3, R4 | 4.7 kΩ | 0603 | 2 | INITN and DONE pull-ups to 3V3 |
+| R5, R6, R7 | 4.7 kΩ / 1 kΩ / 1 kΩ | 0603 | 3 | mode straps: CFG1 = 1 (4.7 k to 3V3), CFG0 = 0, CFG2 = 0 (1 k to GND) |
+| R8 | 1 kΩ | 0603 | 1 | MCLK/CCLK pull-up to 3V3 |
+| R9–R12 | 100 Ω | 0603 | 4 | series resistors in the four Master-SPI nets — damping, and they bound any contention with GPIOA[1]/[2]/[4]/[6] (§6.4) |
+| R13–R15 | 10 kΩ | 0603 | 3 | config flash (U2) `/CS`, `/WP`, `/HOLD` pull-ups to 3V3 |
+| R16–R19 | 10 kΩ | 0603 | 4 | application flash (U3) `/CS`, `/WP`, `/HOLD` pull-ups; `motor_fault_n` pull-up |
+| R21–R24 | 0 Ω | 0603 | 4 | UART routing: R21/R23 = CH340C, R22/R24 = J10 (populate one pair only) |
+| R25, R26 | 4.7 kΩ / 10 kΩ | 0603 | 2 | Q1 gate series resistor and gate pull-down |
+| R27–R30 | 470 Ω | 0603 | 4 | user LED series resistors |
+| R31–R34 | 1 kΩ | 0603 | 4 | indicator drives: R31 = Q4 base, R32 = Q2 base, R33/R34 = series for D1/D6 |
+| R36, R37 | 5.1 kΩ | 0603 | 2 | USB-C CC1/CC2 Rd (omit with micro-USB) |
+| **R38** | **37.4 kΩ (E96)** | 0603 | 1 | **1V1 feedback divider, top**: 0.8 × (1 + 37.4/100) = **1.099 V** |
+| **R39** | **100 kΩ** | 0603 | 1 | **1V1 feedback divider, bottom** — measure this rail before fitting U1 (§10 step 2) |
+| **R40** | 100 kΩ | 0603 | 1 | MP1584 `FREQ` resistor (≈0.5 MHz; confirm against the datasheet — OQ-B10) |
+| **R41** | 100 kΩ | 0603 | 1 | MP1584 `EN` series resistor (with C31 = the ≈13 ms sequencing delay) |
+| **R42** | 47 kΩ | 0603 | 1 | Q3 gate pull-up to source (with C32 = the ≈50 ms 2V5 delay) |
+| C1 | 100 nF | 0603 | 1 | `ext_rst_n` RC (with R1) |
+| C2–C7 | 100 nF | 0603 | 6 | 1V1 decoupling, one per VCC pin (20, 29, 38, 66, 83, 130) |
+| C8–C11 | 100 nF | 0603 | 4 | 2V5 decoupling, one per VCCAUX pin (17, 53, 96, 132) |
+| C12–C20 | 100 nF | 0603 | 9 | 3V3 decoupling, one per VCCIO pin (9, 16, 36, 43, 70, 86, 100, 122, 137) |
+| C21 | 100 µF / 10 V electrolytic + 100 nF | 6.3×5.4 mm / 0603 | 1+1 | 1V1 bulk (MP1584 is non-synchronous — needs real bulk) |
+| C22 | 22 µF / 10 V electrolytic + 100 nF | 5×5 mm / 0603 | 1+1 | 2V5 bulk |
+| C23 | **470 µF / 35 V electrolytic** + 100 nF | 10×10 mm / 0603 | 1+1 | LM2596 input bulk (datasheet value for a 5–12 V input) |
+| C24 | **220 µF / 16 V electrolytic** + 100 nF | 8×7 mm / 0603 | 1+1 | LM2596 output bulk for the 3V3 rail |
+| C25 | 10 µF | 0805 | 1 | 3V3 bulk near banks 0/1/6/7 |
+| C26 | 100 nF | 0603 | 1 | Y1 oscillator decoupling |
+| C27 | 100 nF | 0603 | 1 | CH340C decoupling |
+| C28, C29 | 100 nF | 0603 | 2 | flash decoupling (one per device) |
+| **C30** | 10 µF in + 10 µF out | 0805 | 2 | AMS1117 input/output — it wants ≥10 µF, and ceramics can make it ring; bench check (OQ-B10) |
+| **C31** | 470 nF | 0603 | 1 | MP1584 `EN` delay capacitor (≈13 ms with R41) |
+| **C32** | 470 nF | 0603 | 1 | Q3 gate delay capacitor (≈50 ms with R42) |
+| C33 | 100 nF | 0603 | 1 | MP1584 bootstrap (`BST`) capacitor |
+| L1 | **33 µH / 3 A** shielded | 8×8 mm | 1 | LM2596 3V3 inductor (datasheet value) |
+| L2 | **10 µH / 3 A** shielded | 6×6 mm | 1 | MP1584 1V1 inductor |
+| FB1 | ferrite bead 600 Ω @ 100 MHz | 0603 | 1 | VM_IN filtering ahead of the regulators |
 
-**Cost band (1-off, indicative):** U1 USD 14–25 dominates; everything else together is roughly
-USD 6–10. A W25Q32JV + AP63203 + CH340C configuration lands near the bottom of that band.
+**Cost band (India, one board):** U1 ≈ ₹1,650 is three quarters of the total; everything else together is
+roughly **₹700–1,100** from tier-1 vendors. The module-first build of §3.5 trades about ₹200 for a much
+easier assembly.
 
-**Feed-through / mechanical (not on the PCB):** 4 × M3 mounting holes on a 60 × 60 mm outline,
-optional 3.3 V FT232H or FT2232H adapter for JTAG, USB-C cable, 5–12 V supply.
+### 3.4 Sourcing the FPGA (the one part you cannot substitute)
 
----
+* The design *is* an ECP5 design: `rtl/sv16_pll.sv` instantiates `EHXPLLL`, the boot ROM is initialised
+  ECP5 block RAM, `constraints/ecp5_144tqfp.lpf` is a TQFP-144 pin map, and the bitstream comes out of
+  `nextpnr-ecp5`. No other vendor's part fits, and no other ECP5 package fits either.
+* **Buy it from an Indian storefront of a global distributor:** digikey.in, mouser.in or
+  in.element14.com. They quote in ₹, ship domestically, and clear customs themselves. Lead time is
+  40+ weeks when the part is not stocked, so **check availability before you commit to the PCB** — this
+  is open item OQ-B13.
+* **Acceptable substitutions** (same package, pin-compatible, same or better silicon):
+  * **LFE5U-12F-7TG144C** — speed grade 7 instead of 6 (pin-identical, and often the part you can
+    actually find). **Verified on this tree:** `make bitstream CLKSRC=osc FPGA_SPEED=7 BUILD=build/spd7`
+    completes end to end — 9,407 LUT4 (77.5 %), 18/32 sysMEM, **49.53 MHz Fmax** at the 25 MHz
+    constraint (the speed-6 build measures 44.70 MHz in the same configuration), and the resource guard
+    accepts the `LFE5U-12F-7TQFP144` part string. Program it with `make prog FPGA_PART=LFE5U-12F`.
+  * **LFE5U-12F-6TG144I** — industrial temperature grade. Drop-in, usually a little dearer.
+  * **Do not** substitute another density (25F/45F) or package (BG256/BG381): the pin map, the PLL
+    reference input and the whole LPF would have to be redone.
+* **Want ECP5 silicon in your hands before the PCB exists?** A **Colorlight 5A-75B / 5A-75E** LED
+  controller (₹1,500–3,000 via Amazon.in / IndiaMART / AliExpress) contains an **LFE5U-25F-6BG381C** and
+  its JTAG header is publicly reverse-engineered (`q3k/chubby75`). It is *not* this board — different
+  package, different pinout, needs its own LPF — but it is a cheap way to run the SV-16 SoC and this
+  toolchain on real silicon while the PCB is being designed.
+
+### 3.5 Module-first option (recommended for a first build in India)
+
+Hand-soldering a 0.5 mm-pitch TQFP-144 is the hardest part of this board; the second hardest is getting
+the two switchers right. If you want the first board to work on the first try, replace the power and
+console sections with ready-made modules on 4-pin headers — the FPGA section and every net name
+(3V3 / 2V5 / 1V1 / VM_IN, `uart_tx` / `uart_rx`) stay exactly the same:
+
+| Instead of | Fit | ₹ | Why it is easier |
+| :--- | :--- | :-: | :--- |
+| U5 + L1 + D10 + C23 + C24 (3V3) | an **LM2596 buck module** (Robu ₹43–50) with its output set to 3.3 V | 45 | no inductor/diode/feedback to get wrong; the pot sets the voltage |
+| U6 + L2 + D11 + R38/R39/R40/C31 + C21 (1V1) | a **Mini360 / MP1584 module** (Robu ₹105), output trimmed to **1.10 V, measured with a meter** | 105 | same reason; the divider risk disappears |
+| U7 + Q3 + C30/C32 (2V5) | a second small buck module set to 2.5 V, or an AMS1117-2.5 breakout | 50–105 | |
+| U4 + U8 + J8 (USB-UART) | a **CH340C + USB-C serial breakout** (Robu ₹149) — 4-pin header, cross TX/RX | 149 | no SOP-16, no USB routing, no ESD array |
+| J2 + J1 (JTAG) | keep J1 (2.54 mm) — modules cannot replace this | 10 | |
+
+Two caveats: modules make the §4.3 power-up order less deterministic (many MP1584 modules expose an `EN`
+pad, so you can still add the RC delay — otherwise keep the PROGRAMN-hold fallback), and they are bulky:
+reserve ~35 × 45 mm for the module area and mount them on headers rather than soldering them down, so you
+can swap one out.
+
+### 3.6 What changed from revision 1.0, and why each replacement is equivalent
+
+| Rev 1.0 part | Now | Why it is an equivalent (not just "something similar") |
+| :--- | :--- | :--- |
+| U5 AP63203 (synch. buck, TSOT-26) | **LM2596S-3.3** (TO-263-5) | Same job: 3.3 V rail ≥ 2 A from a 5–12 V input. Slower (150 kHz vs 1.1 MHz) and non-synchronous, so it needs an external Schottky (D10) and much more bulk capacitance (C23/C24) — but 3 A rated and it is on the shelf in India for ₹51. Neutral for the FPGA: the rail is 3.3 V either way |
+| U6 TPS62823 (synch. buck, 2.4–5.5 V in) | **MP1584EN** (SOIC-8E) | Same job: 1.1 V core rail, 3 A. Difference: the MP1584 needs **≥4.5 V input**, so it runs from VM_IN instead of from 3V3 — that is what forces the explicit sequencing in §4.3. 0.8 V reference (vs the TPS62823's lower one) sets 1.1 V with a divider, still inside the FPGA's 1.045–1.155 V window with 5 % margin |
+| U7 LP5907-2.5 (LDO, SOT-23-5) | **AMS1117-2.5** (SOT-223) | Same job: 2.5 V for VCCAUX at 16 mA. Bigger, noisier and it needs ≥10 µF output — irrelevant for a 16 mA load of reference input buffers |
+| Y1 ASEMB-25.000 (XO, 3.2×2.5) | **YIC OSC25M-3.3I/S3-25T** | Same job: 25.000 MHz, 3.3 V CMOS, ±25 ppm (better than the ±50 ppm the ±2 % UART tolerance needs). Any 25 MHz 3.3 V **active** oscillator in 5×7 mm works |
+| R38–R42, C30–C33, D10, D11, Q3 | new | Sequencing and the passives the two new bucks require |
+| passives 0402 | **0603** | Same values, hand-solderable; 0402 stays only if you shrink the board |
+| "no electrolytics anywhere" | 470 µF + 220 µF + 100 µF + 22 µF electrolytics | Consequence of the two non-synchronous bucks |
+| `L1 4.7 µH`, `L2 2.2 µH` | **33 µH** (LM2596) and **10 µH** (MP1584) | Inductor values are set by the switcher, not the load |
 
 ## 4. Power architecture
 
 ### 4.1 Rail generation
 
 ```
-  J9 barrel 5-12 V ──[D8 SS34]──+                            J8 USB-C VBUS 5 V ──[D9 SS34]──+
-                                |                                                             |
-                                +──────────────  VM_IN (4.6 V ... 12 V)  ────────────────────+
-                                                    |          |   |   |   |
-                                                  [FB1]    (C23 22u) |   |   |
-                                                    |                |   |   |
-                                            +-------+--------+       |   |   |
-                                            |  U5 AP63203    |--L1---+   |   |
-                                            |  3.3 V / 2 A   |  4.7 uH   |   |
-                                            +-------+--------+           |   |
-                                                    |                    |   |
-                                                  3V3 ─── (C24 22u, C25 4.7u, 9 x 100n) ─────
-                                                    |                    |   |
-                     +------------------------------+                    |   |
-                     |                              |                    |   |
-             +-------+--------+           +---------+---------+          |   |
-             |  U6 TPS62823   |           |   U7 LP5907-2.5   |          |   |
-             |  1.1 V / 3 A   |           |   2.5 V / 250 mA  |          |   |
-             +-------+--------+           +---------+---------+          |   |
-                     |                              |                    |   |
-                    1V1                            2V5                   |   |
-              (C21 4.7u, 6 x 100n)          (C22 4.7u, 4 x 100n)         |   |
-                                                                         |   |
-   VCC (1.1 V) = pins 20, 29, 38, 66, 83, 130                            |   |
-   VCCAUX (2.5 V) = pins 17, 53, 96, 132                                 |   |
-   VCCIO0/1/2/3/6/7/8 (3.3 V) = pins 137, 122, 100, 70, 86, 16, 36, 9, 43 +-+
+  J9 barrel 7-12 V ─[D8 SS34]─+                       J8 USB-C 5 V ─[D9 SS34]─+
+                              |                                            |
+                              +──────── VM_IN (4.6 ... 12 V) ──────────────+
+                                            |         |         |
+                                         [FB1]      C23 470u    |
+                                            |      (electro)    |
+                                  +---------+---------+         |
+                                  |   U5 LM2596S-3.3  |--L1 33uH
+                                  |   3.3 V / 3 A     |  D10 SS34 (catch)
+                                  +---------+---------+
+                                            |
+                            3V3 ── C24 220u(electro) + C25 10u + 9 x 100n ─────────────+
+                                            |                                          |
+      ┌── directly to VCCIO0/1/2/3/6/7/8 ────┘                                          |
+      |  (VCCIO8 = pin 43, the config port, is the first rail to become valid)          |
+      |                                                                                 |
+      |   ┌── U6 MP1584EN ── L2 10uH ── D11 SS34 (catch) ── 1V1 (C21 100u + 6 x 100n) ──┤
+      +───┤    EN ◄── R41 100k (VM_IN) + C31 470n (GND)     ← ≈13 ms delay              |
+      |   └── FB ◄── R38 37.4k (OUT) + R39 100k (GND) = 1.099 V                         |
+      |                                                                                 |
+      |   ┌── Q3 AO3401 (P-FET load switch) ── U7 AMS1117-2.5 ── 2V5 (C22 22u + 4 x 100n)
+      +───┤    gate: R42 47k to source + C32 470n to GND      ← ≈50 ms delay            |
+          └── (C30 10u in / 10u out)                                                    |
+                                                                                        |
+   VCC (1.1 V)    = pins 20, 29, 38, 66, 83, 130  ◄─────────────────────────────────────┘
+   VCCAUX (2.5 V) = pins 17, 53, 96, 132
+   VCCIO0/1/2/3/6/7/8 (3.3 V) = pins 137, 122, 100, 70, 86, 16, 36, 9, 43
    VCCIO8 (pin 43) also powers the configuration port and the JTAG TAP.
 ```
 
@@ -277,10 +368,15 @@ optional 3.3 V FT232H or FT2232H adapter for JTAG, USB-C cable, 5–12 V supply.
 
 | Rail | Pins (count) | Nominal | Allowed range (datasheet) | Consumers | Static budget |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1V1** (VCC) | 20, 29, 38, 66, 83, 130 (6) | 1.10 V | 1.045–1.155 V (Table 3.2); abs max 1.32 V (Table 3.1) | FPGA core | 77 mA typical (Table 3.8, TJ = 85 °C) + switching current; regulator rated 3 A |
-| **2V5** (VCCAUX) | 17, 53, 96, 132 (4) | 2.50 V | 2.375–2.625 V; abs max 2.75 V | differential/referenced input buffers | 16 mA typical (Table 3.8); regulator 250 mA |
-| **3V3** (VCCIO + I/O) | 9, 16, 36, 43, 70, 86, 100, 122, 137 (9) | 3.30 V | 3.135–3.465 V for LVCMOS33 (Table 3.11); abs max 3.63 V | 6 banks + 2 flashes + oscillator + LEDs + CH340C | 6 × 0.5 mA typical (Table 3.8) + loads; regulator 2 A |
-| VM_IN | J9 / J8 | 5–12 V | AP63203 input 3.8–32 V | U5, J2/J3 5 V pins, J6 motor passthrough | external supply must deliver ≥ 1 A |
+| **1V1** (VCC) | 20, 29, 38, 66, 83, 130 (6) | 1.10 V — **set by R38/R39** | 1.045–1.155 V (Table 3.2); abs max 1.32 V (Table 3.1) | FPGA core | 77 mA typical (Table 3.8, TJ = 85 °C) + switching current; U6 rated 3 A |
+| **2V5** (VCCAUX) | 17, 53, 96, 132 (4) | 2.50 V | 2.375–2.625 V; abs max 2.75 V | differential/referenced input buffers | 16 mA typical (Table 3.8) + 5 mA LDO quiescent; U7 rated 1 A |
+| **3V3** (VCCIO + I/O) | 9, 16, 36, 43, 70, 86, 100, 122, 137 (9) | 3.30 V | 3.135–3.465 V for LVCMOS33 (Table 3.11); abs max 3.63 V | 6 banks + 2 flashes + oscillator + LEDs + CH340C + the 2V5 LDO's 5 mA | 6 × 0.5 mA typical (Table 3.8) + loads + U7 quiescent; U5 rated 3 A |
+| VM_IN | J9 / J8 | 7–12 V (barrel, recommended) or 5 V (USB) | U5 input 4.5–30 V, U6 input 4.5–28 V — see the USB note below | U5, U6, the 5 V pins of J3/J4, J6 motor passthrough | external supply ≥ 1 A |
+
+**USB-C power is at the input-voltage edge.** 5 V USB minus the SS34 drop (~0.4 V) leaves ≈ 4.6 V at
+VM_IN, and both bucks want ≥ 4.5 V. That works for bench use at light load, but the margin disappears as
+soon as the motor header is loaded — **use the barrel jack at 7–12 V for anything real**, or replace D9
+with a P-MOSFET ideal-diode. Open item OQ-B12.
 
 **Timing margin is not the same thing as power margin.** The static numbers above are from the datasheet;
 this repository has **no** dynamic power estimate for the SoC (the open toolchain has no power analyser,
@@ -294,23 +390,35 @@ and `nextpnr` emits none). The regulators are therefore specified with a large m
 | Rule | Requirement | How this board satisfies it |
 | :--- | :--- | :--- |
 | Recommended levels | VCC 1.045–1.155 V, VCCAUX 2.375–2.625 V, VCCIO 1.14–3.465 V | fixed-value regulators: 1.10 V / 2.50 V / 3.30 V |
-| Ramp rate | all supplies 0.01–10 V/ms; VCCAUX ≤ 30 mV/µs | AP63203 ≈ 1 V/ms soft-start, TPS62823 ≈ 0.5 V/ms, LP5907 ≈ 0.1 V/ms (all inside the window) |
+| Ramp rate | all supplies 0.01–10 V/ms; VCCAUX ≤ 30 mV/µs | LM2596 soft-start ≈ 1 V/ms; MP1584 ≈ 0.5 V/ms; AMS1117 ≈ 0.1 V/ms — all inside the window (verify on the bench, §10 step 3) |
 | POR release | only when VCC, VCCAUX **and VCCIO8** are all above their trip points (0.90–1.00 V, 2.00–2.20 V, 0.95–1.06 V) | all three rails are generated and all three are monitored by the device itself; no board-side reset generator is needed |
-| Master-SPI order (§3.5) | ramp VCCIO8 above the flash `VIH` **before** VCC or VCCAUX reach their POR trip, or hold PROGRAMN/INITN low until VCCIO8 is valid | 1V1 and 2V5 are derived *from* 3V3, so 3V3 (= VCCIO8) is always valid first; the second mechanism (PROGRAMN held low) is available as a belt-and-braces option by fitting R2 to a supervisory reset instead of a plain pull-up |
+| Master-SPI order (§3.5) | ramp VCCIO8 above the flash `VIH` (0.7 × 3.3 V ≈ **2.31 V**) **before** VCC or VCCAUX reach their POR trip (0.90–1.00 V and 2.00–2.20 V), or hold PROGRAMN/INITN low until VCCIO8 is valid | **explicitly sequenced** — see the timeline below. Because the India-sourced bucks need ≥4.5 V input, VCC and VCCAUX are no longer derived from 3V3, so the order is created with two RC networks instead of by construction |
+| Fallback if the bench disagrees | the datasheet's second option | drive PROGRAMN low from the host (J1.4 / the CH340C DTR path through Q1) and release it after 3V3 is up; this is a firmware/host action, not a board change |
 | VCCIO8 ramp-down | the device has **no ramp-down detection** on VCCIO8; a brown-out that only drops VCCIO8 while VCC stays valid can leave the part in an undefined state | the 3V3 rail is the master: if the supply collapses, VCC collapses with it (all rails come from the same VM_IN), so the device sees a clean power cycle. Do not add a separate 3V3-only cutoff switch |
-| Sequencing on power-down | no requirement | bulk capacitance (C21–C25) is sized so all three rails fall together, VCCIO8 last, because it has the largest load |
+| Sequencing on power-down | no requirement | bulk capacitance is sized so all three rails fall together; the 3V3 rail has the largest load (C23/C24/C25) and therefore falls last, which is what the datasheet wants |
 | JTAG `VREF` | the 1×10 Versa-style header has no VREF pin, the 2×5 header does | J1.1 and J2.1 both sit on 3V3; adapters that measure VREF will read 3.3 V, and adapters that *level-shift* from VREF will drive 3.3 V logic correctly |
+
+**Power-up timeline (typ, 12 V input).** `t = 0` is VM_IN applied.
+
+| Time | Event | Consequence |
+| ---: | :--- | :--- |
+| ≈0.3 ms | 3V3 (U5, LM2596 soft-start) crosses 2.31 V | VCCIO8 is now above the config flash's `VIH` — the ordering requirement is met with two orders of magnitude of margin |
+| ≈13 ms | U6 starts (EN released by R41/C31; threshold ≈1.2 V at 5 V in: t = −RC·ln(1 − 1.2/Vin), RC = 47 ms) | VCC begins to rise after VCCIO8 is fully valid |
+| ≈14 ms | 1V1 crosses 0.90 V | VCC POR trip, comfortably after VCCIO8 |
+| ≈50 ms | Q3 turns on (gate RC 47 kΩ × 470 nF ≈ 22 ms) → 2V5 rises | VCCAUX POR trip, last of the three |
+| ≈60 ms | POR releases (VCC, VCCAUX and VCCIO8 all above trip) | the device starts configuration from U2 |
 
 ### 4.4 Decoupling
 
 | Rail | Bulk | Per-pin ceramic | Placement rule |
 | :--- | :--- | :--- | :--- |
-| 1V1 | C21 4.7 µF | C2–C7 100 nF (6, one per VCC pin) | 100 nF within 3 mm of each pin, via to the ground plane directly beside the pad |
-| 2V5 | C22 4.7 µF | C8–C11 100 nF (4, one per VCCAUX pin) | same |
-| 3V3 | C24 22 µF + C25 4.7 µF | C12–C20 100 nF (9, one per VCCIO pin) | same; the 100 nF on VCCIO8 (pin 43) is the most important one on the board — it also decouples the configuration port |
-| Input | C23 22 µF | — | at the input diodes |
+| 1V1 | C21 100 µF electrolytic | C2–C7 100 nF (6, one per VCC pin) | 100 nF within 3 mm of each pin, via to the ground plane directly beside the pad |
+| 2V5 | C22 22 µF electrolytic | C8–C11 100 nF (4, one per VCCAUX pin) | same |
+| 3V3 | C23 470 µF (input) + C24 220 µF (output) electrolytic + C25 10 µF ceramic | C12–C20 100 nF (9, one per VCCIO pin) | same; the 100 nF on VCCIO8 (pin 43) is the most important one on the board — it also decouples the configuration port |
+| Input | — | 100 nF per regulator pin + FB1 | at the input diodes |
 
-Total ceramic count ≈ 40 pieces of 100 nF — no exotic parts, no bulk electrolytics.
+The electrolytics are the price of using two non-synchronous bucks; keep them close to their regulator
+rather than near the FPGA, and keep the switching loops small (§11).
 
 ---
 
@@ -319,13 +427,14 @@ Total ceramic count ≈ 40 pieces of 100 nF — no exotic parts, no bulk electro
 ```
    Y1 (25.000 MHz CMOS XO, 3.3 V)  ── CLK25 ──►  U1 pin 133  clk_25m
         |  power: 3V3 + C26 100 nF
-        |  output enable: tied to 3V3 (always on)
+        |  output enable (pin 1): tied to 3V3 (always on)
 ```
 
 | Item | Value | Source |
 | :--- | :--- | :--- |
 | Frequency | 25.000 MHz | `constraints/ecp5_144tqfp.lpf` (`clk_25m`), `docs/RESET_AND_CLOCK.md` |
-| Stability | ±50 ppm is enough: the console runs 115200 8N1 (≈ ±2 % tolerance) and the ISA/timer tests are cycle-based, not frequency-based | this design |
+| Stability | ±25 ppm (the India-available YIC part) — far better than needed: the console runs 115200 8N1 (≈ ±2 % tolerance) and the tests are cycle-based | this design |
+| Sourcing | **it must be an active oscillator, not a crystal.** ECP5 has no on-chip oscillator and the design expects a driven `clk_25m`, so a ₹39 passive 25 MHz crystal (the "YSX321SL" type that Indian shops list) will **not** work. Buy the YIC part from digikey.in (₹111) or any 25 MHz 3.3 V active oscillator in 5×7 mm / 3.2×2.5 mm from Amazon.in / eBay.in / Sunrom | |
 | PLL configuration | CLKI_DIV 2, CLKFB_DIV 3, CLKOP_DIV 16 → CLKOP = 37.5 MHz, VCO = 600 MHz (inside the 400–800 MHz range) | `rtl/sv16_pll.sv`, `docs/ARCHITECTURE_DECISIONS.md` ADR-024 |
 | Achieved timing | 45.45 MHz Fmax at the 37.5 MHz constraint (`build/pll/sv16_nextpnr.log`), 44.70 MHz in the `CLKSRC=osc` 25 MHz build | `docs/SYNTHESIS_AND_DEPLOYMENT.md` |
 | Second clock | none. No DDR, no SERDES (the ECP5 144-TQFP offering has **0 SerDes channels**), no second oscillator input — the design has a single clock domain plus the hardened blocks | datasheet Table 1.1 / §4.3.2 |
@@ -433,7 +542,8 @@ W25Q datasheet; the CH340C is drawn by pin *name* (the vendor's SOP-16 numbering
 ### 7.1 Sheet 1 — FPGA supply and ground
 
 ```
-        1V1 rail                        2V5 rail                       3V3 rail
+       1V1 rail (U6 MP1584EN)            2V5 rail (U7 AMS1117-2.5)        3V3 rail (U5 LM2596S-3.3)
+       from VM_IN, EN delayed 13 ms      from Q3 load switch, 50 ms       from VM_IN, valid first
            |                               |                               |
    +---+---+---+---+---+---+       +---+---+---+---+               +---+---+---+---+---+---+---+---+---+
    |20 |29 |38 |66 |83 |130|       |17 |53 |96 |132|               | 9 |16 |36 |43 |70 |86 |100|122|137|
@@ -442,7 +552,16 @@ W25Q datasheet; the CH340C is drawn by pin *name* (the vendor's SOP-16 numbering
      | |   |   |   |   |             | |   |   |                     | |   |   |   |   |   |   |   |
     C2 C3  C4  C5  C6  C7           C8 C9 C10 C11                  C12 C13 ...                 ...   C20
    100n  (all to GND)              100n (all to GND)               100n (all to GND)
-   + C21 4u7                       + C22 4u7                       + C24 22u + C25 4u7
+   + C21 100u (electro)            + C22 22u (electro)             + C24 220u + C25 10u
+
+   U5 (3V3):  VM_IN → [C23 470u electro + 100n] → IN ; OUT → L1 33uH → 3V3 ; D10 SS34 from OUT to GND(anode)
+              OUT → C24 220u → 3V3 ; ON/OFF pin → GND (always enabled) ; GND → plane
+   U6 (1V1):  VM_IN → [100n] → IN ; EN ← VM_IN via R41 100k with C31 470n to GND (13 ms)
+              SW → L2 10uH → 1V1 ; D11 SS34 catch to GND ; BST → C33 100n → SW
+              FB ← R38 37.4k from 1V1, R39 100k to GND (= 1.099 V) ; C21 100u on the 1V1 rail
+   Q3/U7 (2V5): 3V3 → Q3 AO3401 (S) → (D) → U7 AMS1117-2.5 IN → OUT = 2V5 → C22 22u
+              Q3 gate: R42 47k to 3V3 (source) + C32 470n to GND (≈50 ms turn-on)
+              U7: C30 10u in, 10u out ; GND → plane
 
    Ground:  8 (VSSIO7)  15 (VSSIO6)  21 (VSS)  32 (VSSIO6)  42 (VSSIO8)  65 (VSS)  75 (VSSIO3)
             85 (VSS)  87 (VSSIO3)  101 (VSSIO2)  123 (VSSIO1)  129 (VSSIO0)  131 (VSS)  138 (VSSIO0)
@@ -461,13 +580,13 @@ W25Q datasheet; the CH340C is drawn by pin *name* (the vendor's SOP-16 numbering
 
   U1.55 INITN  -----+--[R3 4.7k]-- 3V3
                     +-- J1.10 (header INITn)
-                    +--[R31 1k]-- Q4 base             Q4 = MMBT3906 (PNP, optional indicator)
-                        Q4 emitter -- 3V3 ; Q4 collector -- D6 --[R34 1k]-- GND
+                    +--[R31 1k]-- Q4 base             Q4 = BC807 (PNP, optional indicator)
+                        emitter -- 3V3 ; collector -- D6 --[R34 1k]-- GND
                         (D6 red lights when INITN is low = SRAM clear / config error)
 
   U1.56 DONE   -----+--[R4 4.7k]-- 3V3
                     +-- J1.9  (header DONE)
-                    +--[R32 10k]-- Q2 base            Q2 = MMBT3904 (NPN)
+                    +--[R32 10k]-- Q2 base            Q2 = BC817 (NPN)
                         Q2 emitter -- GND ; Q2 collector -- D1 --[R33 1k]-- 3V3
                         (D1 green lights when DONE is high = configured / in user mode)
 
@@ -589,7 +708,7 @@ W25Q datasheet; the CH340C is drawn by pin *name* (the vendor's SOP-16 numbering
 | J6 | 1×6 keyed | see §7.5 | motor driver interface |
 | J7 | 2×25, 2.54 mm | 46 spare I/O + 4 GND | expansion only; not fitted |
 | J8 | USB-C receptacle | VBUS, D+, D−, GND, CC1/CC2 = 5.1 kΩ Rd | power + console on one cable |
-| J9 | 5.5/2.1 mm barrel | centre positive, 5–12 V | bench supply, powers the motor connector too |
+| J9 | 5.5/2.1 mm barrel | centre positive, **7–12 V** (5 V USB works only at light load — OQ-B12) | bench supply, powers the motor connector too |
 | J10 | 1×4, 2.54 mm | 3V3 · UART_TX(F) · UART_RX(F) · GND | console without fitting the CH340C (fit R22/R24, remove R21/R23) |
 
 Wiring notes that prevent the two most common support cases:
@@ -650,8 +769,9 @@ FPGA-MD-02097 reads `0x41111043`), then flow 1 or 2 recovers the board.
 | # | Step | Pass criterion | Tool |
 | :-: | :--- | :--- | :--- |
 | 1 | Resistance check before power | > 100 Ω from each rail (TP1/TP2/TP3) to GND; no short between rails | DMM |
-| 2 | Power up on the barrel jack only | TP1 = 3.135–3.465 V, TP2 = 2.375–2.625 V, TP3 = 1.045–1.155 V | DMM |
-| 3 | Ramp order (scope, two channels) | 3V3 reaches ≈ 0.9 V before 1V1/2V5 start; no rail slower than 0.01 V/ms; VCCAUX slew ≤ 30 mV/µs | scope, 100 ms/div |
+| 2 | Power up on the barrel jack (7–12 V) with **U1 not fitted yet** | TP1 = 3.135–3.465 V, TP2 = 2.375–2.625 V, TP3 = 1.045–1.155 V — the 1V1 rail is now set by the R38/R39 divider, so **verify and trim it here**, before the FPGA is on the board and can be damaged by an out-of-range core rail | DMM |
+| 2b | With all three rails in spec, fit U1 (and only then, the flashes) | — | — |
+| 3 | Ramp order (scope, two channels) | 3V3 rises first and passes 2.31 V before either of the other rails moves at all; 1V1 starts ≈13 ms later, 2V5 ≈50 ms later; no rail slower than 0.01 V/ms; VCCAUX slew ≤ 30 mV/µs | scope, 20 ms/div |
 | 4 | JTAG detection | `openFPGALoader --detect` returns the ECP5 IDCODE, no cable/chain errors | J1/J2 + adapter |
 | 5 | Volatile configuration | DONE (TP5) goes high, D1 lights, INITN stays high | `make prog` |
 | 6 | Console | 115200 8N1 shows the monitor banner; `?` lists commands | `make mon-term PORT=/dev/ttyUSB0` |
@@ -671,7 +791,7 @@ FPGA-MD-02097 reads `0x41111043`), then flow 1 or 2 recovers the board.
 | Stack-up | 4 layers, 1.6 mm: signal / solid GND / solid PWR (3V3, 1V1, 2V5 pours) / signal. A 2-layer board is possible but the 0.5 mm-pitch TQFP fan-out and the three rails make it unpleasant; not recommended |
 | Fan-out | 0.25 mm traces, 0.2 mm vias; TQFP-144 escape on all four sides. Ground pins 8/15/21/32/42/65/75/85/87/101/123/129/131/138 each get their own via to the GND plane |
 | Decoupling | the 100 nF of C2–C20 within 3 mm of its pin, on the same side as the FPGA, with the via first at the pad; bulk (C21–C25) near the regulator outputs |
-| Regulators | keep the two switchers' inductors and the input loop tight; keep the 1V1 inductor away from the configuration flash and the 25 MHz oscillator; put U5/U6/U7 on the opposite edge of the board from J6 |
+| Regulators | keep the two switchers' inductors (L1 33 µH, L2 10 µH), their catch diodes and the input loops tight — these are 150 kHz and ~500 kHz hard-switched nodes; keep L2 and D11 away from the configuration flash and the 25 MHz oscillator; put U5/U6/U7 and their electrolytics on the opposite edge of the board from J6 |
 | Motor return | J6 GND must have its own path to the input bulk capacitor; do not route motor current through the FPGA ground area. FB1 and the 3V3 bulk capacitor are the barrier |
 | Oscillator | Y1 within 10 mm of pin 133, no via in the trace, ground pour under the part, keep the switching nodes > 5 mm away |
 | Config flash | U2 within 15 mm of pins 46/47/49/54; the 100 Ω series resistors at the FPGA end (they are there to bound contention, §6.4) |
@@ -714,7 +834,7 @@ FPGA-MD-02097 reads `0x41111043`), then flow 1 or 2 recovers the board.
 | ID | Item | Why it is open | Closing action |
 | :--- | :--- | :--- | :--- |
 | OQ-B1 | Dynamic current on 1V1/2V5/3V3 | the open-source flow has no power analyser; only datasheet *static* numbers exist | measure on the first board (§10 step 13); the regulators are oversized on purpose |
-| OQ-B2 | Regulator passives (L1 4.7 µH, L2 2.2 µH, capacitor values, feedback dividers) | taken from the vendors' typical application circuits, not re-derived here | run the vendors' design tools / reference schematics at layout time |
+| OQ-B2 | Regulator passives (L1 33 µH, L2 10 µH, the electrolytic values, the feedback divider) | taken from the vendors' typical application circuits rather than re-derived here; see also OQ-B10 for the values the two new bucks add | run the vendors' reference designs at layout time, and measure the rails at bring-up step 2 |
 | OQ-B3 | Configuration time from U2 at the default MCLK | TN-02039 gives the mechanism but the bitstream's `MCCLK_FREQ` setting is not inspected by the open flow | measure `INITN`→`DONE` with a scope on the first board |
 | OQ-B4 | CH340C 3.3 V connection details (V3 pin, decoupling, DTR polarity) | pin numbers and the 3.3 V configuration must come from the WCH datasheet, which is not in this repository | download and check the WCH datasheet before schematic capture |
 | OQ-B5 | USB-C sink compliance (Rd values, no-PD behaviour) | standard practice, no USB-IF testing | bench-test with several hosts/cables |
@@ -722,6 +842,10 @@ FPGA-MD-02097 reads `0x41111043`), then flow 1 or 2 recovers the board.
 | OQ-B7 | EMC / ESD pre-compliance (motor transients, USB) | no test house, no hardware | add the layout measures of §11 and re-assess when hardware exists |
 | OQ-B8 | Mechanical outline, mounting, connector placement, enclosure | not fixed yet | decide with the mechanical drawing at PCB start |
 | OQ-B9 | J5 pin sharing with the configuration flash (§6.4) | acceptable as documented, but it is a usability wart | either keep the firmware rule or apply variant V1 (§14) |
+| OQ-B10 | Regulator passives taken from vendor typical applications: the MP1584 `COMP` network and `FREQ` resistor (R40), the AMS1117 output capacitor type (ceramic vs tantalum), and the exact `EN` threshold that sets the 13 ms delay (the delay scales as −RC·ln(1 − Vth/Vin)) | the values here are correct in form but not re-derived from each datasheet | check the MP1584/AMS1117 application circuits before layout; measure the delayed rails at bring-up step 3 |
+| OQ-B11 | Assembly of a 0.5 mm-pitch TQFP-144 plus 0603 passives without a reflow oven | this is the practical risk of the whole build, and it decides whether the first board works | order a stencil with the PCB, use solder paste + hot-air (₹2,500–4,000 stations are on Robu/Zbotic), drag-solder the TQFP with flux, or pay an Indian assembly service; practice on a ₹100 QFP breakout first |
+| OQ-B12 | USB-C (5 V) input voltage margin: 5 V − SS34 drop ≈ 4.6 V against a 4.5 V regulator minimum | the barrel jack is fine; USB is marginal under load | use 7–12 V on J9 for anything real, or replace D9 with a P-MOSFET ideal diode (drop ≈ 50 mV) |
+| OQ-B13 | Actual FPGA stock at digikey.in / mouser.in / element14 India (40+ week lead time when not stocked) | the board is pointless without U1, and stock moves | check availability and price **before** ordering PCBs; a speed-7 or industrial-grade part is an acceptable substitute (§3.4) |
 
 ## 14. Variants and the next revision
 
@@ -767,6 +891,14 @@ document), then V2 when the JTAG cable becomes the bottleneck, then V3 when a re
 | `docs/MCU_READINESS.md` | what is still missing for a production-grade MCU (the board does not change that list) |
 | `REPORT.md` | status of the whole project, including the software-only roadmap §8.2 |
 | `ECP5 and ECP5-5G.pdf` | Lattice FPGA-DS-02012-3.4 — every rail, timing and pin-count number above |
+
+_Revision 1.1 — **India-sourcing edition** (September 2026). The bill of materials was re-sourced so
+that every part is orderable from an Indian vendor: the two regulators became LM2596S-3.3 and MP1584EN,
+the LDO became AMS1117-2.5, the oscillator became the digikey.in YIC part, and the passives moved to
+0603. Because the new bucks need ≥4.5 V input, the power-up order is now created by two RC-delayed
+enables instead of by deriving VCC/VCCAUX from 3V3 — §4.3 has the timeline, §3.6 the full change list,
+and §3.5 a module-first build for a first board. Prices checked against Indian vendor listings in
+September 2026._
 
 _Revision 1.0 — first issue, written against `constraints/ecp5_144tqfp.lpf` and the bitstream in
 `build/pll/sv16_top.bit`. No board exists yet; this document is the specification to build one._
