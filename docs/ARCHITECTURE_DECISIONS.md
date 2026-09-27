@@ -693,19 +693,24 @@ changed, and the default clock source is still the oscillator.
 ## ADR-025: The resource budget is the datasheet's, not the toolchain's
 
 **Context**: while checking this design against the Lattice *ECP5 and ECP5-5G
-Family Data Sheet* (FPGA-DS-02012-3.2), the reported utilisation did not match the
-part. nextpnr prints denominators of **24,288 LUT4 and 56 sysMEM blocks** for a
+Family Data Sheet* — revision **FPGA-DS-02012-3.4** (September 2025), a copy of
+which is in this repository as `ECP5 and ECP5-5G.pdf`; the same table is in
+revision 3.2 — the reported utilisation did not match the part. nextpnr prints denominators of **24,288 LUT4 and 56 sysMEM blocks** for a
 build carrying `--12k`, which are the LFE5U-**25F**'s numbers. The datasheet's
 Table 1.1 gives, for the part in the BOM:
 
 | | LFE5U-12 | LFE5U-25 |
 | :--- | ---: | ---: |
-| LUTs | **12k (12,144 LUT4)** | 24k (24,288) |
+| LUTs | **12k** | 24k |
 | sysMEM blocks (18 kb) | **32** (576 kb = 72 KB) | 56 (1,008 kb) |
 | Distributed RAM | 97 kb | 194 kb |
 | 18×18 multipliers | 28 | 28 |
 | PLLs / DLLs | 2 / 2 | 2 / 2 |
 | 144 TQFP I/O | **98** | 98 |
+
+The datasheet prints "12k LUTs"; the budget checker uses **12,144**, the exact
+count for this family's slice geometry (an ECP5 PFU is 4 slices × 2 LUT4, the
+25F has 3,036 PFUs = 24,288 LUT4, and the 12F is that halved — 1,518 PFU).
 
 The cause is not a stale copy in the documentation — it is the device model.
 In the prjtrellis database, `ECP5/LFE5U-12F/` and `ECP5/LFE5U-25F/` contain
@@ -742,6 +747,14 @@ into a report for anyone deliberately targeting a 25F.
 comfortably in absolute terms, but LUT4 and block RAM are the two resources to
 watch, and every "how much is left" statement in the documentation now means
 "left against the datasheet".
+
+**Verified against the part's own datasheet**: Table 1.1 of revision 3.4 gives
+LFE5U-12 as 12k LUTs / 32 sysMEM blocks / 576 kb / 97 kb distributed RAM /
+28 multipliers / 2 PLLs, and §4.3.2 gives **98 single-ended user I/O on the 144
+TQFP** (per bank 10 + 16 + 18 + 15 + 0 + 15 + 12 + 12). That section also lists
+**4 dedicated TAP pins** and 7 miscellaneous dedicated pins, which is a useful
+correction to the JTAG roadmap item: a JTAG debug bridge does *not* have to
+consume user I/O on this package.
 
 **Consequences**: `docs/FPGA.md`, `docs/SYNTHESIS_AND_DEPLOYMENT.md`,
 `docs/PROJECT_STATUS.md`, `README.md` and `REPORT.md` carry the datasheet numbers

@@ -6,6 +6,7 @@
 | :--- | :--- |
 | Part | `LFE5U-12F-6TG144C` |
 | Family | ECP5 (Lattice Semiconductor) |
+| Datasheet | *ECP5 and ECP5-5G Family Data Sheet*, **FPGA-DS-02012-3.4** (September 2025), held in this repository as `ECP5 and ECP5-5G.pdf`. Every resource number below is from its Table 1.1 and §4.3.2 |
 | Logic | **12k LUTs = 12,144 LUT4** (datasheet, Table 1.1). Each PFU is 4 slices of 2 LUT4 + 2 FF, so the die has 3,036 PFU positions (24,288 LUT4) — but a 12F guarantees **half of them**, which is why `scripts/sv16_check_budget.py` counts against 12,144 and not against nextpnr's denominator (ADR-025) |
 | Block RAM | **32 × `DP16KD`** = 576 Kbit = **72 KB** (datasheet; the 56 blocks / 126 KB figure belongs to the LFE5U-25F — same die, different bin). 18 blocks used = 36 KB |
 | Multipliers | 28 × `MULT18X18D`, 1 used |

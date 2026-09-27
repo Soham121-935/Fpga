@@ -26,7 +26,7 @@ to a production-grade part.
 | Watchdog | **MCU-like** | `sv16_wdt` at `0xF080`: windowed, key-protected, restarts the SoC, survives soft restarts, early-warning interrupt; verified end to end by `wdt_reset_tb` |
 | Low-power / clock scaling | **soft-core gap** | one clock; build-time divider only, no runtime clock control, no sleep modes |
 | Multiple clock options | **present, one preset** | `CLKSRC=pll PLLMHZ=37.5` builds a 37.5 MHz system clock from the on-chip `EHXPLLL` (ADR-021) with the reset gated on lock and the derived constants (UART divisor, timer rates) following it; the default remains the 25 MHz oscillator. Still build-time only: no runtime clock switching, no power-down/standby clock, no `CLKOS` outputs, and no silicon verification of the PLL build |
-| Hardware debug interface (JTAG/SWD, breakpoints, memory access while halted) | **soft-core gap** | single-step and halt exist (`SYS_CTRL`), but only from firmware/console — no JTAG TAP, no GDB stub |
+| Hardware debug interface (JTAG/SWD, breakpoints, memory access while halted) | **soft-core gap** | single-step and halt exist (`SYS_CTRL`), but only from firmware/console — no JTAG TAP, no GDB stub. The package provides 4 dedicated TAP pins (datasheet §4.3.2), so the missing piece is the bridge and host tool, not pins |
 | Memory protection / privilege levels | **soft-core gap** | no MPU; any code can write any MMIO register |
 | In-application programming from the app | **partially MCU-like** | the app can drive `0xF0A0` itself, but the monitor/loader is the only tested path |
 | C compiler and libraries | **soft-core gap** | assembler only (`scripts/sv16_as.py`); the `.c` file in `firmware/` is documentation |
