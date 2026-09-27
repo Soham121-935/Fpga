@@ -98,6 +98,7 @@ UART divisor is derived from the built clock automatically (217 at 25 MHz, 326 a
 
 ```text
 BOARD.md/.pdf    PCB blueprint: components, specs, power tree, connection diagram
+TEAM_PLAN.md/.pdf 4-person build plan: roles, phases, work packages, gates, budget, risks
 board/           device pin database + generated 144-pin net table (BOARD.md appendix)
 docs/            operator manual, memory map, peripherals, flow, verification, ADRs
 rtl/             26 SystemVerilog files: CPU, bus, memory, peripherals, PLL, SoC top
@@ -127,6 +128,7 @@ MCU-like vs. FPGA-soft-core comparison.
 
 | Document | Contents |
 | :--- | :--- |
+| [TEAM_PLAN.pdf](TEAM_PLAN.pdf) | how to build this with four people: roles, five phases, gates, 16 work packages, interfaces to freeze, budget, risks (source: [TEAM_PLAN.md](TEAM_PLAN.md), rebuild with `make plan-pdf`) |
 | [BOARD.pdf](BOARD.pdf) | the same blueprint typeset for printing / review (source: [BOARD.md](BOARD.md), rebuild with `make board-pdf`) |
 | [BOARD.md](BOARD.md) | PCB blueprint — BOM with part numbers, power tree, pin map, connection circuit diagram, bring-up plan, open items |
 | [board/TQFP144_PINOUT.md](board/TQFP144_PINOUT.md) | generated 144-pin device table: pad, bank, rail, design signal, board net |

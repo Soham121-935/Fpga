@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""SV-16 — render BOARD.md to BOARD.pdf.
+"""SV-16 — render a project markdown document to PDF.
 
-BOARD.md is the source of truth; this script produces the printable PDF with the
-ASCII connection diagrams kept in a monospaced font and the wide tables sized to
-fit an A4 page.  It is deliberately optional: `make board-pdf` tells you what to
-install if the two pure-Python dependencies are missing, and nothing else in the
-build depends on it.
+BOARD.md is the source of truth for the board; this script produces the printable
+PDF with the ASCII diagrams kept in a monospaced font and the wide tables sized to
+fit an A4 page.  It renders any document in the repo, so the same styling covers
+TEAM_PLAN.md.  It is deliberately optional: `make board-pdf` / `make plan-pdf`
+tells you what to install if the two pure-Python dependencies are missing, and
+nothing else in the build depends on it.
 
     python3 -m pip install markdown xhtml2pdf
-    scripts/sv16_board_pdf.py            # -> BOARD.pdf
-    scripts/sv16_board_pdf.py --check    # fail if BOARD.pdf is older than BOARD.md
+    scripts/sv16_board_pdf.py                                     # -> BOARD.pdf
+    scripts/sv16_board_pdf.py --src TEAM_PLAN.md --out TEAM_PLAN.pdf
+    scripts/sv16_board_pdf.py --check                             # pdf older than md?
 """
 
 import argparse
@@ -17,9 +19,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "BOARD.md"
+DEFAULT_SRC = ROOT / "BOARD.md"
 APPENDIX = ROOT / "board" / "TQFP144_PINOUT.md"   # generated netlist appendix
-DST = ROOT / "BOARD.pdf"
 
 DEJAVU = Path("/usr/share/fonts/truetype/dejavu")
 FONT_FILES = {
@@ -55,6 +56,7 @@ li { margin-bottom: 2pt; }
 b, strong { font-family: Helvetica-Bold; }
 em, i { font-family: Helvetica; }
 code { font-family: Courier; font-size: 8.2pt; color: #14314f; }
+td code, th code { font-size: 6.2pt; }
 pre { font-family: Courier; font-size: 7.1pt; line-height: 1.18; color: #10243c;
       background-color: #f4f6f8; border: 0.5pt solid #c3ccd6; padding: 4pt 5pt;
       margin: 4pt 0 8pt 0; }
@@ -69,10 +71,11 @@ a { color: #1b4b7d; text-decoration: none; }
 #footer_content { font-family: Helvetica; font-size: 7.4pt; color: #7a8794; text-align: right; }
 """
 
-FOOTER = (
-    '<div id="footer_content">SV-16 microcontroller board blueprint &nbsp;|&nbsp; '
-    "LFE5U-12F-6TG144C &nbsp;|&nbsp; page <pdf:pagenumber/> of <pdf:pagecount/></div>"
-)
+def footer(title):
+    return (
+        '<div id="footer_content">%s &nbsp;|&nbsp; LFE5U-12F-6TG144C &nbsp;|&nbsp; '
+        "page <pdf:pagenumber/> of <pdf:pagecount/></div>" % title
+    )
 
 
 def register_fonts():
@@ -121,7 +124,10 @@ def register_fonts():
 
 
 def appendix_markdown():
-    """The generated 144-pin net table, demoted one heading level and placed on a new page."""
+    """The generated 144-pin net table, demoted one heading level and placed on a new page.
+
+    Only BOARD.md takes the appendix; any other source renders on its own.
+    """
     if not APPENDIX.exists():
         return ""
     lines = []
@@ -132,35 +138,66 @@ def appendix_markdown():
     return "\n\n<div style='page-break-before: always'></div>\n\n" + "\n".join(lines)
 
 
-def build_html(markdown_text):
+import re as _re
+
+# xhtml2pdf does not break long unbreakable tokens (file paths, part numbers), so a
+# table cell containing one runs into its neighbour.  Break long inline-code spans at
+# a path separator instead - a <br/> adds no character, unlike soft/zero-width
+# hyphens, which DejaVu would draw as a visible box.
+_LONG_CODE = _re.compile(r"<code>([^<]{24,})</code>")
+
+
+def break_long_code(html):
+    def fix(match):
+        text = match.group(1)
+        slashes = [i for i, ch in enumerate(text) if ch == "/"]
+        cut = next((i for i in reversed(slashes) if i >= 12), slashes[0] if slashes else None)
+        if cut is None:
+            return match.group(0)
+        return "<code>%s<br/>%s</code>" % (text[:cut + 1], text[cut + 1:])
+    return _LONG_CODE.sub(fix, html)
+
+
+def build_html(markdown_text, appendix="", title="SV-16"):
     import markdown
 
     body = markdown.markdown(
-        markdown_text + appendix_markdown(),
+        markdown_text + appendix,
         extensions=["tables", "fenced_code", "sane_lists", "attr_list"],
         output_format="html5",
     )
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'/><style>%s</style></head>"
-        "<body>%s%s</body></html>" % (CSS, body, FOOTER)
+        "<body>%s%s</body></html>" % (CSS, break_long_code(body), footer(title))
     )
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--src", default=None, help="markdown source (default BOARD.md)")
+    ap.add_argument("--out", default=None, help="PDF output (default: source with .pdf)")
+    ap.add_argument("--title", default=None, help="footer title (default: the source file name)")
     ap.add_argument("--check", action="store_true",
-                    help="verify BOARD.pdf is newer than BOARD.md")
+                    help="verify the PDF is newer than its markdown source")
     args = ap.parse_args()
 
+    src = Path(args.src).resolve() if args.src else DEFAULT_SRC
+    if not src.is_absolute() and args.src:
+        src = (Path.cwd() / args.src).resolve()
+    dst = Path(args.out).resolve() if args.out else src.with_suffix(".pdf")
+    appendix = appendix_markdown() if src == DEFAULT_SRC else ""
+
     if args.check:
-        if not DST.exists():
-            print("ERROR: %s is missing — run scripts/sv16_board_pdf.py" % DST.name)
+        if not dst.exists():
+            print("ERROR: %s is missing — run scripts/sv16_board_pdf.py --src %s"
+                  % (dst.name, src.name))
             return 1
-        newest = max(SRC.stat().st_mtime, APPENDIX.stat().st_mtime if APPENDIX.exists() else 0)
-        if DST.stat().st_mtime < newest:
-            print("ERROR: %s is older than %s — run scripts/sv16_board_pdf.py" % (DST.name, SRC.name))
+        newest = max(src.stat().st_mtime, APPENDIX.stat().st_mtime
+                     if (appendix and APPENDIX.exists()) else 0)
+        if dst.stat().st_mtime < newest:
+            print("ERROR: %s is older than %s — run scripts/sv16_board_pdf.py" % (dst.name, src.name))
             return 1
-        print("%s is up to date" % DST.name)
+        print("%s is up to date" % dst.name)
         return 0
 
     try:
@@ -174,17 +211,19 @@ def main():
     from xhtml2pdf import pisa
 
     register_fonts()
-    html = build_html(SRC.read_text())
-    (ROOT / "build" / "board_pdf.html").parent.mkdir(exist_ok=True, parents=True)
-    (ROOT / "build" / "board_pdf.html").write_text(html, encoding="utf-8")
+    title = args.title or src.stem.replace("_", " ").title()
+    html = build_html(src.read_text(), appendix, title)
+    debug_html = ROOT / "build" / ("%s.html" % dst.stem.lower())
+    debug_html.parent.mkdir(exist_ok=True, parents=True)
+    debug_html.write_text(html, encoding="utf-8")
 
-    with DST.open("wb") as out:
+    with dst.open("wb") as out:
         result = pisa.CreatePDF(html.encode("utf-8"), dest=out, encoding="utf-8")
     if result.err:
         print("PDF generation reported %d error(s)" % result.err)
         return 1
-    size = DST.stat().st_size
-    print("wrote %s (%.0f KB) from %s" % (DST.name, size / 1024.0, SRC.name))
+    size = dst.stat().st_size
+    print("wrote %s (%.0f KB) from %s" % (dst.name, size / 1024.0, src.name))
     return 0
 
 

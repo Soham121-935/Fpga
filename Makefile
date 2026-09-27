@@ -137,7 +137,7 @@ TESTBENCHES = \
 	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
 
 .PHONY: all firmware rom app lint vlint test sim iss bitstream synth prog \
-	board-pins board-pdf \
+	board-pins board-pdf plan-pdf \
 	upload upload-slot slot-image commit mon-verify mon-boot mon-term \
 	clean help
 
@@ -195,7 +195,12 @@ board-pins:
 # else in the build depends on them.
 #   python3 -m pip install markdown xhtml2pdf
 board-pdf:
-	$(PY) scripts/sv16_board_pdf.py
+	$(PY) scripts/sv16_board_pdf.py --title "SV-16 microcontroller board blueprint"
+
+# TEAM_PLAN.md -> TEAM_PLAN.pdf (same renderer, same two optional packages)
+plan-pdf:
+	$(PY) scripts/sv16_board_pdf.py --src TEAM_PLAN.md --out TEAM_PLAN.pdf \\
+	    --title "SV-16 microcontroller - team build plan"
 
 # Verilator testbenches (TB=<name> to run just one)
 sim: firmware
