@@ -547,8 +547,68 @@ Working against you (in order of how likely it is to hurt):
 
 ---
 
-_Revision 1.2 — written against commit `fceb533` (project state: RTL complete, 473 checks green, bitstream
+## 14. "Can't we just upload the .sv code and it runs?" — what actually has to happen
+
+Short answer: **no.** The FPGA cannot read SystemVerilog any more than a phone can read C. The `.sv`
+files are the *design of the hardware*; they have to be compiled into a bitstream, and then two separate
+memories have to be programmed. Four artifacts, four steps, two different flash chips:
+
+| # | Artifact | Produced by | Written into | Command | Survives power cycle |
+| :-: | :--- | :--- | :--- | :--- | :-: |
+| 1 | **Bitstream**, `build/sv16_top.bit` (293 KB) | **your laptop**: Yosys → nextpnr → ecppack over the 26 `.sv` files (`make bitstream`, a few minutes) | U1's configuration SRAM, over JTAG | `make prog CABLE=ft232` | **no** — gone when power drops |
+| 2 | the same bitstream, permanently | — | **U2**, the configuration flash, through the FPGA's MSPI port | `make prog-flash CABLE=ft232` | **yes** — this is the step that turns the board into a microcontroller at power-up |
+| 3 | **Firmware image** (SV-16 hex + header + CRC) | **your laptop**: `make app`, `make slot-image SLOT=1` | **U3**, the application flash, over UART through the monitor | `make upload-slot SLOT=1 PORT=/dev/ttyUSB0` → `make mon-boot` → `make commit` | yes |
+| 4 | the **monitor** (boot ROM) | **your laptop**: `make rom` — it is *compiled into* artifact 1 | nowhere separate — it lives inside the bitstream | rebuild and re-flash 1 / 2 | yes (it *is* the configuration) |
+
+Three things people trip over:
+
+1. **`.sv` is not a program.** Artifact 1 defines *what the chip is*; artifact 3 is *what it runs*. They
+   are different files in different flash chips (U2 vs U3) written by different tools (JTAG vs UART).
+2. **The monitor cannot be updated over the serial port.** It is hardened into the bitstream, so a monitor
+   bug means rebuilding the bitstream and re-flashing U2 over JTAG — not an upload. (Applications, by
+   contrast, can always be replaced over the console.)
+3. **U2 and U3 are the same part with different jobs.** `BOARD.md` §9 has the table, and §9.1 has these
+   four flows in full.
+
+### 14.1 Day of first power, in order
+
+```sh
+make bitstream                            # 1. on the laptop
+# 2. rails only, U1 not fitted, current-limited supply   (BOARD.md §10 steps 1-3)
+# 3. fit U1 ->
+openFPGALoader --detect                   #    should report the ECP5 IDCODE
+make prog CABLE=ft232                     # 4. volatile config: safe, a power cycle undoes it
+make mon-term PORT=/dev/ttyUSB0           # 5. terminal at 115200 -> the monitor banner
+make prog-flash CABLE=ft232               # 6. write U2, then power-cycle with no cable: banner again
+make upload-slot SLOT=1 PORT=/dev/ttyUSB0 # 7. field update: upload -> mon-boot -> commit
+```
+
+Step 4 before step 6 on purpose: if the bitstream is wrong, a power cycle erases the mistake. Only once
+the design behaves do you write it into U2.
+
+### 14.2 "And it will run" — the honest caveat
+
+The *logic* is verified: 18 test suites, 473 checks, 0 failures; timing closes at 45.45 MHz against a
+37.5 MHz target; the design fits the device with 24 % of the LUTs spare. What has never happened is
+**this board existing**. Bring-up is its own phase — budget **1–3 days** — and the likely failures are
+physical, not logical:
+
+| Symptom | Usual cause | Where to look |
+| :--- | :--- | :--- |
+| `openFPGALoader --detect` finds nothing | QFP bridges, or a rail missing/off-spec | `BOARD.md` §10 steps 2–4; recheck all four rails and the JTAG header wiring |
+| Detects, but configuration never completes (DONE stays low) | CFG strapping, or a bad bitstream/config-flash wiring | `BOARD.md` §10 steps 5–7; check CFG[2:0] = 010 and R13–R15 pull-ups |
+| Configures, but no banner | wrong baud, RX held low, or a UART pin swap | `docs/BOOT_AND_PROGRAMMING.md` §7 symptom table; try `make mon-term` at 115200 and check TX/RX |
+| Banner appears, flash commands fail | U3 wiring / `CS` or MISO swapped | flash ID first (`BOARD.md` §10 step 9), then the upload |
+| It ran once and now does nothing after power-up | U2 was written before the design was proven | JTAG `make prog` restores it — that is why step 4 comes first |
+
+So the accurate version of your sentence is: *"once the board is built and the rails check out, we compile
+the design to a bitstream, flash that into U2, upload our firmware over UART — and then it runs, after a
+bring-up debugging pass whose size depends on how good the soldering was."*
+
+---
+
+_Revision 1.3 — written against commit `dff0001` (project state: RTL complete, 473 checks green, bitstream
 builds, no hardware). §12 is the one-month cut; **§13 is the dated four-week hardware plan** (the deadline
 requires the board to run, the team has ~20 h/week each, and the FPGA is purchasable — 372 pieces of live
-distributor stock on 27 Sep 2026; the 40-week figure is the reorder lead time); §1–§11 remain the full plan. Effort estimates are for a first-time hardware team — the figures taken
+distributor stock on 27 Sep 2026; the 40-week figure is the reorder lead time); §14 answers "can't we just upload the .sv code?" (no — bitstream, config flash, application flash, and the monitor inside the bitstream). §1–§11 remain the full plan. Effort estimates are for a first-time hardware team — the figures taken
 from real measurements are the 473 checks and the 49.53 MHz speed-7 timing run._

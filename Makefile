@@ -7,6 +7,7 @@
 #   make lint        RTL lint
 #   make bitstream   Yosys -> nextpnr-ecp5 -> ecppack   (build/sv16_top.bit)
 #   make prog        program the device over JTAG
+#   make prog-flash  write the bitstream into the config flash (U2), persistent
 #   make upload      program the *firmware* over the serial port (needs pyserial)
 #   make iss         run the instruction-set simulator on the example firmware
 #
@@ -136,7 +137,7 @@ TESTBENCHES = \
 	monitor_tb:simulation/regression/monitor_tb.sv \
 	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
 
-.PHONY: all firmware rom app lint vlint test sim iss bitstream synth prog \
+.PHONY: all firmware rom app lint vlint test sim iss bitstream synth prog prog-flash \
 	board-pins board-pdf plan-pdf \
 	upload upload-slot slot-image commit mon-verify mon-boot mon-term \
 	clean help
@@ -249,6 +250,15 @@ FPGA_PART       ?= LFE5U-12F
 prog: $(BUILD)/$(PROJECT).bit
 	$(OPENFPGALOADER) $(if $(BOARD),-b $(BOARD),) $(if $(CABLE),-c $(CABLE),) \
 	    --fpga-part $(FPGA_PART) $(BUILD)/$(PROJECT).bit
+
+# Persistent configuration: write the same bitstream into the config flash (U2)
+# through the FPGA's MSPI port, so the device configures itself at power-up
+# instead of waiting for a cable (BOARD.md section 9.1, flow 2).  Same cable as
+# `make prog`.  NOTE: not exercised on hardware from this repository - there is
+# no board yet; confirm it with a power cycle and no cable attached.
+prog-flash: $(BUILD)/$(PROJECT).bit
+	$(OPENFPGALOADER) $(if $(BOARD),-b $(BOARD),) $(if $(CABLE),-c $(CABLE),) \
+	    --fpga-part $(FPGA_PART) -f $(BUILD)/$(PROJECT).bit
 
 # ------------------------------------------------------- serial programming
 # Talks to the ROM monitor: erase + upload + verify (see

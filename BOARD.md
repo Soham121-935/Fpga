@@ -746,10 +746,10 @@ that the whole W25Q family shares. U2 must be at least as large as the bitstream
 ```sh
 # 1. Volatile configuration (fastest loop while developing the FPGA side)
 make bitstream                 # -> build/sv16_top.bit  (J1/J2 + any FT232H/FT2232H adapter)
-make prog CABLE=ft232 CABLE=...   # openFPGALoader --fpga-part LFE5U-12F-6TG144C build/sv16_top.bit
+make prog CABLE=ft232          # openFPGALoader --fpga-part LFE5U-12F build/sv16_top.bit
 
 # 2. Persistent bitstream (survives power cycles, loads from U2 in ~1 s at the default MCLK)
-openFPGALoader -c ft232 -f build/sv16_top.bit     # writes U2 through the FPGA's MSPI port
+make prog-flash CABLE=ft232    # openFPGALoader -f: writes U2 through the FPGA's MSPI port
 
 # 3. Firmware: single-image upload through the monitor (no rollback)
 make upload PORT=/dev/ttyUSB0  IMG=build/fw/app_img.hex
