@@ -155,7 +155,7 @@ section 8.
  0xFFFF └──────────────────────────────┘
 ```
 
-### 2.4 Pins actually used (52 of 197, all `LVCMOS33`)
+### 2.4 Pins actually used (52 of the 98 bonded TQFP-144 I/O, all `LVCMOS33`)
 
 ```text
   pin 133 ◄── clk_25m            39 40 41 44 ◄── led[3:0]

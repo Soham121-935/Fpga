@@ -7,10 +7,10 @@
 | Part | `LFE5U-12F-6TG144C` |
 | Family | ECP5 (Lattice Semiconductor) |
 | Logic | 12K LUT4 (24,288 LUT4 + 1,376 carry positions in nextpnr's count) |
-| Block RAM | 56 × `DP16KD` (18 Kbit each → 126 Kbit) |
+| Block RAM | 56 × `DP16KD` (18 Kbit each → 1,008 Kbit = 126 KB), 18 used |
 | Multipliers | 28 × `MULT18X18D` |
-| PLLs | 2 × `EHXPLLL` (unused in Rev B) |
-| Package | TQFP-144, 197 usable I/O |
+| PLLs | 2 × `EHXPLLL` (0 used by default, 1 with `CLKSRC=pll`) |
+| Package | TQFP-144, **98 bonded I/O** (52 used). The 197 in nextpnr's utilisation table is the *device* I/O count — the LFE5U-12F has 197 I/O in its BGA packages, but this 144-pin package bonds 98 of them (checked against `iodb.json` → `packages.TQFP144`) |
 | Speed grade | 6 (fastest) |
 | Supply | 1.1 V core, 3.3 V I/O (`LVCMOS33` on every pin) |
 | Configuration | SRAM-based — a bitstream must be loaded at every power-up |

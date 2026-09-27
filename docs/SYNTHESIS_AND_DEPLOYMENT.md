@@ -94,7 +94,7 @@ make bitstream        # == scripts/sv16_synth.sh --clkdiv 1 --freq 25
 | Flip-flops | 4,772 | 24,288 | 19 % |
 | `DP16KD` block RAM | 18 | 56 | 32 % |
 | `MULT18X18D` | 1 | 28 | 3 % |
-| I/O buffers | 52 | 197 | 26 % |
+| I/O buffers | 52 | **98** (bonded on TQFP-144) | 53 % |
 | `EHXPLLL` | 0 (1 with `CLKSRC=pll`) | 2 | 0 % (50 %) |
 
 The `CLKSRC=pll PLLMHZ=37.5` build uses 9,191 LUT4 (37 %) — the PLL is a hard macro,
