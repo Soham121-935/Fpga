@@ -11,14 +11,14 @@ prototype* into a *practical, MCU-style programmable system* on the Lattice ECP5
 
 | | |
 | :--- | :--- |
-| Date of report | 2026-09-26 (last updated for the P9 regression pass) |
-| Branch | `arena/01a0ce9b-fpga` (this session), one commit ahead of `arena/Rv2` |
-| Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) · `e664a0c` branch-rename note · `62f432a` watchdog in the reset path (P1) · `56a8b62` multi-cycle divider + full 25 MHz (P2) · `bd83c92` A/B image slots with rollback (P3) · `f49dbdf` monitor `K` confirm check · P9 peripheral regression + ISA suite (ADR-020, this revision) |
+| Date of report | 2026-09-27 (last updated with the software-only roadmap in §8.2) |
+| Branch | `arena/01a0ce9b-fpga` (this session) |
+| Commits | `ec3581b` Rev B implementation · `62f432a` watchdog (P1) · `56a8b62` divider + full 25 MHz (P2) · `bd83c92` A/B slots (P3) · `7875b1e` P9 regression + ISA suite · `cdfa0c7` PLL clock (P2b) · `e177f7c` P8 latency + four instruction-level fixes · `3b282de`/`b7d7393` datasheet-verified budget (ADR-025) · `dfab015` datasheet cross-check |
 | Remote state | On GitHub this work stream was renamed **`arena/01a0ce9b-fpga` → `arena/Rv2`**, so `arena/Rv2` holds the Rev B work up to `a07f62e`. This session pushed `arena/01a0ce9b-fpga` again (P1 watchdog, then P2 timing) and it is a direct descendant of `arena/Rv2`, so it can be fast-forwarded or merged without conflicts. |
 | Test status | **473 checks, 0 failures** across 18 suites; RTL lint 26/26 clean |
 | Resource budget | checked after place and route against the LFE5U-12F **datasheet** (12,144 LUT4 / 32 block RAM / 28 MULT / 2 PLL / 98 I/O), not against nextpnr's 25F-denominated table — `scripts/sv16_check_budget.py`, ADR-025 |
 | Bitstream | `make bitstream` → `build/sv16_top.bit`, 295,665 bytes, **timing PASS at the full 25 MHz** (Fmax 44.70 MHz, ~79 % margin); `CLKSRC=pll PLLMHZ=37.5` → 292,752 bytes, PASS at 37.5 MHz (45.45 MHz) |
-| Silicon | **never run on hardware** — simulation + static timing only |
+| Silicon | **never run on hardware** — simulation + static timing only. The software-only roadmap in §8.2 is written for exactly that constraint |
 
 ---
 
@@ -480,30 +480,106 @@ be audited or replayed.
 | B2 | **Pin map vs. actual board** — the LPF was derived from the device database, not from a Rev A schematic; only UART pins were kept | A bitstream whose pins don't match the board looks like a dead board | hours, given a schematic | LPF re-derived from the board netlist and re-verified by `make bitstream` |
 | B3 | **Flash part check** — `FLASH_ID` must read `0xEF4018`; other parts may need command/wait tuning | The whole programming story depends on it | hours | `FLASH_ID`/`ID2` verified on the real part; timings re-checked |
 
-### 8.2 Production-grade gaps (ordered by value per unit of risk)
+### 8.2 The software-only track (no board required)
 
-| # | Item | Why it matters | Effort |
-| :--- | :--- | :--- | :--- |
-| ~~P1~~ | ~~**Watchdog in the reset path**~~ — **DONE** (`sv16_wdt.sv`, MMIO block 8, `RSTCAUSE.WDT` live, `MMIO_PRESENT = 0x7FF`) | A software hang used to mean manual intervention; now the hardware restarts the boot sequence and re-boots the application, and the application cannot disarm it | 265-line block + 49 unit checks + 14 system checks + ADR-017; lint and timing re-verified |
-| ~~P2~~ | ~~**Timing headroom → 25 MHz+**~~ — **DONE**: the real critical path was the ALU's combinational divider, not the CPU flag/branch path | The 12.5 MHz default was a workaround; the part now runs at the full oscillator frequency | multi-cycle DIV/MOD + `S_DIV_WAIT` (ADR-018), 41 new checks, Fmax 14.68 → **46.17 MHz**, shipped at 25 MHz |
-| ~~P2b~~ | ~~**`EHXPLLL` for 40–50 MHz**~~ — **DONE (ADR-021)**: `CLKSRC=pll PLLMHZ=37.5` instantiates the `EHXPLLL`; the synthesis script searches the divider pair for the requested frequency (the CLKOP divider is inside the feedback loop, so `CLKFB_DIV` — not `CLKOP_DIV` — sets the output), reports requested vs achieved and refuses an illegal VCO. Reset is gated on lock, `SYS_STAT[9:8]` tells firmware which clock it got, and `pll_clock_tb` (8 checks) proves the derived constants follow it | The fabric closes at ~43.7 MHz from the oscillator, so 37.5 MHz is the useful step up; the console, the timers and every other clock-derived constant follow the built clock automatically, which is what makes this an MCU clock rather than just a faster one | 158 lines of RTL + one TB; re-measured **45.45 MHz** post-route at 37.5 MHz after ADR-024 fixed the feedback tap (41.40 → 45.45 MHz, 301,006 → 292,752 bytes); the 25 MHz oscillator stays the default until the PLL build has been on silicon (OQ-19) |
-| ~~P3~~ | ~~**A/B images with rollback**~~ — **DONE**: two 32 KB slots (A `0x0000`, B `0x8000`) with a 2-byte slot record in the image header, a trial period that lives *in flash*, hardware rollback on the next restart, `BOOT_CTRL[6]` confirmation, monitor `K`, packer `--slot`, `make upload-slot` / `make commit` | A power cut or a hang during an update no longer loses the only application: the part boots the previous image by itself, with no host attached | ~430 lines of RTL across `sv16_boot`/`sv16_flash_ctrl`, `slot_tb` (57 checks) + boot_tb additions, ADR-019, docs; timing re-verified (46.17 MHz, PASS) |
-| P4 | **JTAG debug bridge** over the ECP5 TAP using the existing `SYS_CTRL.HALT` / `SYS_DBG_*` hooks | Biggest quality-of-life gap vs a real MCU: halt, resume, peek/poke, breakpoints | 1-2 weeks: TAP shift-register bridge + host tool. Per the datasheet (§4.3.2) the 144-TQFP package has **4 dedicated TAP pins**, so the bridge costs logic (~300-800 LUT4 of the ~2,700 free) and **no user I/O** |
-| P5 | **C toolchain** (or an ISA extension to make C practical: register-indirect call, more registers) | Assembly-only is the main practical limit | weeks; ISA change needs its own ADR |
-| P6 | **Signed / authenticated updates** (CRC16 detects corruption, not tampering) | Field-update security | 2-3 days for a keyed MAC in the loader + packer |
-| P7 | **Brown-out / power-fail handling** | Write-during-brownout corruption is not modelled or mitigated | hardware-dependent |
-| ~~P8~~ | ~~**Interrupt latency specification**~~ — **DONE (ADR-023)**: `irq_latency_tb` sweeps 24 arrival points across `DIV`/`NOP`/`JMP` and measures request → handler | No number existed for a controller-style application to schedule against | **11–31 cycles measured** (1 in the controller, 6 in the entry sequence, 16 for a 3-word handler + `RETI`); the suite enforces the bounds so the figure cannot go stale. Writing it also found three dead instruction paths (ADR-022) |
-| ~~P9~~ | ~~**Peripheral coverage in the regression**~~ — **DONE**: the timer, PWM, GPIO, UART, ALU and RAM suites were rewritten against a shared harness (`simulation/unit/periph_tb.svh`), all six registered in `make sim`, and an ISA-level regression program (`firmware/tests/isa_regress.s`) added on top | It was a coverage gap, and the ISA suite turned out **not** to be one: the first program ever to execute `ADDI`/`SUBI` found that both committed the wrong value (ADR-020) | 137 peripheral checks + 11 ISA checks, the two defects fixed, runner now refuses to pass a suite that does not report `RESULT: PASS` |
-| P10 | **Throughput of firmware updates** — per-byte ack limits upload to ~5 KB/s of payload | Large images take minutes | 1-2 days for a buffered binary/XMODEM mode (OQ-17) |
+Everything below runs, is simulated, and produces measurable numbers **without
+hardware**. Ordered so that each step makes the next one easier to see and test.
+"Session" = one focused work period; estimates are for this repository's style of
+work (implementation + tests + docs + REPORT sync), not for a fresh project.
 
-### 8.3 Tracked design questions still open
+#### S0 — A virtual board: the SoC on your terminal  *(the enabling step)*
+
+| | |
+| :--- | :--- |
+| **What** | `make vboard` builds a Verilator model of the whole SoC with the flash model attached and bridges the UART to stdin/stdout, so the real monitor runs in a terminal: banner, `?`, `R`, `V`, `C` upload, `B` boot. `sv16_mon.py` gains a `--transport sim` so the *existing* host tools drive it, and a scripted session becomes a regression suite. |
+| **Why first** | It turns "everything is simulation" from a limitation into an interface: you can type at the machine and flash it today, and every later item (upload speed, C compiler, debug stub) gets an end-to-end demo instead of a waveform. It also becomes the cheapest possible integration test. |
+| **Deliverable** | `simulation/vboard/` harness + `Makefile` target; `sv16_mon.py --transport sim`; one scripted session checked into `simulation/regression/vboard_tb.sv` (upload → verify → boot → run). |
+| **Effort** | 1 session. |
+
+#### S1 — Upload throughput, and tests for the host tools  *(P10, OQ-17)*
+
+| | |
+| :--- | :--- |
+| **What** | Today: 2 hex characters per byte, each byte acknowledged individually → **~5 KB/s**. Plan: a binary `U` command that (a) sends raw bytes instead of hex (2x), (b) acknowledges per 64/256-byte block instead of per byte (~1.5x), (c) optionally steps the console baud up (115200 → 460800) for the transfer and back afterwards (up to 4x). Staged into a RAM buffer, programmed page-wise, verified with the per-block CRC16 the loader already knows. The existing `C` command stays as the always-works fallback, and A/B slots + rollback stay underneath. |
+| **Why** | A 20 KB image currently takes ~4 minutes, which makes the update path painful to use and painful to test. It is the most visible "is this a real MCU?" difference that does not need a compiler. |
+| **Deliverable** | Monitor `U` command; `sv16_mon.py --fast`; measured throughput printed by the tool and recorded in VERIFICATION; the negotiated-fallback path tested (host that cannot do `U` still works). Plus **host-tool unit tests** (`tests/test_as.py`, `test_fwpack.py`, `test_mon.py`) — golden assembler corpus, packer round-trip, protocol framing — because a hand-rolled protocol is exactly what breaks silently. |
+| **Effort** | 1–2 sessions. |
+
+#### S2 — Write applications in C  *(P5, OQ-16 — the biggest capability gap)*
+
+Broken into sub-steps so each lands green; the ISA is **not** touched until the
+work proves it is necessary (the user constraint stands: preserve the ISA unless
+there is a compelling reason).
+
+| Step | Deliverable | Notes |
+| :--- | :--- | :--- |
+| **S2a** | ABI + language-subset decision as an ADR: `int` = 16-bit, `char` = 8-bit, pointers 16-bit, stack-relative locals, args in registers then stack, one translation unit at a time, absolute (non-relocatable) images | Documents what is *not* supported (floats, varargs, bitfields) so the tool does not silently miscompile |
+| **S2b** | `scripts/sv16_cc.py`: a C subset compiler → `.s` → the existing assembler. Expressions (precedence, short-circuit), `if`/`while`/`for`/`do`, `break`/`continue`, functions with parameters and returns, locals, globals, arrays, pointers, `char` strings, compound assignment, `switch` (compare-chain), casts | Pure Python, no new dependencies, so it stays reproducible in this flow |
+| **S2c** | Runtime: `crt0` (SP from the image header, `.bss` zeroed, `.data` copied), `putc`/`puts`/`printf` subset, `memcpy`/`memset`/`strlen`, 16-bit `mul`/`div`/`mod` helpers, `__aeabi`-style names so the compiler can emit them blindly | Runs from the boot ROM today; the monitor's `puts` is the reference for the UART path |
+| **S2d** | Build integration: `make cc C=firmware/apps/motor.c` → image + `.map` + `.lst`; the same flash/upload flow as today | The map file is what makes a 32 KB part workable |
+| **S2e** | Regression: a C conformance program (every operator, control-flow shape, pointer case, call depth) compiled and executed in a new `c_tb` suite against expected register/memory values; plus one real C application (closed-loop motor demo: PWM + timer + interrupts) and its simulation test | This is where codegen bugs get caught — the same way the ISA suite found ADR-020/022 |
+| **S2f** | *Only if S2e shows it is needed*: ISA extension in the reserved `EXT_ALU` sub-opcodes `3'b101`–`3'b111` (register-indirect `JMP Rn` / `CALL Rn`, for function pointers and jump tables), with its own ADR, assembler support and ISA regression rows | Deferred by default; absolute `CALL imm16` covers everything except indirect calls |
+
+Effort: 3–5 sessions total (S2b and S2e dominate).
+
+#### S3 — Debug a running machine
+
+| Step | Deliverable | Notes |
+| :--- | :--- | :--- |
+| **S3a** | **UART debug stub** in the monitor: a subset of the GDB Remote Serial Protocol (`?`, `g`, `G`, `m`, `M`, `c`, `s`, `Z0`) so *stock `gdb`* can attach with `target remote /dev/ttyUSB0` and set breakpoints, read memory, step | No new hardware, no new FPGA primitive, works with the console that already exists. Uses the existing `SYS_DBG_*`/halt hooks. Tested in simulation with a Python RSP client — and it is also the natural way to debug the C compiler's output |
+| **S3b** | **JTAG debug bridge** on the ECP5 `JTAGG` primitive: ER1 scan chain (instruction `0x32`) into a shift-register bridge driving halt/step/peek/poke, driven from OpenOCD; a behavioural `JTAGG` model behind `` `ifdef VERILATOR `` for simulation | Feasible in this toolchain — the primitive and its ER1/ER2 instructions are proven by LiteX's `ECP5JTAG`, `tomverbeure/ecp5_jtag` and `fpgacapZero`. The 4 TAP pins are **dedicated** on this package (datasheet §4.3.2), so it costs logic only (~300–800 of the ~2,700 free LUT4) |
+| **Why this order** | S3a is a day or two of work with zero new primitives and pays off during S2; S3b is the "real MCU" interface but its last mile (a JTAG adapter on a board) is unverifiable here |
+
+Effort: 1–2 sessions for S3a, 1–2 for S3b.
+
+#### S4 — Field integrity: know what happened, and who wrote it
+
+| Step | Deliverable | Notes |
+| :--- | :--- | :--- |
+| **S4a** | Threat-model ADR: what an attacker with physical access can actually do (they can read the bitstream, so a key baked into it is obfuscation, not secrecy), what CRC16 does and does not protect, and which option is honest — keyed MAC with an in-bitstream key, or nothing claimed at all | Writing this *before* the code is the point: the alternative is a "signed update" claim that does not survive one afternoon with a logic analyser |
+| **S4b** | Keyed image authentication in the loader + `sv16_fwpack.py --key` + `make upload --key`, with the format versioned so old images still boot | Only if S4a picks it; the CRC stays as the integrity check underneath |
+| **S4c** | **Fault record**: on illegal instruction, zero-vector trap, or watchdog bite, snapshot the PC/SR/SP and a small breadcrumb ring into a reserved flash sector; the monitor gains `L` to dump it after a restart | This is the single most MCU-like missing feature for field use: after a crash on a customer's machine you can read back *where* it died |
+
+Effort: 1–2 sessions.
+
+#### S5 — Capacity and architecture (optional; decide with numbers in hand)
+
+| Item | What it would buy | Cost |
+| :--- | :--- | :--- |
+| **RAM remap (OQ-11)** | Position-independent images: SRAM at `0x0000` with the boot ROM moved to the top, like an MCU's flash alias. Removes the "everything is linked at 0" constraint that limits image layout and slot freedom | 1 session + ADR; touches the bus decoder and the boot path |
+| **More SRAM** | 32 KB → 48/56 KB using the 14 free `DP16KD` blocks (28 KB free of the datasheet's 32) | Small RTL change, but it is *the* resource this part is short of; needs a memory-map update and loader changes |
+| **Vector table in ROM (OQ-12)** | A default table in the boot ROM that jumps to a software dispatcher, so an application that forgets its vectors cannot trap into arbitrary code | Half a session |
+| **Console/interrupt polish** | An interrupt-driven monitor (no polling), a ring-buffer console, `printf` through the C runtime | Small, quality-of-life |
+
+#### What is *not* on this track
+
+* **Brown-out / power-fail handling (P7)** — needs a voltage monitor in front of the
+  FPGA (or a supply supervisor), i.e. hardware. Firmware cannot see a rail dip.
+* **Silicon validation of the PLL (OQ-19)** and **"does the placed design fit a real
+  12F bin" (OQ-20)** — both are board questions by definition.
+* **Pin-map and flash-part checks (B2/B3)** — need the schematic and the part.
+
+### 8.3 Completed (kept for the record)
+
+| # | Item | Evidence |
+| :--- | :--- | :--- |
+| P1 | Watchdog in the reset path — windowed, key-protected, restarts the SoC; `RSTCAUSE.WDT` live, `MMIO_PRESENT = 0x7FF` | `sv16_wdt.sv` + ADR-017; 49 unit + 14 system checks |
+| P2 | Timing headroom: the real critical path was the ALU's combinational divider, not the flag/branch path | Multi-cycle DIV/MOD + `S_DIV_WAIT` (ADR-018), Fmax 14.68 → 44.70 MHz measured, shipped at the full 25 MHz |
+| P2b | Optional `EHXPLLL` system clock at 37.5 MHz, reset gated on lock, all derived constants follow it; feedback path corrected in ADR-024 | ADR-021/024, `pll_clock_tb` (8 checks), 292,752-byte bitstream at 45.45 MHz |
+| P3 | A/B images with a trial period, hardware rollback, `make upload-slot` / `make commit` | ADR-019, `slot_tb` (57 checks) |
+| P8 | Interrupt latency measured and bounded: 11–31 cycles request → handler over a 24-point sweep, 1 in the controller, 6 in the entry sequence; 16 cycles for a 3-word handler + `RETI` | ADR-023, `irq_latency_tb` (13 checks) enforcing the bounds |
+| P9 | Peripheral + ISA regression: 18 suites / 473 checks / 0 failures, runner refuses a suite without `RESULT: PASS` | VERIFICATION.md; the ISA suite found the ADR-020 and ADR-022 defects |
+| — | Twelve instruction-level and RTL defects found and fixed (control encodings, `HALT`, `DIV`/`MOD` writeback, `ADDI`/`SUBI`, the PLL feedback tap, the watchdog feed, …) | REPORT §6.3, ADR-020/022/024 |
+
+### 8.4 Tracked design questions still open
 
 See `docs/OPEN_QUESTIONS.md`: RAM remap (OQ-11), vector table placement (OQ-12),
-C toolchain and ISA extension (OQ-16), update throughput (OQ-17), real board pin
-assignment (OQ-18), PLL loop-filter and feedback validation on silicon (OQ-19).
-OQ-14 (image slots) is closed by ADR-019, OQ-13 (watchdog) by ADR-017,
-**OQ-15 (interrupt latency) by ADR-023** — the P8 item above — and the PLL
-feedback question was made decidable by ADR-024.
+C toolchain and ISA extension (OQ-16 — S2a answers it), update throughput
+(OQ-17 — S1 answers it), real board pin assignment (OQ-18), PLL loop-filter and
+feedback validation on silicon (OQ-19), and whether this exact placement fits a
+real 12F bin (OQ-20). OQ-14 (image slots) is closed by ADR-019, OQ-13 (watchdog)
+by ADR-017, OQ-15 (interrupt latency) by ADR-023 and the PLL feedback wiring by
+ADR-024.
 
 ---
 
