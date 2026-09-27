@@ -4,9 +4,18 @@
 hardware) to a working hand-held microcontroller board — split into roles, work packages and gates so
 four people can work in parallel without blocking each other.
 
+**If you have one month, not three:** go straight to §12 — it re-cuts everything below for a 4-week
+deadline and tells you what to drop. Sections 1–11 are the full plan it is derived from.
+
 **What it is not:** a schedule promise. The durations assume 4 people at roughly **8–10 hours a week
 each** (evenings + one weekend half-day) and no prior PCB experience. Compress or stretch §9 to your
 reality; the *order* and the *gates* matter more than the dates.
+
+**The deadline constraint that decides everything (read this first):** the Lattice LFE5U-12F on
+`digikey.in` had a **40-week lead time** when this was written. In one month you can design a board, order
+it and have it fabricated — but you **cannot** have that specific chip in your hand. So a one-month plan
+must produce a complete *software* deliverable plus a *fabricable* board, and can only show real ECP5
+silicon if you buy a ready-made ECP5 board (see §12.3).
 
 **Current position (measured, not estimated):**
 
@@ -289,6 +298,145 @@ it down to a one-page chart for your group.
 
 ---
 
-_Revision 1.0 — written against commit `f57f32a` (project state: RTL complete, 473 checks green,
-bitstream builds, no hardware). Effort estimates are for a first-time hardware team; the two numbers
-taken from real measurements are the 473 checks and the 49.53 MHz speed-7 timing run._
+## 12. One month, four people — the realistic cut
+
+You said the deadline is one month. Here is the arithmetic first, then the plan.
+
+**Capacity.** Four people × four weeks:
+
+| Effort per person per week | Total person-hours | = person-days (8 h) |
+| ---: | ---: | ---: |
+| 12 h (a normal college week) | 192 | **24** |
+| 20 h (a real crunch) | 320 | **40** |
+| 25 h (exam-week style, unsustainable) | 400 | **50** |
+
+The full plan in §1–§11 is **≈71 person-days**. A month gives you 24–50 of them. So the first decision is
+not *how* to do everything, it is **what to leave out**, and the answer is decided by one fact:
+
+> **In four weeks you can have a working software system and a finished, orderable board design. You
+> cannot have that board built, assembled and running, because the FPGA itself takes 40 weeks to arrive.**
+
+Everything below works with that fact instead of pretending otherwise.
+
+### 12.1 What "done in one month" means — freeze this sentence today
+
+> **On demo day the real SV-16 SoC runs in a terminal, I can upload a new firmware image over the same
+> UART protocol a real board would use, verify it, boot it, roll it back — and next to that I show the
+> finished PCB design (schematic, layout, gerbers, 3D render, India-sourced BOM) that is one order away
+> from being manufactured.**
+
+That is a complete story: the software is *real* (it is the same RTL, same monitor, same protocol, same
+memory map as the silicon would run), and the hardware is *designed* (it is the actual deliverable of
+P3's four weeks). What it is not is a photo of a soldered board with a blinking LED — say that out loud
+in the first 30 seconds of your demo and you control the conversation, instead of being asked why there
+is no board on the table at minute 5.
+
+**Two levels, pick one now:**
+
+| | Level M1 — recommended | Level M2 — only if you can borrow silicon |
+| :--- | :--- | :--- |
+| Demo | §12.1 as written (software live + board design) | M1 **plus** the SoC running on a real ECP5 board that already exists (§12.3) |
+| Cost | ₹3,000–6,000 (PCB + parts ordered, tools shared) | + ₹1,500–3,000 for a ready-made ECP5 board |
+| Risk | low: no dependency on any chip arriving | medium: needs 3–4 days of P1+P2 time for a new pin constraint file |
+| I'd choose it | **yes, for a review or evaluation** | if the reviewer explicitly demands "real hardware running" |
+
+### 12.2 The four weeks
+
+| Week | P1 — systems/RTL | P2 — firmware/tooling | P3 — hardware | P4 — verification | Gate at the end |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **1** | virtual board WP2: Verilator SoC + flash model + UART bridge, `make vboard` | upload path WP3: binary `U` command + `sv16_mon.py --fast`; monitor protocol WP4 | schematic WP9 from `BOARD.md` §4–§7; place the parts + PCB order (§12.5) | acceptance matrix WP14 + host-tool tests WP5 | **G1: `make vboard` shows the monitor, an image uploads, verifies and boots — on all four laptops.** Schematic ERC-clean |
+| **2** | pin-map freeze WP8 (V1 remap) + bitstream; start the ready-made-board LPF if going M2 | firmware app for the demo; host tool docs; sim transport used by P4's tests | layout WP11, DRC, **order the PCB by day 10** (it needs ~7 days to arrive) | tests green in `make test`; evidence folder started; `ACCEPTANCE.md` written | **G2: gerbers ordered; upload ≥20 KB/s; two images (A/B) demonstrated with rollback** |
+| **3** | regression + timing; M2 only: port the LPF to the ready-made board and get the SoC running on real silicon | demo firmware polished (console + PWM + motor sequence in the simulator) | practice-solder the ₹100 QFP breakout; when the PCB lands: assemble 1–2 boards; verify rails, oscillator, USB enumerate (bring-up steps 1–5 **without** fitting the FPGA) | run the acceptance matrix, collect logs + waveforms for the report | **G3: board assembled and its rails measured; demo firmware runs end-to-end** |
+| **4** | buffer: fix whatever week 3 broke; freeze the bitstream | freeze the toolchain; write the programming guide | 3D render + gerber screenshots + BOM cost table for the review | rehearse the demo twice; tag the release; write the one-page summary | **G4: demo rehearsed twice, video recorded, release tagged, docs updated** |
+
+Week 4 is deliberately half-empty. A four-week plan with no buffer is a three-week plan with a public
+failure at the end.
+
+### 12.3 If the reviewer wants real silicon (level M2)
+
+You cannot wait for a `LFE5U-12F-6TG144C` — but you can hold an ECP5 in a week:
+
+| Option | Price (₹) | What you get | Work required |
+| :--- | ---: | :--- | :--- |
+| **Colorlight 5A-75B** (LED-panel controller, has an `LFE5U-25F-6BG381C`) | 1,500–3,000 (Amazon.in / eBay.in) | a real ECP5, JTAG already reverse-engineered (`q3k/chubby75`), 2 × 8 MB flash, LEDs, Ethernet | 3–4 person-days by P1+P2: new `.lpf` for BG381, blink test, UART on its pins, then the full monitor |
+| **Any ECP5 dev board your college lab owns** (`ECP5-EVN`, `ULX3S`, a custom board) | 0 | the best case — ask your HOD this week, not week 3 | 1–2 person-days: new `.lpf` + pin docs, same as above |
+| **A second-hand ECP5 board** | 2,000–6,000 | varies | as above |
+
+Rules for M2: the design itself is **unchanged** (same RTL, same bitstream flow, `make bitstream` with a
+different `--lpf`), and `BOARD.md` §6's TQFP-144 pin map stays the reference for *your* board. Do not
+let M2 leak into the custom PCB — the two pin maps are different by definition, and mixing them is how
+projects lose a week.
+
+If M2 is not possible: **do not apologise for it.** Show a timing report of the design placed and routed
+for the real chip, and the board design that would carry it. That is more evidence than a blinking LED.
+
+### 12.4 What to cut, in order
+
+Cut from the top until the remaining list fits your real hours.
+
+| Priority | Item | Why |
+| :--- | :--- | :--- |
+| **Must not cut** | WP2 virtual board, WP3 upload, WP4 protocol, WP9 schematic, WP11 layout, WP14 acceptance | these *are* the demo and the deliverable |
+| **Cut first** | WP15 capacity/RAM work, S3b JTAG bridge, S4 keyed MAC | interesting, invisible on demo day |
+| **Cut second** | WP6/WP7 the C compiler + its conformance suite | 17 person-days — a month of one person, for something an evaluator will not ask about if you never mention it. Make it your "future work" slide |
+| **Cut third** | WP8 V1 pin remap | the current pin map works; remapping only makes the *next* board nicer |
+| **Keep if you can** | WP3 at 460800 baud, second firmware slot demo, `BOARD.md` cost table | cheap, and they read as "engineering" to a reviewer |
+
+If you keep the C compiler, you lose either the PCB layout or the demo polish. Pick one, write it down,
+and do not revisit it in week 3.
+
+### 12.5 Week 1, day by day (the week that decides the month)
+
+| Day | Everyone | Notes |
+| :--- | :--- | :--- |
+| **1** | `make test` on all four machines (18 suites, 0 failures); agree §12.1 in writing; assign P1–P4 | nobody writes code tomorrow who cannot build today |
+| **2** | P1: vboard skeleton. P2: `U`-command design + framing. P3: schematic — power tree first (`BOARD.md` §4.3), then FPGA core. P4: acceptance matrix from `BOARD.md` §10 | P3 places the **PCB order on day 10 at the latest** — check fab lead time on day 2, not day 20 |
+| **3** | P1: UART bridge + flash model. P2: host-side block protocol. P3: connectors + USB + flash. P4: host-tool unit tests | mid-week check: can P4 talk to the vboard UART yet? |
+| **4** | P1+P2 integrate: real monitor binary in the vboard, terminal attached. P3: ERC pass. P4: first acceptance run | this is the day the project becomes demoable |
+| **5** | **G1 demo, 20 minutes, all four laptops.** P3: BOM + orders (tools, breakout, modules). P4: evidence folder | if G1 slips to day 7, cut WP8 immediately |
+| **6–7** | buffer + ordering. Anything not ordered by day 7 does not exist in this project | weekend is when Indian vendors actually get ordered from |
+
+### 12.6 Demo-day script (5 minutes, rehearse it twice)
+
+1. **30 s — what it is:** "an ECP5 microcontroller: RISC CPU, 16 KB RAM, flash boot, A/B firmware
+   slots, UART monitor, PWM/GPIO/timer/WDT — 18 test suites, 473 checks, 0 failures."
+2. **2 min — live:** terminal → monitor banner → `?` → `X` (erase) → upload an image → `V` (verify) →
+   `B` (boot) → the application prints over the same console. Then break it on purpose: upload a
+   deliberately corrupt image and let the **rollback** save the board. This is the moment that makes it
+   look like a product.
+3. **1 min — the hardware:** schematic page, layout, 3D render, gerbers, the India-sourced BOM with
+   prices, and `BOARD.pdf` on the table.
+4. **1 min — the honest part:** FPGA lead time 40 weeks, so the board is designed and ordered, rails
+   verified, bring-up checklist ready; here is the Colorlight plan (or the lab board) for real silicon.
+5. **30 s — next month:** the C compiler, JTAG debug, RAM expansion — from `REPORT.md` §8.
+
+Record it on video on day 27. Live demos fail; a video in your pocket does not.
+
+### 12.7 One-month risk list
+
+| Risk | Trigger | What you do |
+| :--- | :--- | :--- |
+| PCB late or held at customs | not shipped by day 14 | it does not matter: the software demo carries the review; show the gerbers and the render |
+| A teammate's week collapses (exams, illness) | anyone misses two days | P1+P2 own the demo path; P3+P4 own the evidence. Nobody else's work is on the critical path |
+| vboard harder than expected | not running by day 4 | fall back: run the monitor in the **existing Verilator SoC testbench** with a UART bridge to a terminal — less pretty, same evidence. `soc_boot_tb` already proves the flow in simulation |
+| Upload speed work drags on | no `U` command by day 4 | demo the existing `C` command; say "20 KB/s is the next revision" |
+| FPGA/parts money runs out | — | the PCB can be ordered bare (₹1,500) and populated later; the software deliverable costs ₹0 |
+| Scope creeps in week 3 ("let's add…") | anyone says "while we're here" | §12.4 is frozen; new ideas go on the "next month" slide |
+| Review demands hardware *running* | — | M2 (§12.3): buy or borrow an ECP5 board in week 1, port the LPF, and show the same demo on real silicon |
+
+### 12.8 The one-page version
+
+> **Week 1:** make the machine touchable (`make vboard` + upload + boot) and finish the schematic —
+> order the PCB and parts.
+> **Week 2:** layout, DRC, order (day 10); pin map frozen; A/B rollback demoed.
+> **Week 3:** assemble what arrives, verify rails; polish the demo firmware; run the acceptance matrix.
+> **Week 4:** buffer, video, release tag, one-page summary.
+> **Not in this month:** the C compiler, the extra RAM work, the JTAG bridge, and the FPGA chip itself
+> — 40-week lead time, so the board ships as a design and the software runs in simulation.
+
+---
+
+_Revision 1.1 — written against commit `1fb108c` (project state: RTL complete, 473 checks green, bitstream
+builds, no hardware). §12 is the one-month cut added after the deadline was given as four weeks;
+§1–§11 remain the full plan. Effort estimates are for a first-time hardware team — the figures taken
+from real measurements are the 473 checks and the 49.53 MHz speed-7 timing run._
