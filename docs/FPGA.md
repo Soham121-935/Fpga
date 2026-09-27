@@ -6,11 +6,11 @@
 | :--- | :--- |
 | Part | `LFE5U-12F-6TG144C` |
 | Family | ECP5 (Lattice Semiconductor) |
-| Logic | 12K LUT4 (24,288 LUT4 + 1,376 carry positions in nextpnr's count) |
-| Block RAM | 56 × `DP16KD` (18 Kbit each → 1,008 Kbit = 126 KB), 18 used |
-| Multipliers | 28 × `MULT18X18D` |
+| Logic | **12k LUTs = 12,144 LUT4** (datasheet, Table 1.1). Each PFU is 4 slices of 2 LUT4 + 2 FF, so the die has 3,036 PFU positions (24,288 LUT4) — but a 12F guarantees **half of them**, which is why `scripts/sv16_check_budget.py` counts against 12,144 and not against nextpnr's denominator (ADR-025) |
+| Block RAM | **32 × `DP16KD`** = 576 Kbit = **72 KB** (datasheet; the 56 blocks / 126 KB figure belongs to the LFE5U-25F — same die, different bin). 18 blocks used = 36 KB |
+| Multipliers | 28 × `MULT18X18D`, 1 used |
 | PLLs | 2 × `EHXPLLL` (0 used by default, 1 with `CLKSRC=pll`) |
-| Package | TQFP-144, **98 bonded I/O** (52 used). The 197 in nextpnr's utilisation table is the *device* I/O count — the LFE5U-12F has 197 I/O in its BGA packages, but this 144-pin package bonds 98 of them (checked against `iodb.json` → `packages.TQFP144`) |
+| Package | TQFP-144, **98 bonded I/O** (52 used) — datasheet Table 1.1, `144 TQFP: 0/98`. The 197 in nextpnr's utilisation table is the I/O count of the BGA packages of the same device |
 | Speed grade | 6 (fastest) |
 | Supply | 1.1 V core, 3.3 V I/O (`LVCMOS33` on every pin) |
 | Configuration | SRAM-based — a bitstream must be loaded at every power-up |
@@ -19,11 +19,11 @@
 
 | Resource | Used | Where |
 | :--- | ---: | :--- |
-| LUT4 | 9,407 (38 %, incl. carry) | CPU datapath and control, boot loader, flash controller, watchdog, monitor's ROM decoding, the iterative divider |
-| Flip-flops | 4,772 (19 %) | CPU state, FIFOs, peripherals, watchdog counters, divider registers |
-| `DP16KD` | 18 (32 %) | 16 for the 32 KB SRAM, 2 for the 4 KB boot ROM |
-| `MULT18X18D` | 1 (3 %) | the ALU's single-cycle 16×16 multiply |
-| I/O | 52 (26 %) | UART, two SPI ports, GPIO A/B, PWM, motor control, LEDs, clock, reset |
+| LUT4 | 9,407 (**77 %** of the 12,144 the datasheet guarantees for a 12F, incl. carry) | CPU datapath and control, boot loader, flash controller, watchdog, monitor's ROM decoding, the iterative divider |
+| Flip-flops | 4,772 (39 %) | CPU state, FIFOs, peripherals, watchdog counters, divider registers |
+| `DP16KD` | 18 (**56 %** of 32) | 16 for the 32 KB SRAM, 2 for the 4 KB boot ROM |
+| `MULT18X18D` | 1 (4 %) | the ALU's single-cycle 16×16 multiply |
+| I/O | 52 (**53 %** of the 98 bonded pins) | UART, two SPI ports, GPIO A/B, PWM, motor control, LEDs, clock, reset |
 | `EHXPLLL` | 0 in the default build, 1 with `CLKSRC=pll` | optional PLL system clock (ADR-021) |
 
 ## 3. Clocking and timing

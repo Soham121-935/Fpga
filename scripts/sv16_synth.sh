@@ -37,6 +37,7 @@ rom="build/rom/monitor.hex"
 lpf="constraints/ecp5_144tqfp.lpf"
 freq=""
 device="--12k"
+limits="on"          # enforce the datasheet budget for the chosen part
 package="TQFP144"
 speed="6"
 top="sv16_top"
@@ -56,6 +57,7 @@ while [ $# -gt 0 ]; do
         --clksrc)  clksrc="$2"; shift 2 ;;
         --pllmhz)  pllmhz="$2"; shift 2 ;;
         --speed)   speed="$2"; shift 2 ;;
+        --limits)  limits="$2"; shift 2 ;;
         --top)     top="$2"; shift 2 ;;
         --no-rom)  rom=""; shift ;;
         --yosys-only) yosys_only="1"; shift ;;
@@ -206,6 +208,21 @@ grep -E "Info: (Device utilisation|Max frequency|Critical path report)|WARNING|E
 if grep -qE "^\s*Warning|ERROR" "$out/sv16_nextpnr.log"; then
     echo "[sv16] --- nextpnr warnings ---"
     grep -E "^\s*Warning|ERROR" "$out/sv16_nextpnr.log" | sed 's/^/[sv16] /'
+fi
+
+# ---------------------------------------------------------- device budget guard
+# nextpnr's utilisation denominators are the *die's* resources, not this part's:
+# the LFE5U-12F and LFE5U-25F are one die in two bins (identical tilegrid and
+# frame geometry in prjtrellis; only the idcode differs), so nextpnr will happily
+# place a 25F-sized design into a 12F bitstream.  The datasheet's numbers for the
+# part actually being bought are the budget -- see scripts/sv16_check_budget.py
+# and ADR-025.
+part_limits="LFE5U-12F-${speed}${package}"
+if [ "$limits" = "off" ]; then
+    python3 scripts/sv16_check_budget.py "$out/sv16_nextpnr.log" "$part_limits" --warn-only || true
+elif ! python3 scripts/sv16_check_budget.py "$out/sv16_nextpnr.log" "$part_limits"; then
+    echo "[sv16] set LIMITS=off to report instead of failing" >&2
+    exit 2
 fi
 
 echo "[sv16] packing the bitstream"

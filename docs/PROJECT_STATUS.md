@@ -19,7 +19,7 @@ serial cable, and reports why it restarted.
 | Reset and startup | reset-cause register, soft reset, fault halt, auto-boot, RX-low escape to the monitor, **watchdog restart of a hung application**, reset held until the clock source is up | [RESET_AND_CLOCK.md](RESET_AND_CLOCK.md) |
 | Verification | **473 checks, 0 failures** across 18 Verilator suites + lint | [VERIFICATION.md](VERIFICATION.md) |
 | Clock source | 25 MHz oscillator by default; **optional on-chip PLL at 37.5 MHz** (`make bitstream CLKSRC=pll PLLMHZ=37.5`, ADR-021) with the UART divisor derived from either | [RESET_AND_CLOCK.md](RESET_AND_CLOCK.md) |
-| Bitstream | builds, places, routes and packs for the target part; timing PASS at 25 MHz and at 37.5 MHz (`CLKSRC=pll`) | [SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md) |
+| Bitstream | builds, places, routes and packs for the target part; timing PASS at 25 MHz and at 37.5 MHz (`CLKSRC=pll`); resource use is checked against the datasheet's 12F budget after place and route (ADR-025) | [SYNTHESIS_AND_DEPLOYMENT.md](SYNTHESIS_AND_DEPLOYMENT.md) |
 | Documentation | operator manual, memory map, peripherals, flow, verification, ADRs | `docs/` |
 
 **Headline result:** `make bitstream` produces `build/sv16_top.bit` (295,665

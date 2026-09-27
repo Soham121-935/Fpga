@@ -111,7 +111,7 @@ build/           generated: ROM image, firmware images, netlist, bitstream (untr
 | | |
 | :--- | :--- |
 | Simulation | 473 checks, 0 failures across 18 suites (CPU/ISA, control instructions, interrupt latency, ALU/divider, RAM, timer, PWM, GPIO, UART, watchdog, flash controller, boot loader, A/B slots, PLL clock, monitor) |
-| Synthesis / P&R | places, routes, packs for the target part; 38 % LUTs, 19 % FFs |
+| Synthesis / P&R | places, routes, packs for the target part; 77 % of the datasheet's LUT budget, 56 % of its block RAM (checked by the build, ADR-025) |
 | Timing | 44.70 MHz Fmax measured at 25 MHz (~79 % margin); 45.45 MHz at `CLKSRC=pll PLLMHZ=37.5` (~21 % margin) |
 | Silicon | **never run on hardware** — simulation and static timing only |
 

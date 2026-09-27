@@ -43,6 +43,11 @@ FPGA_SPEED  = 6
 CLKDIV      = 1
 CLKSRC      = osc
 PLLMHZ      = 37.5
+# Resource budget check: the datasheet's numbers for LFE5U-12F (12k LUTs, 32
+# sysMEM blocks, 28 multipliers, 2 PLLs, 98 bonded I/O on TQFP-144) are enforced
+# after place and route, because prjtrellis models the 12F with the 25F's die
+# (see ADR-025).  LIMITS=off makes it a report instead of a gate.
+LIMITS      = on
 # Timing target: the oscillator frequency for CLKSRC=osc, the generated clock
 # for CLKSRC=pll.  Override with FPGA_FREQ=... if you know better.
 FPGA_FREQ   ?= $(if $(filter pll,$(CLKSRC)),$(PLLMHZ),25)
@@ -208,7 +213,7 @@ bitstream: firmware $(BUILD)/$(PROJECT).bit
 $(BUILD)/$(PROJECT).bit: $(RTL_SRCS) $(ROM_HEX) $(CONSTRAINTS) scripts/sv16_synth.sh
 	@scripts/sv16_synth.sh --out $(BUILD) --rom $(ROM_HEX) --lpf $(CONSTRAINTS) \
 	    --freq $(FPGA_FREQ) --clkdiv $(CLKDIV) --clksrc $(CLKSRC) \
-	    --pllmhz $(PLLMHZ) --speed $(FPGA_SPEED) --top $(PROJECT)
+	    --pllmhz $(PLLMHZ) --speed $(FPGA_SPEED) --limits $(LIMITS) --top $(PROJECT)
 
 # Synthesis only (fast check that the RTL is synthesizable for this device)
 synth: $(ROM_HEX)

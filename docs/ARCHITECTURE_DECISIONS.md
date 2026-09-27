@@ -687,3 +687,66 @@ carry the re-measured numbers. The build still cannot prove lock: simulation use
 a behavioural oscillator, and this remains the one part of the design that needs a
 board (OQ-19). No RTL outside `sv16_pll.sv` changed, no ISA-visible behaviour
 changed, and the default clock source is still the oscillator.
+
+---
+
+## ADR-025: The resource budget is the datasheet's, not the toolchain's
+
+**Context**: while checking this design against the Lattice *ECP5 and ECP5-5G
+Family Data Sheet* (FPGA-DS-02012-3.2), the reported utilisation did not match the
+part. nextpnr prints denominators of **24,288 LUT4 and 56 sysMEM blocks** for a
+build carrying `--12k`, which are the LFE5U-**25F**'s numbers. The datasheet's
+Table 1.1 gives, for the part in the BOM:
+
+| | LFE5U-12 | LFE5U-25 |
+| :--- | ---: | ---: |
+| LUTs | **12k (12,144 LUT4)** | 24k (24,288) |
+| sysMEM blocks (18 kb) | **32** (576 kb = 72 KB) | 56 (1,008 kb) |
+| Distributed RAM | 97 kb | 194 kb |
+| 18×18 multipliers | 28 | 28 |
+| PLLs / DLLs | 2 / 2 | 2 / 2 |
+| 144 TQFP I/O | **98** | 98 |
+
+The cause is not a stale copy in the documentation — it is the device model.
+In the prjtrellis database, `ECP5/LFE5U-12F/` and `ECP5/LFE5U-25F/` contain
+**byte-identical** `tilegrid.json`, `iodb.json` and `globals.json`, and
+`devices.json` gives both the same frame geometry (7,562 frames × 592 bits,
+`max_row` 50, `max_col` 72). The only difference is the `idcode`
+(`0x21111043` vs `0x41111043`). The two part numbers are **one die sold in two
+bins**, which is why the fabric is identical and the guaranteed density is not.
+(The same relationship produces the 197-vs-98 I/O confusion: 197 is the BGA
+packages' bond-out, 98 is what the TQFP-144 package actually bonds.)
+
+**Decision**: the datasheet's numbers for the part are the budget, and
+`make bitstream` enforces them. `scripts/sv16_check_budget.py` parses
+nextpnr's utilisation table after place and route and fails the build if the
+design exceeds **12,144 LUT4 / 32 `DP16KD` / 28 `MULT18X18D` / 2 `EHXPLLL` /
+98 I/O**, printing the datasheet percentage for each. `LIMITS=off` turns the gate
+into a report for anyone deliberately targeting a 25F.
+
+**Why**:
+- A design that exceeds the datasheet budget still produces a bitstream — the
+  frames exist and the idcode matches — so nothing in the flow would complain.
+  It would be a design that fits the *die* and not the *part*: it might work on
+  the bench and fail in production, or fail on a batch, which is the worst
+  possible failure mode.
+- Silently trusting a tool's denominator is how this repository ended up
+  claiming "62 % of the LUTs are free" when the real figure is **23 %**. The
+  guard is what stops that claim from drifting again.
+- The check runs on the post-route report, so it sees what was actually placed,
+  not an estimate.
+
+**Measured after the change** (default build): 9,407 / 12,144 LUT4 = **77.5 %**,
+4,772 / 12,144 FF = 39 %, 18 / 32 block RAM = 56 %, 1 / 28 multiplier, 0 / 2 PLL,
+52 / 98 I/O = 53 %. The PLL build: 9,191 LUT4 = 76 %. The design fits the part
+comfortably in absolute terms, but LUT4 and block RAM are the two resources to
+watch, and every "how much is left" statement in the documentation now means
+"left against the datasheet".
+
+**Consequences**: `docs/FPGA.md`, `docs/SYNTHESIS_AND_DEPLOYMENT.md`,
+`docs/PROJECT_STATUS.md`, `README.md` and `REPORT.md` carry the datasheet numbers
+with nextpnr's shown alongside so the discrepancy is never re-learned; the roadmap
+(MCU_READINESS) is budgeted against 2,700 free LUT4 and 14 free block RAM blocks
+rather than against 15,000 LUT4 and 38 blocks; and the remaining question — does
+this exact design configure and run on a real 12F bin — is tracked as OQ-20,
+because the placement was chosen by a tool that models the whole die.

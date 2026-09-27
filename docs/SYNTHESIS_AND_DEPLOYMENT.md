@@ -88,19 +88,31 @@ make bitstream        # == scripts/sv16_synth.sh --clkdiv 1 --freq 25
 
 ### Device utilisation (measured)
 
-| Resource | Used (default build) | Available | % |
-| :--- | ---: | ---: | ---: |
-| LUT4 (incl. carry) | 9,407 | 24,288 | 38 % |
-| Flip-flops | 4,772 | 24,288 | 19 % |
-| `DP16KD` block RAM | 18 | 56 | 32 % |
-| `MULT18X18D` | 1 | 28 | 3 % |
-| I/O buffers | 52 | **98** (bonded on TQFP-144) | 53 % |
-| `EHXPLLL` | 0 (1 with `CLKSRC=pll`) | 2 | 0 % (50 %) |
+| Resource | Used (default build) | Datasheet budget (LFE5U-12F) | % | nextpnr's denominator |
+| :--- | ---: | ---: | ---: | ---: |
+| LUT4 (incl. carry) | 9,407 | **12,144** | **77 %** | 24,288 (the die) |
+| Flip-flops | 4,772 | 12,144 | 39 % | 24,288 |
+| `DP16KD` block RAM | 18 | **32** | **56 %** | 56 |
+| `MULT18X18D` | 1 | 28 | 4 % | 28 |
+| I/O buffers | 52 | **98** (bonded on TQFP-144) | 53 % | 197 (BGA packages) |
+| `EHXPLLL` | 0 (1 with `CLKSRC=pll`) | 2 | 0 % (50 %) | 2 |
 
-The `CLKSRC=pll PLLMHZ=37.5` build uses 9,191 LUT4 (37 %) — the PLL is a hard macro,
-so it costs nothing in fabric (the difference from the oscillator build is netlist
-mapping, not the PLL). Roughly three fifths of the part is still free,
-which is what funds the roadmap items in [MCU_READINESS.md](MCU_READINESS.md).
+**Read the third column, not the last one.** prjtrellis models the LFE5U-12F with
+the LFE5U-25F's die — the database files are byte-identical and only the idcode
+differs (`0x21111043` vs `0x41111043`) — so nextpnr's denominators are the *die's*
+resources and a 25F-sized design would be accepted into a 12F bitstream. The
+datasheet's numbers for the part in the BOM are the budget, `make bitstream`
+enforces them (see ADR-025), and every "X % free" claim in these documents means
+"free against the datasheet". The design fits: **the tightest resource is LUT4 at
+77 %**, then block RAM at 56 %.
+
+The `CLKSRC=pll PLLMHZ=37.5` build uses 9,191 LUT4 (76 % of the datasheet budget) —
+the PLL is a hard macro, so it costs nothing in fabric (the difference from the
+oscillator build is netlist mapping, not the PLL). What is left is **~2,700 LUT4
+(23 %) and 14 block RAM blocks (28 KB)**: enough for the roadmap items in
+[MCU_READINESS.md](MCU_READINESS.md), but not enough to grow the design casually —
+a second 16 KB SRAM plus a JTAG bridge would use most of it. `make bitstream`
+refuses to build a design that crosses the datasheet budget.
 
 ### Timing
 

@@ -16,6 +16,7 @@ prototype* into a *practical, MCU-style programmable system* on the Lattice ECP5
 | Commits | `ec3581b` Rev B implementation · `a07f62e` monitor-extent docs fix · `b747fb3` this report (+ accuracy fixes) · `e664a0c` branch-rename note · `62f432a` watchdog in the reset path (P1) · `56a8b62` multi-cycle divider + full 25 MHz (P2) · `bd83c92` A/B image slots with rollback (P3) · `f49dbdf` monitor `K` confirm check · P9 peripheral regression + ISA suite (ADR-020, this revision) |
 | Remote state | On GitHub this work stream was renamed **`arena/01a0ce9b-fpga` → `arena/Rv2`**, so `arena/Rv2` holds the Rev B work up to `a07f62e`. This session pushed `arena/01a0ce9b-fpga` again (P1 watchdog, then P2 timing) and it is a direct descendant of `arena/Rv2`, so it can be fast-forwarded or merged without conflicts. |
 | Test status | **473 checks, 0 failures** across 18 suites; RTL lint 26/26 clean |
+| Resource budget | checked after place and route against the LFE5U-12F **datasheet** (12,144 LUT4 / 32 block RAM / 28 MULT / 2 PLL / 98 I/O), not against nextpnr's 25F-denominated table — `scripts/sv16_check_budget.py`, ADR-025 |
 | Bitstream | `make bitstream` → `build/sv16_top.bit`, 295,665 bytes, **timing PASS at the full 25 MHz** (Fmax 44.70 MHz, ~79 % margin); `CLKSRC=pll PLLMHZ=37.5` → 292,752 bytes, PASS at 37.5 MHz (45.45 MHz) |
 | Silicon | **never run on hardware** — simulation + static timing only |
 
@@ -52,7 +53,7 @@ it breaks:
 
 | Metric | Value |
 | :--- | :--- |
-| FPGA utilization | 9,407 / 24,288 LUT4 (**38 %**), 4,772 FFs (19 %), 18/56 block RAMs, 1 multiplier, 52 I/O |
+| FPGA utilization | 9,407 / **12,144** LUT4 (**77 %** of what the datasheet guarantees for a 12F), 4,772 FFs, 18/32 block RAMs (56 %), 1 multiplier, 52/98 I/O |
 | Timing | Fmax **44.70 MHz** measured at 25 MHz (36.29 pre-route, ~79 % margin) and **45.45 MHz** at the PLL's 37.5 MHz (~21 % margin); both PASS |
 | Bitstream | **295,665 bytes** (`build/sv16_top.bit`), boot ROM baked in |
 | Verification | **473 checks, 0 failures** across 18 suites (`49+48+41+35+27+27+26+23+21+21+21+21+20+14+13+11+11+8`), plus lint (26/26) + whole-SoC elaboration |
