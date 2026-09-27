@@ -35,6 +35,11 @@ reprogrammed in the field, and drive a small motor — which is exactly what the
 | JTAG header pinout | Lattice ECP5 Versa EB98/EB103 Appendix A (1×10 header) and the Digilent/FT2232H 2×5 0.05" standard |
 | Pinout of every constrained signal on the board | `board/TQFP144_PINOUT.md` (generated) |
 
+**Printables.** This document exists twice: `BOARD.md` (the source of truth, with the generated netlist
+appendix in `board/TQFP144_PINOUT.md`) and **`BOARD.pdf`** — the same content typeset for printing, with
+the ASCII diagrams kept in a monospaced face. Rebuild the PDF with `make board-pdf`
+(`python3 -m pip install markdown xhtml2pdf` once; nothing else in the build needs those packages).
+
 **Drift control.** `board/TQFP144_PINOUT.md` is generated from the two files above and is verified in
 `make lint`:
 

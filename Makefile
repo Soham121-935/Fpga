@@ -137,7 +137,7 @@ TESTBENCHES = \
 	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
 
 .PHONY: all firmware rom app lint vlint test sim iss bitstream synth prog \
-	board-pins \
+	board-pins board-pdf \
 	upload upload-slot slot-image commit mon-verify mon-boot mon-term \
 	clean help
 
@@ -190,6 +190,12 @@ lint:
 # database + the LPF.  --check (run by lint) fails if the file is stale.
 board-pins:
 	$(PY) scripts/sv16_board_pins.py
+
+# BOARD.md -> BOARD.pdf.  Optional: needs two pure-Python packages, and nothing
+# else in the build depends on them.
+#   python3 -m pip install markdown xhtml2pdf
+board-pdf:
+	$(PY) scripts/sv16_board_pdf.py
 
 # Verilator testbenches (TB=<name> to run just one)
 sim: firmware
