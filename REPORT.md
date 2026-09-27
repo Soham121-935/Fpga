@@ -563,6 +563,7 @@ Effort: 1–2 sessions.
 
 | # | Item | Evidence |
 | :--- | :--- | :--- |
+| P11 | **PCB blueprint**: complete component list with part numbers and specifications, power tree and sequencing argument, full 144-pin device/net table, connection circuit diagram, bring-up and acceptance plan, layout guidance, and nine tracked board-level open items | `BOARD.md` (+ generated appendix `board/TQFP144_PINOUT.md`, verified by `make lint` through `scripts/sv16_board_pins.py --check`); the device pin database `board/ecp5_tqfp144.json` was cross-built from the prjtrellis database for LFE5U-12F and the Lattice BSDL FPGA-MD-02097, and it exposed the Master-SPI/GPIOA pad sharing that shaped the two-flash architecture (BOARD.md §6.4) |
 | P1 | Watchdog in the reset path — windowed, key-protected, restarts the SoC; `RSTCAUSE.WDT` live, `MMIO_PRESENT = 0x7FF` | `sv16_wdt.sv` + ADR-017; 49 unit + 14 system checks |
 | P2 | Timing headroom: the real critical path was the ALU's combinational divider, not the flag/branch path | Multi-cycle DIV/MOD + `S_DIV_WAIT` (ADR-018), Fmax 14.68 → 44.70 MHz measured, shipped at the full 25 MHz |
 | P2b | Optional `EHXPLLL` system clock at 37.5 MHz, reset gated on lock, all derived constants follow it; feedback path corrected in ADR-024 | ADR-021/024, `pll_clock_tb` (8 checks), 292,752-byte bitstream at 45.45 MHz |
@@ -575,11 +576,15 @@ Effort: 1–2 sessions.
 
 See `docs/OPEN_QUESTIONS.md`: RAM remap (OQ-11), vector table placement (OQ-12),
 C toolchain and ISA extension (OQ-16 — S2a answers it), update throughput
-(OQ-17 — S1 answers it), real board pin assignment (OQ-18), PLL loop-filter and
+(OQ-17 — S1 answers it), real board pin assignment (OQ-18 — BOARD.md §6 is the
+answer for this part and package), PLL loop-filter and
 feedback validation on silicon (OQ-19), and whether this exact placement fits a
 real 12F bin (OQ-20). OQ-14 (image slots) is closed by ADR-019, OQ-13 (watchdog)
 by ADR-017, OQ-15 (interrupt latency) by ADR-023 and the PLL feedback wiring by
-ADR-024.
+ADR-024. Board-level items that need a physical board (dynamic current, regulator
+passives, configuration time, CH340C wiring, USB-C sink behaviour, adapter pinout,
+EMC, mechanics, the J5 pad sharing) are tracked as **OQ-B1…OQ-B9** in `BOARD.md`
+§13.2.
 
 ---
 

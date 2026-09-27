@@ -137,6 +137,7 @@ TESTBENCHES = \
 	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
 
 .PHONY: all firmware rom app lint vlint test sim iss bitstream synth prog \
+	board-pins \
 	upload upload-slot slot-image commit mon-verify mon-boot mon-term \
 	clean help
 
@@ -182,6 +183,13 @@ $(HANG_IMG): $(HANG_SRC) scripts/sv16_as.py scripts/sv16_fwpack.py
 # --------------------------------------------------------------- checks
 lint:
 	$(PY) scripts/sv16_rtl_lint.py $(RTL_SRCS)
+	$(PY) scripts/sv16_board_pins.py --check
+
+# ------------------------------------------------------------- board design
+# Regenerate the PCB pin/net table used by BOARD.md from the device pin
+# database + the LPF.  --check (run by lint) fails if the file is stale.
+board-pins:
+	$(PY) scripts/sv16_board_pins.py
 
 # Verilator testbenches (TB=<name> to run just one)
 sim: firmware
