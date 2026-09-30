@@ -586,6 +586,40 @@ make upload-slot SLOT=1 PORT=/dev/ttyUSB0 # 7. field update: upload -> mon-boot 
 Step 4 before step 6 on purpose: if the bitstream is wrong, a power cycle erases the mistake. Only once
 the design behaves do you write it into U2.
 
+### 14.3 One command that checks all four (run it before you program the board)
+
+`make release` builds the firmware and the bitstream, then verifies everything about the four artifacts
+that can be verified without hardware, writes a manifest with their SHA-256 hashes to `build/release/`,
+and prints the programming sequence:
+
+```sh
+make release                        # osc variant (25 MHz), the board's oscillator
+make release CLKSRC=pll PLLMHZ=37.5 # if the team prefers the 37.5 MHz PLL build
+scripts/sv16_release.py --twice     # also rebuild twice and compare hashes
+```
+
+What it checks, and why each one has burned somebody before:
+
+| Check | Why it matters |
+| :--- | :--- |
+| The boot ROM re-assembles byte-for-byte from `firmware/monitor/monitor.s` | a stale ROM means the **bitstream carries an old monitor** — you would debug the wrong code on the bench |
+| The bitstream is newer than the ROM | same reason, caught by timestamp instead of content |
+| nextpnr's reported Fmax meets the constraint (PASS/FAIL line) | a build that failed timing still produces a bitstream, and it is the one that works *most* of the time |
+| The device budget check passes against the datasheet limits | proves the design still fits the `LFE5U-12F` you are soldering |
+| Every image's header CRC and payload CRC | a truncated upload is silent otherwise; the loader would reject it at boot and you would blame the flash |
+| The payload fits the 32 KB slot, and the slot record state | tells you whether an image can roll back (PENDING) or overwrite without protection (no record) |
+| SHA-256 of every artifact | so "which file did we flash?" is a one-line answer, not a memory test |
+
+**Result on this tree (verified today, `CLKSRC=osc`, 25 MHz):** 10 checks passed, 0 failed — ROM
+1115/2048 words with 933 free, bitstream 295,665 bytes, timing 36.29 MHz against the 25 MHz constraint,
+9,407 LUT4 (77.5 %) of the device, images `motor_test_img.hex`, `app_slot1_img.hex` (slot state
+**pending**) and `wdt_hang_img.hex` all with valid CRCs. With `--twice`, **the bitstream reproduced byte
+for byte across two complete builds** (identical SHA-256) — so a bitstream hash in the manifest really does
+identify a design revision, which is what makes the release record worth keeping.
+
+Note what this does *not* do: it cannot tell you the bitstream will configure your board, or that the
+soldering is good. Those are hardware facts and they are what the 1–3 day bring-up is for (§14.2).
+
 ### 14.2 "And it will run" — the honest caveat
 
 The *logic* is verified: 18 test suites, 473 checks, 0 failures; timing closes at 45.45 MHz against a
@@ -610,5 +644,5 @@ bring-up debugging pass whose size depends on how good the soldering was."*
 _Revision 1.3 — written against commit `dff0001` (project state: RTL complete, 473 checks green, bitstream
 builds, no hardware). §12 is the one-month cut; **§13 is the dated four-week hardware plan** (the deadline
 requires the board to run, the team has ~20 h/week each, and the FPGA is purchasable — 372 pieces of live
-distributor stock on 27 Sep 2026; the 40-week figure is the reorder lead time); §14 answers "can't we just upload the .sv code?" (no — bitstream, config flash, application flash, and the monitor inside the bitstream). §1–§11 remain the full plan. Effort estimates are for a first-time hardware team — the figures taken
+distributor stock on 27 Sep 2026; the 40-week figure is the reorder lead time); §14 answers "can't we just upload the .sv code?" (and §14.3 is the release checker) (no — bitstream, config flash, application flash, and the monitor inside the bitstream). §1–§11 remain the full plan. Effort estimates are for a first-time hardware team — the figures taken
 from real measurements are the 473 checks and the 49.53 MHz speed-7 timing run._

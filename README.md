@@ -30,6 +30,7 @@ source scripts/sv16_venv.sh    # fetches Verilator + Yosys + nextpnr + ecppack
 make test                      # lint + 18 simulation suites (473 checks)
 make bitstream                 # -> build/sv16_top.bit (boot ROM baked in)
 make prog                      # openFPGALoader over JTAG
+make release                   # verify all four artifacts + hashes (run before programming)
 make app                       # build the example application image
 make upload PORT=/dev/ttyUSB0  # erase + upload + verify over UART
 make upload-slot SLOT=1        # field update: install into the inactive slot
@@ -82,6 +83,7 @@ SV-16 monitor v1
 | `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 25 MHz |
 | `make synth` | Yosys only (fast synthesizability check) |
 | `make prog` | program the FPGA over JTAG |
+| `make release` | build the bitstream and the A/B image, then verify every artifact (ROM matches its source, timing, device budget, image CRCs, slot record) and write `build/release/` with hashes and the programming sequence |
 | `make upload PORT=...` | program the *firmware* over the serial port |
 | `make upload-slot SLOT=1` | field update into the inactive A/B slot (ADR-019) |
 | `make commit` | commit a trial image (monitor `K`) |

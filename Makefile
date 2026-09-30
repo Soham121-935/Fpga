@@ -7,6 +7,7 @@
 #   make lint        RTL lint
 #   make bitstream   Yosys -> nextpnr-ecp5 -> ecppack   (build/sv16_top.bit)
 #   make prog        program the device over JTAG
+#   make release     verify the four artifacts and hash them (run before programming)
 #   make prog-flash  write the bitstream into the config flash (U2), persistent
 #   make upload      program the *firmware* over the serial port (needs pyserial)
 #   make iss         run the instruction-set simulator on the example firmware
@@ -234,6 +235,15 @@ $(BUILD)/$(PROJECT).bit: $(RTL_SRCS) $(ROM_HEX) $(CONSTRAINTS) scripts/sv16_synt
 	@scripts/sv16_synth.sh --out $(BUILD) --rom $(ROM_HEX) --lpf $(CONSTRAINTS) \
 	    --freq $(FPGA_FREQ) --clkdiv $(CLKDIV) --clksrc $(CLKSRC) \
 	    --pllmhz $(PLLMHZ) --speed $(FPGA_SPEED) --limits $(LIMITS) --top $(PROJECT)
+
+# ------------------------------------------------------- release for the bench
+# Verify the four artifacts that actually make the board run (bitstream, config
+# flash content, firmware image, boot ROM), hash them, and write build/release/
+# with the manifest and the programming sequence.  See TEAM_PLAN.md section 14;
+# run it immediately before programming the board.
+release: firmware slot-image $(BUILD)/$(PROJECT).bit
+	$(PY) scripts/sv16_release.py --clksrc $(CLKSRC) --freq $(FPGA_FREQ) \
+	    --build-dir $(BUILD)
 
 # Synthesis only (fast check that the RTL is synthesizable for this device)
 synth: $(ROM_HEX)
