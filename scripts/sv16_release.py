@@ -295,11 +295,29 @@ def write_manifest(out_dir: Path, variant: str, freq: float, info: dict,
     ]
     lines += ["  FAIL: %s" % f for f in fails]
     lines += ["", "The four artifacts", "-" * 60]
-    for key, value in info.items():
-        if isinstance(value, dict) and "sha256" in value:
-            lines.append("%-12s %s" % (key.upper(), value.get("path", "?")))
-            lines.append("%-12s %s bytes  sha256 %s"
-                         % ("", value.get("bytes", "?"), value["sha256"]))
+    for key in ("rom", "bitstream"):
+        value = info.get(key)
+        if not isinstance(value, dict) or not value.get("path"):
+            continue
+        lines.append("%-10s %s" % (key.upper(), value["path"]))
+        size = ("%d bytes  " % value["bytes"]) if "bytes" in value else ""
+        lines.append("%-10s %ssha256 %s" % ("", size, value["sha256"]))
+        if key == "bitstream" and value.get("fmax_mhz"):
+            lines.append("%-10s %.2f MHz Fmax (%s), budget %s"
+                         % ("", value["fmax_mhz"], value.get("fmax_clock", "clock"),
+                            value.get("budget", "?")))
+        if key == "rom" and "words" in value:
+            lines.append("%-10s %d/%d words (part of the bitstream, not programmed "
+                         "separately)" % ("", value["words"], value["capacity"]))
+    for name, image in (info.get("images") or {}).items():
+        lines.append("%-10s %s  %d bytes, slot record: %s"
+                     % ("IMAGE", image.get("path", name), image.get("bytes", 0),
+                        image.get("slot_state", "none")))
+    det = info.get("determinism")
+    if det:
+        lines.append("")
+        lines.append("Determinism: bitstream reproduced byte for byte across two builds: %s"
+                     % ("yes" if det["same_hash"] else "NO"))
     lines += [
         "",
         "Programming sequence (TEAM_PLAN.md section 14.1, BOARD.md section 9.1)",
