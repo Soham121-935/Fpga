@@ -7,6 +7,7 @@
 #   make lint        RTL lint
 #   make bitstream   Yosys -> nextpnr-ecp5 -> ecppack   (build/sv16_top.bit)
 #   make prog        program the device over JTAG
+#   make pcb-doc     regenerate PCB_COMPONENTS.pdf (KiCad component specs)
 #   make release     verify the four artifacts and hash them (run before programming)
 #   make prog-flash  write the bitstream into the config flash (U2), persistent
 #   make upload      program the *firmware* over the serial port (needs pyserial)
@@ -186,6 +187,7 @@ $(HANG_IMG): $(HANG_SRC) scripts/sv16_as.py scripts/sv16_fwpack.py
 lint:
 	$(PY) scripts/sv16_rtl_lint.py $(RTL_SRCS)
 	$(PY) scripts/sv16_board_pins.py --check
+	$(PY) scripts/sv16_pcb_doc.py --check
 
 # ------------------------------------------------------------- board design
 # Regenerate the PCB pin/net table used by BOARD.md from the device pin
@@ -198,6 +200,17 @@ board-pins:
 #   python3 -m pip install markdown xhtml2pdf
 board-pdf:
 	$(PY) scripts/sv16_board_pdf.py --title "SV-16 microcontroller board blueprint"
+
+# PCB_COMPONENTS.md -> PCB_COMPONENTS.pdf: regenerate the FPGA pin table from the
+# LPF, then render.  `make lint` fails if the checked-in table is stale.
+pcb-doc:
+	$(PY) scripts/sv16_pcb_doc.py
+	$(PY) scripts/sv16_board_pdf.py --src PCB_COMPONENTS.md --out PCB_COMPONENTS.pdf --title "SV-16 PCB components - KiCad specification"
+
+# Dump the constrained-pin table as CSV (pin, signal, bank, drive, pull, net)
+pcb-pins-csv:
+	@mkdir -p $(BUILD)
+	$(PY) scripts/sv16_pcb_doc.py --csv $(BUILD)/SV16_pinmap.csv
 
 # TEAM_PLAN.md -> TEAM_PLAN.pdf (same renderer, same two optional packages)
 plan-pdf:

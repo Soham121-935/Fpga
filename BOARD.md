@@ -77,7 +77,7 @@ is regenerated, so the schematic and the bitstream cannot silently disagree.
                     |                                     |            (C21 100u, C2-C7 100n)
                   3V3  (C23 470u in, C24 220u, C25 10u)  1V1  ────►  U1 VCC (6 pins)
                     |
-            +-------+--------+   Q3 AO3401 load switch, gate RC ~50 ms (R42/C32)
+            +-------+--------+   Q3 AO3401 load switch, gate delay ~54 ms (R42/R43/C32)
             | U7 AMS1117-2.5 |◄─────────────────────────────────────
             | 2.5 V / 1 A    |
             +-------+--------+
@@ -132,7 +132,8 @@ registers — the board adds nothing the SoC cannot already drive.
    trip points, otherwise PROGRAMN/INITN must be held low until VCCIO8 is valid (§3.5 of FPGA-DS-02012-3.4).
    The India-available regulators (LM2596, MP1584) do **not** accept a 3.3 V input, so VCC can no longer
    be *derived* from VCCIO8 as in revision 1.0. Instead their enable pins are used: the 1.1 V buck gets an
-   RC on `EN` (≈13 ms) and the 2.5 V LDO is fed through a P-MOSFET load switch with an RC gate (≈50 ms).
+   RC on `EN` (≈6 ms at 12 V, ≈13 ms at 5 V) and the 2.5 V LDO is fed through a P-MOSFET load switch
+   whose gate RC (R42/R43/C32) delays it by ≈54 ms from 12 V.
    3V3 = VCCIO8 therefore reaches the flash threshold ≈0.3 ms after power-up, long before either other
    rail moves. §4.3 has the numbers, the bench check is bring-up step 3 in §10.
 3. **Two SPI flashes, not one.** The FPGA's configuration port is not memory-mapped: the MSPI pads
@@ -243,11 +244,11 @@ chosen for density and is a bad idea when you are soldering it yourself). Electr
 | R27–R30 | 470 Ω | 0603 | 4 | user LED series resistors |
 | R31–R34 | 1 kΩ | 0603 | 4 | indicator drives: R31 = Q4 base, R32 = Q2 base, R33/R34 = series for D1/D6 |
 | R36, R37 | 5.1 kΩ | 0603 | 2 | USB-C CC1/CC2 Rd (omit with micro-USB) |
-| **R38** | **37.4 kΩ (E96)** | 0603 | 1 | **1V1 feedback divider, top**: 0.8 × (1 + 37.4/100) = **1.099 V** |
-| **R39** | **100 kΩ** | 0603 | 1 | **1V1 feedback divider, bottom** — measure this rail before fitting U1 (§10 step 2) |
-| **R40** | 100 kΩ | 0603 | 1 | MP1584 `FREQ` resistor (≈0.5 MHz; confirm against the datasheet — OQ-B10) |
+| **R38** | **12.4 kΩ (E96)** | 0603 | 1 | **1V1 feedback divider, top**: 0.8 × (1 + 12.4/33) = **1.1006 V** (was 37.4 kΩ with a 100 kΩ bottom — see R39) |
+| **R39** | **33 kΩ** | 0603 | 1 | **1V1 feedback divider, bottom** — measure this rail before fitting U1 (§10 step 2). **Corrected from 100 kΩ:** the MP1584 datasheet keeps the *lower* divider resistor **below 40 kΩ**, because the FB pin's ≈20 µA bias current would otherwise push the output outside the FPGA's 1.045–1.155 V window |
+| **R40** | 100 kΩ | 0603 | 1 | MP1584 `FREQ` resistor → **900 kHz** (datasheet: R = 180000/f^1.1 with R in kΩ and f in kHz; its own table gives 100 kΩ = 900 kHz) |
 | **R41** | 100 kΩ | 0603 | 1 | MP1584 `EN` series resistor (with C31 = the ≈13 ms sequencing delay) |
-| **R42** | 47 kΩ | 0603 | 1 | Q3 gate pull-up to source (with C32 = the ≈50 ms 2V5 delay) |
+| **R42** | **1 MΩ** | 0603 | 1 | Q3 gate **to GND** — this is what turns the load switch *on* (with C32 = the 2V5 delay). Revised from 47 kΩ: see R43 |
 | C1 | 100 nF | 0603 | 1 | `ext_rst_n` RC (with R1) |
 | C2–C7 | 100 nF | 0603 | 6 | 1V1 decoupling, one per VCC pin (20, 29, 38, 66, 83, 130) |
 | C8–C11 | 100 nF | 0603 | 4 | 2V5 decoupling, one per VCCAUX pin (17, 53, 96, 132) |
@@ -262,8 +263,9 @@ chosen for density and is a bad idea when you are soldering it yourself). Electr
 | C28, C29 | 100 nF | 0603 | 2 | flash decoupling (one per device) |
 | **C30** | 10 µF in + 10 µF out | 0805 | 2 | AMS1117 input/output — it wants ≥10 µF, and ceramics can make it ring; bench check (OQ-B10) |
 | **C31** | 470 nF | 0603 | 1 | MP1584 `EN` delay capacitor (≈13 ms with R41) |
-| **C32** | 470 nF | 0603 | 1 | Q3 gate delay capacitor (≈50 ms with R42) |
+| **C32** | **4.7 µF** | 0805 | 1 | Q3 gate→**source** delay capacitor: τ = (R42∥R43)·C32 = 91 kΩ × 4.7 µF ≈ 428 ms, crossing the AO3401 threshold at ≈54 ms from 12 V |
 | C33 | 100 nF | 0603 | 1 | MP1584 bootstrap (`BST`) capacitor |
+| **R43** | **100 kΩ** | 0603 | 1 | Q3 gate→source clamp: with R42 it holds Vgs at −VM_IN·1M/1.1M ≈ **−10.9 V** at 12 V, inside the AO3401's ±12 V rating (without it the gate would sit at GND and Vgs = −12 V, right on the absolute maximum) |
 | L1 | **33 µH / 3 A** shielded | 8×8 mm | 1 | LM2596 3V3 inductor (datasheet value) |
 | L2 | **10 µH / 3 A** shielded | 6×6 mm | 1 | MP1584 1V1 inductor |
 | FB1 | ferrite bead 600 Ω @ 100 MHz | 0603 | 1 | VM_IN filtering ahead of the regulators |
@@ -355,7 +357,7 @@ can swap one out.
       |   └── FB ◄── R38 37.4k (OUT) + R39 100k (GND) = 1.099 V                         |
       |                                                                                 |
       |   ┌── Q3 AO3401 (P-FET load switch) ── U7 AMS1117-2.5 ── 2V5 (C22 22u + 4 x 100n)
-      +───┤    gate: R42 47k to source + C32 470n to GND      ← ≈50 ms delay            |
+      +───┤    gate: R42 1M to GND, C32 4.7u to source, R43 100k clamp  ← ≈54 ms delay  |
           └── (C30 10u in / 10u out)                                                    |
                                                                                         |
    VCC (1.1 V)    = pins 20, 29, 38, 66, 83, 130  ◄─────────────────────────────────────┘
@@ -405,7 +407,7 @@ and `nextpnr` emits none). The regulators are therefore specified with a large m
 | ≈0.3 ms | 3V3 (U5, LM2596 soft-start) crosses 2.31 V | VCCIO8 is now above the config flash's `VIH` — the ordering requirement is met with two orders of magnitude of margin |
 | ≈13 ms | U6 starts (EN released by R41/C31; threshold ≈1.2 V at 5 V in: t = −RC·ln(1 − 1.2/Vin), RC = 47 ms) | VCC begins to rise after VCCIO8 is fully valid |
 | ≈14 ms | 1V1 crosses 0.90 V | VCC POR trip, comfortably after VCCIO8 |
-| ≈50 ms | Q3 turns on (gate RC 47 kΩ × 470 nF ≈ 22 ms) → 2V5 rises | VCCAUX POR trip, last of the three |
+| ≈54 ms | Q3 turns on (gate falls with τ = (R42∥R43)·C32 ≈ 428 ms, crossing the −1.3 V threshold) → 2V5 rises | VCCAUX POR trip, last of the three |
 | ≈60 ms | POR releases (VCC, VCCAUX and VCCIO8 all above trip) | the device starts configuration from U2 |
 
 ### 4.4 Decoupling
@@ -543,7 +545,7 @@ W25Q datasheet; the CH340C is drawn by pin *name* (the vendor's SOP-16 numbering
 
 ```
        1V1 rail (U6 MP1584EN)            2V5 rail (U7 AMS1117-2.5)        3V3 rail (U5 LM2596S-3.3)
-       from VM_IN, EN delayed 13 ms      from Q3 load switch, 50 ms       from VM_IN, valid first
+       from VM_IN, EN delayed 6-13 ms   from Q3 load switch, 54 ms       from VM_IN, valid first
            |                               |                               |
    +---+---+---+---+---+---+       +---+---+---+---+               +---+---+---+---+---+---+---+---+---+
    |20 |29 |38 |66 |83 |130|       |17 |53 |96 |132|               | 9 |16 |36 |43 |70 |86 |100|122|137|
@@ -556,11 +558,22 @@ W25Q datasheet; the CH340C is drawn by pin *name* (the vendor's SOP-16 numbering
 
    U5 (3V3):  VM_IN → [C23 470u electro + 100n] → IN ; OUT → L1 33uH → 3V3 ; D10 SS34 from OUT to GND(anode)
               OUT → C24 220u → 3V3 ; ON/OFF pin → GND (always enabled) ; GND → plane
-   U6 (1V1):  VM_IN → [100n] → IN ; EN ← VM_IN via R41 100k with C31 470n to GND (13 ms)
+              FB (pin 4) → 3V3 : the fixed-output version senses its own output here, so this pin
+              is NOT left floating (the TI datasheet's force-on/force-off tests are written as
+              "feedback pin removed from output")
+   U6 (1V1):  VM_IN → [100n] → IN ; EN ← VM_IN via R41 100k with C31 470n to GND (13 ms at 5 V in,
+              ~6 ms at 12 V in: EN rising threshold 1.5 V, falling 1.2 V, tau = 47 ms)
               SW → L2 10uH → 1V1 ; D11 SS34 catch to GND ; BST → C33 100n → SW
-              FB ← R38 37.4k from 1V1, R39 100k to GND (= 1.099 V) ; C21 100u on the 1V1 rail
-   Q3/U7 (2V5): 3V3 → Q3 AO3401 (S) → (D) → U7 AMS1117-2.5 IN → OUT = 2V5 → C22 22u
-              Q3 gate: R42 47k to 3V3 (source) + C32 470n to GND (≈50 ms turn-on)
+              FB ← R38 12.4k from 1V1, R39 33k to GND (= 1.1006 V) ; C21 100u on the 1V1 rail
+              FREQ → R40 100k → GND (= 900 kHz) ; GND (pin 5) and the exposed pad → plane
+              COMP (pin 3): needs an RC compensation network to GND — values from the MP1584
+              datasheet's typical application for 1.1 V out at 900 kHz (open item OQ-B10)
+   Q3/U7 (2V5): VM_IN → Q3 AO3401 (S) → (D) → U7 AMS1117-2.5 IN → OUT = 2V5 → C22 22u
+              (the AMS1117 needs >= 3.8 V in for a 2.5 V out, so this section runs from VM_IN,
+              not from 3V3)
+              Q3 gate: R42 1M to GND + C32 4.7uF to source + R43 100k source-to-gate (Vgs clamp);
+              the gate starts at source potential (off) and falls with tau = 91k x 4.7uF = 428 ms,
+              reaching the threshold at ≈54 ms from 12 V
               U7: C30 10u in, 10u out ; GND → plane
 
    Ground:  8 (VSSIO7)  15 (VSSIO6)  21 (VSS)  32 (VSSIO6)  42 (VSSIO8)  65 (VSS)  75 (VSSIO3)
