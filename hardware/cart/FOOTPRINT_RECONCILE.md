@@ -8,7 +8,9 @@ or the part open next to you.
 | :-: | :--- | :--- | :--- | :-: |
 | 1 | U1 | `Package_QFP:LQFP-144_20x20mm_P0.5mm` | Lattice datasheet body 20×20 mm, 0.5 mm pitch — update from the KiCad library | ☐ |
 | 2 | U2, U3 | `Package_SO:SOIC-8_5.23x5.23mm_P1.27mm` | the flash you bought (208 mil) | ☐ |
-| 3 | U4 | `Package_SO:SOIC-16_3.9x9.9mm_P1.27mm` | WCH datasheet body width; **pin numbers** too (`PCB_COMPONENTS.md` §4.4) | ☐ |
+| 3 | U4 | `Package_SO:SOIC-16_3.9x9.9mm_P1.27mm` | **CH340G**: XI=7, XO=8, DTR#=13, V3=4 (`PCB_COMPONENTS.md` §4.4) | ☐ |
+| 3b | Y2 | `Crystal:Crystal_HC49-4H_Vertical` | the **12 MHz** crystal you buy for the CH340G (2-pin). Skipped with a CH340C | ☐ |
+| 3c | Y1 | `Oscillator:..._ASE-4Pin_3.2x2.5mm` | **active 4-pin** XO. Your HC49/US part will not fit this footprint (see §2b of RECONCILED.md) | ☐ |
 | 4 | U5 | `Package_TO_SOT_SMD:TO-263-5_TabPin3` | tab is pin 3 (GND) on your part | ☐ |
 | 5 | U6 | `Package_SO:SOIC-8-1EP_3.9x4.9mm_P1.27mm_EP2.41x3.3mm` | exposed-pad size from the MP1584 datasheet | ☐ |
 | 6 | U7 | `Package_TO_SOT_SMD:SOT-223-3_TabPin2` | tab is pin 2 (VOUT) | ☐ |

@@ -58,7 +58,7 @@ NET_ORDER = [
     "flash_sck", "flash_cs_n", "flash_mosi", "flash_miso", "U3_WP", "U3_HOLD",
     "USB_VBUS", "USB_DP", "USB_DN", "USB_DP_F", "USB_DN_F", "CC1", "CC2",
     # USB bridge strapping
-    "U4_DTR", "U4_V3",
+    "U4_DTR", "U4_V3", "Y2_XI", "Y2_XO",
     # power tree internals
     "U5_OUT", "U6_SW", "U6_BST", "U6_EN", "U6_FREQ", "FB_1V1", "Q3_G", "U7_VIN",
     "U8_DP", "U8_DN",
@@ -133,8 +133,10 @@ connect("U3", 3, "U3_WP");      connect("U3", 4, "GND")
 connect("U3", 5, "flash_mosi"); connect("U3", 6, "flash_sck")
 connect("U3", 7, "U3_HOLD");    connect("U3", 8, "3V3")
 # --- U4, CH340C USB-UART (pin numbers to be confirmed against the WCH datasheet)
+# CH340G (SOP-16): 1 GND, 2 TXD, 3 RXD, 4 V3, 5 UD+, 6 UD-, 7 XI, 8 XO, 13 DTR#, 16 VCC
 connect("U4", 1, "GND");      connect("U4", 2, "U4_TXD"); connect("U4", 3, "U4_RXD")
 connect("U4", 4, "U4_V3");    connect("U4", 5, "USB_DP_F"); connect("U4", 6, "USB_DN_F")
+connect("U4", 7, "Y2_XI");    connect("U4", 8, "Y2_XO")
 connect("U4", 13, "U4_DTR");  connect("U4", 16, "3V3")
 # --- U5, LM2596S-3.3 (TO-263-5)
 connect("U5", 1, "VM_IN");  connect("U5", 2, "U5_OUT"); connect("U5", 3, "GND")
@@ -238,7 +240,11 @@ connect("C30", 1, "U7_VIN"); connect("C30", 2, "GND")
 connect("C31", 1, "U6_EN");  connect("C31", 2, "GND")
 connect("C32", 1, "Q3_G");   connect("C32", 2, "VM_IN")
 connect("C33", 1, "U6_BST"); connect("C33", 2, "U6_SW")
-connect("C34", 1, "U4_V3");  connect("C34", 2, "GND")      # CH340C V3 decoupling
+connect("C34", 1, "U4_V3");  connect("C34", 2, "GND")      # CH340G V3 decoupling
+# CH340G clock: 12 MHz crystal on XI/XO with 22 pF load caps
+connect("Y2", 1, "Y2_XI");   connect("Y2", 2, "Y2_XO")
+connect("C36", 1, "Y2_XI");  connect("C36", 2, "GND")
+connect("C37", 1, "Y2_XO");  connect("C37", 2, "GND")
 # --- connectors and switches
 connect("J1", 1, "3V3");  connect("J1", 2, "TDO"); connect("J1", 3, "TDI")
 connect("J1", 4, "PROGRAMN"); connect("J1", 6, "TMS"); connect("J1", 7, "GND")
@@ -442,7 +448,9 @@ COMPONENTS: list[tuple] = [
      soic(8, 1.27, 5.4, 2.0, 0.6, ep=(3.3, 2.41)), "MP1584EN", "power"),
     ("U7", "Package_TO_SOT_SMD:SOT-223-3_TabPin2", sot223(), "AMS1117-2.5", "power"),
     ("U8", "Package_TO_SOT_SMD:SOT-23-6", sot23_6(), "USBLC6-2SC6", "usb"),
-    ("Y1", "Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm", osc3225(), "25 MHz XO", "fpga"),
+    ("Y1", "Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm", osc3225(),
+     "25 MHz ACTIVE XO (4-pin)", "fpga"),
+    ("Y2", "Crystal:Crystal_HC49-4H_Vertical", chip(4.88, 1.5, 1.5), "12 MHz + 22 pF (CH340G)", "usb"),
     ("Q1", "Package_TO_SOT_SMD:SOT-23", sot23(), "2N7002", "jtag"),
     ("Q2", "Package_TO_SOT_SMD:SOT-23", sot23(), "BC817", "jtag"),
     ("Q3", "Package_TO_SOT_SMD:SOT-23", sot23(), "AO3401", "power"),
@@ -464,7 +472,7 @@ for index, value in enumerate(["D1", "D2", "D3", "D4", "D5", "D6", "D7"]):
 for index in range(45):          # R1..R45
     ref = "R%d" % (index + 1)
     COMPONENTS.append((ref, "Resistor_SMD:R_0603_1608Metric", chip(1.575, 0.9, 0.95), "", "passives"))
-for index in range(35):          # C1..C35
+for index in range(37):          # C1..C37
     ref = "C%d" % (index + 1)
     big = ref in ("C21", "C22", "C23", "C24")
     library = "Capacitor_SMD:CP_Elec_6.3x5.4" if ref == "C21" else \
@@ -537,6 +545,7 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     # USB and console - bottom right
     "J8": (90, 88, 0), "U8": (83, 88, 0), "U4": (74, 84, 0), "C27": (70, 88, 0),
     "C34": (70, 84, 0), "R36": (88, 82, 0), "R37": (91, 82, 0),
+    "Y2": (70, 92, 0), "C36": (67, 92, 0), "C37": (73, 92, 0),
     "R21": (70, 79, 0), "R23": (73, 79, 0), "R22": (66, 76, 0), "R24": (69, 76, 0),
     "J10": (62, 88, 0),
     # configuration, reset and status - left

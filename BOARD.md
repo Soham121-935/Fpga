@@ -193,11 +193,12 @@ chosen for density and is a bad idea when you are soldering it yourself). Electr
 | U1 | **LFE5U-12F-6TG144C** | ECP5 FPGA, 12,144 LUT4, 72 KB sysMEM, 28 mult, 2 PLL, VCC 1.1 V, VCCAUX 2.5 V, speed 6, commercial 0–85 °C Tj | TQFP-144 20×20 mm, 0.5 mm | 1 | **digikey.in ≈ ₹1,650** incl. GST (in stock Sept 2026) · mouser.in · in.element14.com. No substitute exists — §3.4 |
 | U2 | **W25Q64JVSSIQ** | 64 Mbit (8 MB) SPI NOR, 2.7–3.6 V, standard SPI + dual/quad | SOIC-8 208 mil | 1 | Sharvie Electronics ₹75 · Hubtronics ₹117 · KTRON · Robu sells a W25Q64 breakout module for ₹77 (§3.5) |
 | U3 | **W25Q64JVSSIQ** | same device — SV-16 firmware slots. `W25Q32JVSSIQ` (4 MB) or `W25Q16JV` is already enough: the images are 32 KB per slot | SOIC-8 208 mil | 1 | as U2 |
-| U4 | **CH340C** | USB 2.0 full-speed ↔ UART, 3.3 V, internal oscillator, no crystal | SOP-16 150 mil | 1 | iFutureTech ₹45 · Hubtronics ₹47 · Robu's CH340C+USB-C breakout ₹149 (§3.5) |
+| U4 | **CH340G** | USB 2.0 full-speed ↔ UART, 3.3 V, V3 to 3V3 at 3.3 V operation. **Needs an external 12 MHz crystal (Y2) + 2 × 22 pF (C36/C37)** — the G version has no internal clock; the CH340C is the pin-compatible part that does not need them | SOP-16 150 mil | 1 | iFutureTech · Hubtronics · Robu. Pairs with Y2 below |
 | U5 | **LM2596S-3.3** *(was AP63203)* | buck, 4.5–30 V in, **3.3 V fixed**, 3 A, 150 kHz, non-synchronous → **needs D10** | TO-263-5 | 1 | Robu ₹51 (XBLW) / ₹61 (Slkor) — listed in stock |
 | U6 | **MP1584EN-LF-Z** *(was TPS62823)* | buck, 4.5–28 V in, adjustable 0.8–20 V, 3 A, up to 1.5 MHz, non-synchronous → **needs D11 and R38/R39** | SOIC-8E | 1 | Hubtronics ₹47 (361 in stock) · Sunrom · others |
 | U7 | **AMS1117-2.5** *(was LP5907)* | LDO, 2.5 V, 1 A, needs ≥10 µF on the output | SOT-223 | 1 | Robu / QuartzComponents ₹12–20 |
 | Y1 | **YIC OSC25M-3.3I/S3-25T** *(was ASEMB)* | **25.000 MHz XO**, 3.3 V CMOS, ±25 ppm, enable/disable | 3.2×2.5 mm SMD-4 | 1 | **digikey.in ₹111** · any 25 MHz **3.3 V active** oscillator in 7050/5032 (Amazon.in / eBay.in sell the 5×7 mm 4-pin type) works |
+| Y2 | **12 MHz quartz crystal** (CH340G only) | 12 MHz, CL 12–20 pF, 2-pin **passive crystal** — the CH340G's internal inverter oscillates it. HC49/US through-hole or 3225 SMD both work | HC49/US or SMD-2 | 1 | Robu / Zbotic ₹15–25. **Skipped entirely if U4 is a CH340C** |
 | D1–D5 | LED 0603, green | DONE indicator + four user LEDs (GPIOA[3:0], active low) | 0603 | 5 | Robu / Zbotic ₹1–2 each |
 | D6, D7 | LED 0603, red | INITN indicator (DNP by default) + 3V3 power LED | 0603 | 2 | as above |
 | D8, D9 | **SS34** | Schottky 40 V / 3 A — barrel and USB input ORing | SMA | 2 | Robu ₹3 |
@@ -265,6 +266,7 @@ chosen for density and is a bad idea when you are soldering it yourself). Electr
 | **C31** | 470 nF | 0603 | 1 | MP1584 `EN` delay capacitor (≈13 ms with R41) |
 | **C32** | **4.7 µF** | 0805 | 1 | Q3 gate→**source** delay capacitor: τ = (R42∥R43)·C32 = 91 kΩ × 4.7 µF ≈ 428 ms, crossing the AO3401 threshold at ≈54 ms from 12 V |
 | C33 | 100 nF | 0603 | 1 | MP1584 bootstrap (`BST`) capacitor |
+| C36, C37 | 22 pF | 0603 | 2 | CH340G crystal load capacitors (XI and XO to GND) — **omit with a CH340C** |
 | **R43** | **100 kΩ** | 0603 | 1 | Q3 gate→source clamp: with R42 it holds Vgs at −VM_IN·1M/1.1M ≈ **−10.9 V** at 12 V, inside the AO3401's ±12 V rating (without it the gate would sit at GND and Vgs = −12 V, right on the absolute maximum) |
 | L1 | **33 µH / 3 A** shielded | 8×8 mm | 1 | LM2596 3V3 inductor (datasheet value) |
 | L2 | **10 µH / 3 A** shielded | 6×6 mm | 1 | MP1584 1V1 inductor |
@@ -651,16 +653,34 @@ W25Q datasheet; the CH340C is drawn by pin *name* (the vendor's SOP-16 numbering
 ### 7.4 Sheet 4 — Clock, reset and console
 
 ```
-  Y1 25.000 MHz XO (3.3 V CMOS)        U4 CH340C (SOP-16, 3.3 V)
-  -----------------------------        --------------------------------------------------------
-   Y1.3 OUT ----> U1.133 clk_25m        U4 VCC -- 3V3 + C27 100n ;  U4 V3 -- 3V3 + 100n **
-   Y1.1 EN  -- 3V3                      U4 GND -- GND
-   Y1.4 VCC -- 3V3 + C26 100n           U4 UD+ <--> J8 D+  (via USBLC6 D+ channel)
-   Y1.2 GND -- GND                      U4 UD- <--> J8 D-  (via USBLC6 D- channel)
-                                        U4 TXD --[R21 0R]-- U1.73 uart_rx  (idles high)
-  SW1 reset                           U4 RXD --[R23 0R]-- U1.74 uart_tx
-  ----------------                    U4 DTR# -- JP1 -- Q1 gate (optional auto-reconfigure, §7.2)
-   U1.134 ext_rst_n --+-- SW1 -- GND   U4 RTS# -- NC
+  Y1 25.000 MHz ACTIVE XO (3.3 V)      U4 CH340G (SOP-16, 3.3 V, pin numbers below)
+  -------------------------------      --------------------------------------------------------
+   Y1.3 OUT ----> U1.133 clk_25m        U4.16 VCC -- 3V3 + C27 100n
+   Y1.1 EN  -- 3V3                      U4.4  V3  -- 3V3 + 100n **
+   Y1.4 VCC -- 3V3 + C26 100n           U4.1  GND -- GND
+   Y1.2 GND -- GND                      U4.5  UD+ <--> J8 D+  (via USBLC6 D+ channel)
+                                        U4.6  UD- <--> J8 D-  (via USBLC6 D- channel)
+   ** a passive crystal (HC49/US, 2 pins) CANNOT drive this net. The ECP5 has no on-chip crystal
+      oscillator, so Y1 must be a 4-pin ACTIVE oscillator with its own VCC. See OQ-B14.
+
+  CH340G clock (only for the G version; a CH340C has this inside and needs none of it)
+  -----------------------------------------------------------------------------------
+   U4.7 XI --+-- Y2 12 MHz --+-- U4.8 XO
+             |                |
+          C36 22pF         C37 22pF
+             |                |
+            GND              GND
+   (keep XI/XO short and symmetrical; do not route them near the USB pair or the switchers)
+
+   U4.2  TXD --[R21 0R]-- U1.73 uart_rx   (idles high)
+   U4.3  RXD --[R23 0R]-- U1.74 uart_tx
+   U4.13 DTR# -- JP1 -- Q1 gate (optional auto-reconfigure, §7.2)
+   U4.15 R232 -- NC (internal pull-down; leave open)
+   U4.9 CTS# / 10 DSR# / 11 RI# / 12 DCD# / 14 RTS# -- NC
+
+  SW1 reset
+  ----------------
+   U1.134 ext_rst_n --+-- SW1 -- GND
                       +--[R1 10k]-- 3V3
                       +-- C1 100n -- GND
    U1.134 has PULLMODE=UP in the LPF; R1/C1 are for noise immunity and contact bounce,
@@ -859,6 +879,7 @@ FPGA-MD-02097 reads `0x41111043`), then flow 1 or 2 recovers the board.
 | OQ-B11 | Assembly of a 0.5 mm-pitch TQFP-144 plus 0603 passives without a reflow oven | this is the practical risk of the whole build, and it decides whether the first board works | order a stencil with the PCB, use solder paste + hot-air (₹2,500–4,000 stations are on Robu/Zbotic), drag-solder the TQFP with flux, or pay an Indian assembly service; practice on a ₹100 QFP breakout first |
 | OQ-B12 | USB-C (5 V) input voltage margin: 5 V − SS34 drop ≈ 4.6 V against a 4.5 V regulator minimum | the barrel jack is fine; USB is marginal under load | use 7–12 V on J9 for anything real, or replace D9 with a P-MOSFET ideal diode (drop ≈ 50 mV) |
 | OQ-B13 | Actual FPGA stock at digikey.in / mouser.in / element14 India. Checked 27 Sep 2026: digikey.com listed **372 pieces live** and a **40-week standard lead time** — i.e. single pieces ship now, a back-order takes most of a year | the board is pointless without U1, and stock moves fast at this volume | check availability and price **before** ordering PCBs, and buy a spare; a speed-7 or industrial-grade part is an acceptable substitute (§3.4) |
+| OQ-B14 | Is Y1 an **active** oscillator? A 25 MHz HC49/US part is a 2-pin passive crystal and cannot drive `clk_25m` (the ECP5 has no on-chip crystal driver). Check the pin count before layout: 4 pins = active (works), 2 pins = passive (does not) | the board would configure but have no clock — no console, no boot | buy a 3.3 V active 25 MHz XO (3.2×2.5 or 5×7 mm), or build a Pierce oscillator around the crystal with an unbuffered inverter (e.g. 74LVC1G04 + 1 MΩ + 2 × 22 pF) — see PCB_COMPONENTS.md §10 |
 
 ## 14. Variants and the next revision
 

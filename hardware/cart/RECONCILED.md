@@ -35,6 +35,26 @@ screenshot.
 | C1–C20, C26–C29, C33 (100 nF) | 0603 | **0603, Kemet X7R 50 V ×40** ✔ | unchanged |
 | L1, L2 | 8×8 mm / 6×6 mm | **CD54 33 µH ×2 and CD54 10 µH ×2** | ~5.8 × 5.2 mm body: footprint set to the 6 mm class, verify against the part drawing |
 
+## 2b. Second batch (1 Oct, after the first reconciliation)
+
+| Board ref | Board document says | **You have** | Consequence |
+| :--- | :--- | :--- | :--- |
+| **U1** | LFE5U-12F-6TG144C | **LFE5U-12F-6TG144C** ✔ confirmed unchanged | no change to the pin map, the LPF or the bitstream flow |
+| U4 | CH340C (internal clock) | **CH340G** (SOP-16) | needs a **12 MHz crystal (Y2) + 2 × 22 pF (C36/C37)** — the G has no internal clock. Board file, `BOARD.md` §3.1/§7.4 and `PCB_COMPONENTS.md` §4.4 updated. Pin 13 is DTR#; keep it for auto-reconfigure |
+| Y1 | 25 MHz **active** XO, 3.3 V, 4-pin | **25 MHz HC49/US "crystal oscillator"** | ⚠ **HC49/US is a 2-pin PASSIVE crystal**, and the ECP5 has no on-chip crystal driver. It cannot drive `clk_25m` — the board would configure but have no clock, no console and no boot. **Check the pin count: 4 pins = active (fine), 2 pins = passive (this one)** |
+
+**Two ways forward on Y1 (pick one):**
+
+1. **Buy an active 25 MHz 3.3 V XO** (4-pin, 3.2×2.5 or 5×7 mm) — ₹110 at digikey.in, or the 7050/5032
+   type on Amazon.in/eBay.in. The board file already has the footprint; nothing else changes. **Recommended.**
+2. **Keep the HC49/US crystal and add a Pierce oscillator**: 74LVC1G04 unbuffered inverter (SOT-23-5),
+   1 MΩ feedback resistor, the crystal, and 2 × 22 pF load caps (match the crystal's CL). Works at
+   25 MHz, but it is three extra parts, a sensitive layout, and a bring-up risk on a board you have one
+   weekend to finish.
+
+Either way: **order a 12 MHz crystal for the CH340G** (₹15–25) unless you also swap U4 for a CH340C
+(₹45, pin-compatible, and then Y2/C36/C37 are not fitted at all).
+
 ## 3. What is **not** on these three screenshots
 
 Not a problem — but the board cannot be ordered without them:

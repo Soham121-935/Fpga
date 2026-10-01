@@ -52,12 +52,13 @@ detail a schematic and layout need.
 | :--- | :--- | :--- | :--- |
 | U1 | LFE5U-12F-6TG144C | `Package_QFP:LQFP-144_20x20mm_P0.5mm` | 0.5 mm pitch, no exposed pad. Verify the courtyard against the datasheet's 22 × 22 mm body |
 | U2, U3 | W25Q64JVSSIQ | `Package_SO:SOIC-8_5.23x5.23mm_P1.27mm` | 208 mil body |
-| U4 | CH340C | `Package_SO:SOIC-16_3.9x9.9mm_P1.27mm` | 150 mil body. Confirm the SOP-16 body width from the WCH datasheet before routing |
+| U4 | CH340G | `Package_SO:SOIC-16_3.9x9.9mm_P1.27mm` | 150 mil body. Needs Y2 + C36/C37 (below) |
 | U5 | LM2596S-3.3 | `Package_TO_SOT_SMD:TO-263-5_TabPin3` | tab = pin 3 (GND); the tab is the heatsink, pour copper under it |
 | U6 | MP1584EN-LF-Z | `Package_SO:SOIC-8-1EP_3.9x4.9mm_P1.27mm_EP2.41x3.3mm` ⚠ | exposed pad = GND. **Check the pad size against the MP1584 datasheet** — some SOIC-8E parts use a 2.4 × 3.3 mm pad, others 3.3 × 2.4 mm |
 | U7 | AMS1117-2.5 | `Package_TO_SOT_SMD:SOT-223-3_TabPin2` | tab = pin 2 (VOUT) |
 | U8 | USBLC6-2SC6 | `Package_TO_SOT_SMD:SOT-23-6` | |
-| Y1 | YIC OSC25M-3.3I/S3-25T (or any 3.2 × 2.5 mm 4-pad XO) | `Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm` | if you buy the 5 × 7 mm type instead, use `Oscillator_SMD_Abracon_ASV-4Pin_7.0x5.1mm` |
+| Y1 | **active** 25 MHz XO (4-pad: VCC, GND, OUT, EN) | `Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm` | 5 × 7 mm type: `Oscillator_SMD_Abracon_ASV-4Pin_7.0x5.1mm`. ⚠ a 2-pin HC49/US crystal does **not** fit this and cannot clock the FPGA (§10 correction 5) |
+| Y2 | 12 MHz crystal (CH340G only) | `Crystal:Crystal_HC49-4H_Vertical` (through-hole) or `Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm` (2-pin SMD) | pick the one you buy; omit Y2, C36, C37 with a CH340C |
 | Q1, Q2, Q3, Q4 | 2N7002 / BC817 / AO3401 / BC807 | `Package_TO_SOT_SMD:SOT-23` | pin 1 = gate/base on all four |
 | D1–D7 | LED 0603 | `LED_SMD:LED_0603_1608Metric` | cathode on the marked end — orientation matters (§4.9) |
 | D8–D11 | SS34 (SMA) | `Diode_SMD:D_SMA` | pin 1 = cathode (band) |
@@ -92,7 +93,8 @@ detail a schematic and layout need.
 | U1 | **LFE5U-12F-6TG144C** | ECP5 FPGA: 12,144 LUT4, 72 KB sysMEM, 28 × 18-bit multipliers, 2 PLLs. VCC 1.045–1.155 V, VCCAUX 2.375–2.625 V, VCCIO 3.3 V. 98 I/O on this package, 52 used. Speed grade 6, 0–85 °C Tj | TQFP-144 20 × 20 mm, 0.5 mm pitch | 1 | digikey.in ≈ ₹1,650 — **no substitute exists**; see `BOARD.md` §3.4 for the speed-7 / industrial-grade alternatives |
 | U2 | W25Q64JVSSIQ | 64 Mbit (8 MB) SPI NOR, 2.7–3.6 V, 104 MHz, standard + dual/quad SPI. Holds the **bitstream** | SOIC-8, 208 mil | 1 | Sharvie ₹75 · Hubtronics ₹117 |
 | U3 | W25Q64JVSSIQ | identical part; holds **firmware images** (slot A at 0x000000, slot B at 0x008000 — 32 KB each). A W25Q32/W25Q16 is already enough | SOIC-8, 208 mil | 1 | as U2 |
-| U4 | CH340C | USB 2.0 full-speed ↔ UART bridge, 3.3 V, internal oscillator (no crystal), up to 2 Mbps, needs only 4 external capacitors | SOP-16, 150 mil | 1 | iFutureTech ₹45 · Hubtronics ₹47 |
+| U4 | **CH340G** | USB 2.0 full-speed ↔ UART bridge, 3.3 V operation (V3 tied to VCC at 3.3 V), up to 2 Mbps. **Requires a 12 MHz crystal (Y2) + 22 pF load caps (C36/C37)** — the G has no internal clock. Pin 13 is DTR# (used for auto-reconfigure); R232 (15) has an internal pull-down; CTS/DSR/RI/DCD/RTS are unused | SOP-16, 150 mil | 1 | iFutureTech · Hubtronics · Robu |
+| Y2 | 12 MHz crystal | 12 MHz quartz, CL 12–20 pF, ESR ≤ 60 Ω, 2-pin passive — oscillated by the CH340G's internal inverter | HC49/US or 3225 SMD | 1 | Robu / Zbotic ₹15–25 |
 | U5 | LM2596S-3.3 | buck, **3.3 V fixed**, VIN 4.5–40 V, 3 A, 150 kHz, non-synchronous, ON/OFF < 1.3 V = on | TO-263-5 (tab = GND) | 1 | Robu ₹51 (XBLW) / ₹61 (Slkor) |
 | U6 | MP1584EN-LF-Z | buck, adjustable 0.8–20 V, VIN 4.5–28 V, 3 A, 100 kHz–1.5 MHz, 0.8 V reference, non-synchronous, EN threshold 1.2 V falling / 1.5 V rising, 1.5 µA internal EN pull-up | SOIC-8E (EP = GND) | 1 | Hubtronics ₹47 · Sunrom |
 | U7 | AMS1117-2.5 | LDO, 2.5 V fixed, 1 A, dropout ≈ 1.3 V, requires ≥ 10 µF at the output for stability | SOT-223 (tab = VOUT) | 1 | Robu / QuartzComponents ₹12–20 |
@@ -255,18 +257,24 @@ actually constrains, generated from the LPF.
 | 7 `/HOLD` | R18 10 kΩ → 3V3 |
 | 8 `VCC` | 3V3 + C29 100 nF |
 
-### 4.4 U4 — CH340C USB–UART bridge ⚠ (confirm pin numbers against the WCH datasheet)
+### 4.4 U4 — CH340G USB–UART bridge (pin numbers from the WCH datasheet)
 
-| U4 pin (name) | Net |
-| :--- | :--- |
-| `VCC`, `V3` | 3V3, each with 100 nF (V3 also to 3V3 in this 3.3 V-only design) |
-| `GND` | GND |
-| `UD+` | J8 D+ through the U8 channel (D+ side), with the 90 Ω differential pair |
-| `UD−` | J8 D− through the U8 channel (D− side) |
-| `TXD` | R21 0 Ω → U1.73 `uart_rx` (idles high) |
-| `RXD` | R23 0 Ω → U1.74 `uart_tx` |
-| `DTR#` | JP1 → Q1 gate (auto-reconfigure; remove JP1 to disable) |
-| `RTS#` | not connected |
+| U4 pin | Name | Net |
+| ---: | :--- | :--- |
+| 1 | `GND` | GND |
+| 2 | `TXD` | R21 0 Ω → U1.73 `uart_rx` (idles high) |
+| 3 | `RXD` | R23 0 Ω → U1.74 `uart_tx` |
+| 4 | `V3` | 3V3 + 100 nF (3.3 V operation ties V3 to VCC) |
+| 5 | `UD+` | J8 D+ through U8 (D+ channel) |
+| 6 | `UD−` | J8 D− through U8 (D− channel) |
+| 7 | `XI` | Y2.1, C36 22 pF → GND |
+| 8 | `XO` | Y2.2, C37 22 pF → GND |
+| 9, 10, 11, 12, 14 | `CTS#`, `DSR#`, `RI#`, `DCD#`, `RTS#` | not connected |
+| 13 | `DTR#` | JP1 → Q1 gate (auto-reconfigure; remove JP1 to disable) |
+| 15 | `R232` | not connected (internal pull-down) |
+| 16 | `VCC` | 3V3 + C27 100 nF |
+
+Keep the XI/XO traces short and symmetrical, and away from the USB pair and the switchers.
 
 ### 4.5 U5 — LM2596S-3.3 (3V3 rail, from VM_IN)
 
@@ -485,7 +493,7 @@ generated from `constraints/ecp5_144tqfp.lpf`, and the connections come from the
 `BOARD.md` §7. The transistor and diode pin conventions, the flash pinouts and the oscillator pinout are
 standard for those packages.
 
-**Four corrections found while writing this document — apply them to the schematic (all four are now
+**Five corrections found while writing this document — apply them to the schematic (all four are now
 also recorded in `BOARD.md`):**
 
 1. **`U5` pin 4 (`FB`) must be connected to `3V3`.** The earlier sheet shows only VIN, OUT, GND and
@@ -511,6 +519,19 @@ also recorded in `BOARD.md`):**
    GND and Vgs = −VM_IN = −12 V at the maximum input, right on the AO3401's absolute maximum. Also
    corrected on the same sheet: this section runs from **VM_IN**, not 3V3 — an AMS1117-2.5 needs at least
    ≈3.8 V of input for a 2.5 V output, so a 3V3 source could never regulate.
+
+5. **`U4` is a CH340G and needs a 12 MHz crystal** (pin 7 `XI` / pin 8 `XO`, plus two 22 pF caps), and
+   **`Y1` must be an active oscillator**. Both came out of the cart reconciliation: the CH340G has no
+   internal clock (the CH340C does — it is pin-compatible and needs neither Y2 nor C36/C37), and the
+   HC49/US package is a **2-pin passive crystal**: it needs an oscillator circuit and the ECP5 has no
+   on-chip crystal driver, so a passive part on `clk_25m` would leave the board with no clock at all.
+   Two ways to keep the crystal you bought:
+   * **Buy an active 25 MHz XO** (3.3 V, 4-pin) — recommended, ~₹110, and it is what the board file
+     already has a footprint for.
+   * **Build a Pierce oscillator** around the crystal: an unbuffered inverter (74LVC1G04, SOT-23-5),
+     1 MΩ feedback, 2 × ~22 pF load caps (match the crystal's CL), optional 470 Ω series to the clock
+     pin. It works at 25 MHz but adds three parts, needs a clean layout, and is a bring-up risk — only
+     do it if the active part cannot be sourced.
 
 **Rows marked ⚠ need your datasheet, not mine:** the MP1584 exposed-pad size, the electrolytic can sizes,
 the inductor footprints, the USB-C receptacle and barrel-jack footprints (they vary by the exact part you
