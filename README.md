@@ -103,6 +103,7 @@ BOARD.md/.pdf    PCB blueprint: components, specs, power tree, connection diagra
 TEAM_PLAN.md/.pdf 4-person build plan: roles, phases, work packages, gates, budget, risks
 hardware/       KiCad board base (footprints placed + full netlist, ready to route)
                 + cart/ (the parts you actually bought, reconciled against footprints)
+KICAD_TUTORIAL.md/.pdf  the click-by-click guide to finishing that board in KiCad
 board/           device pin database + generated 144-pin net table (BOARD.md appendix)
 docs/            operator manual, memory map, peripherals, flow, verification, ADRs
 rtl/             26 SystemVerilog files: CPU, bus, memory, peripherals, PLL, SoC top
@@ -132,6 +133,7 @@ MCU-like vs. FPGA-soft-core comparison.
 
 | Document | Contents |
 | :--- | :--- |
+| [KICAD_TUTORIAL.pdf](KICAD_TUTORIAL.pdf) | **start here if you are the one routing the board**: opening the project, updating the footprints, the design rules, filling and splitting the planes, the routing order with exact widths, DRC, gerbers, ordering, assembly and first power-up (source: [KICAD_TUTORIAL.md](KICAD_TUTORIAL.md), rebuild with `make tutorial-pdf`) |
 | [TEAM_PLAN.pdf](TEAM_PLAN.pdf) | how to build this with four people: roles, five phases, gates, 16 work packages, interfaces to freeze, budget, risks (source: [TEAM_PLAN.md](TEAM_PLAN.md), rebuild with `make plan-pdf`) |
 | [BOARD.pdf](BOARD.pdf) | the same blueprint typeset for printing / review (source: [BOARD.md](BOARD.md), rebuild with `make board-pdf`) |
 | [BOARD.md](BOARD.md) | PCB blueprint — BOM with part numbers, power tree, pin map, connection circuit diagram, bring-up plan, open items |

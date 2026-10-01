@@ -32,6 +32,13 @@ A **starting point for layout, not a finished board**. It contains:
   `cart/RECONCILED.md`: a 10 kΩ resistor and six ceramics still have to be bought, and the 470 µF input
   bulk in the cart is a 16 V part on a 12 V rail
 
+### The click-by-click version
+
+`KICAD_TUTORIAL.md` (and `.pdf`) at the repository root walks the whole job step by step — opening
+the project, updating the footprints, setting the rules, filling and splitting the planes, the
+routing order with the exact widths, DRC, gerbers, ordering, and first power-up. Read it once
+before you start; it is written for this board, not for KiCad in general.
+
 ### The 2-day route to a finished board
 
 **Day 1 (4–6 h)**

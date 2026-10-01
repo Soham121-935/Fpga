@@ -490,8 +490,8 @@ COMPONENTS: list[tuple] = [
     ("D8", "Diode_SMD:D_SMA", sma(), "SS34", "power"),
     ("D9", "Diode_SMD:D_SMA", sma(), "SS34", "power"),
     ("D11", "Diode_SMD:D_SMA", sma(), "SS34", "power"),
-    ("L1", "Inductor_SMD:L_Sunlord_SWPA6045S", chip(5.0, 3.4, 2.6), "10 uH", "power"),
-    ("L2", "Inductor_SMD:L_Sunlord_SWPA6045S", chip(5.0, 3.4, 2.6), "10 uH", "power"),
+    ("L1", "Inductor_SMD:L_Sunlord_MWSA0518_5.4x5.2mm", chip(5.0, 3.4, 2.6), "10 uH", "power"),
+    ("L2", "Inductor_SMD:L_Sunlord_MWSA0518_5.4x5.2mm", chip(5.0, 3.4, 2.6), "10 uH", "power"),
     ("FB1", "Inductor_SMD:L_0603_1608Metric", chip(1.575, 0.9, 0.95), "600R @100MHz", "power"),
 ]
 
@@ -565,7 +565,7 @@ COMPONENTS += [
     ("J6", "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical", pin_header(1, 6), "MOTOR", "expansion"),
     ("J7", "Connector_PinHeader_2.54mm:PinHeader_2x25_P2.54mm_Vertical", pin_header(2, 25), "SPARE (not fitted)", "expansion"),
     ("J8", "Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12", usb_c_16(), "USB-C", "usb"),
-    ("J9", "Connector_BarrelJack:BarrelJack_CUI_PJ-102A_Horizontal", barrel_jack(), "7-12 V", "power"),
+    ("J9", "Connector_BarrelJack:BarrelJack_CUI_PJ-102AH_Horizontal", barrel_jack(), "7-12 V", "power"),
     ("J10", "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical", pin_header(1, 4), "CONSOLE", "expansion"),
     ("SW1", "Button_Switch_THT:SW_PUSH_6mm", tact_switch(), "RESET", "jtag"),
     ("SW2", "Button_Switch_THT:SW_PUSH_6mm", tact_switch(), "RECONFIG", "jtag"),

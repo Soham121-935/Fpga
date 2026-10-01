@@ -69,8 +69,8 @@ detail a schematic and layout need.
 | C22 | 22 µF / 63 V electrolytic | `Capacitor_SMD:CP_Elec_6.3x5.4` | D6.3 × L5.4 mm can from the cart |
 | C23 | 470 µF electrolytic | `Capacitor_SMD:CP_Elec_8x10.5` | D8 × L10.5 mm. ⚠ the bought part is **16 V** on a 12 V rail (1.33×) — see §10 correction 7 |
 | C24 | 220 µF **hybrid** electrolytic | `Capacitor_SMD:CP_Elec_8x10.5` | D8 × L10.5 mm; hybrid polymer is better for ripple |
-| L1 | **10 µH**, ≥ 1.5 A shielded | `Inductor_SMD:L_Sunlord_SWPA6045S` (CD54, 5.8 × 5.2 mm) | AP62300 3V3 inductor — 10 µH gives 0.32 A ripple, safer than the datasheet's 3.3 µH |
-| L2 | **10 µH**, ≥ 1.5 A shielded | `Inductor_SMD:L_Sunlord_SWPA6045S` (CD54) | MP1584 1V1 inductor; the two 33 µH CD54 parts are spares |
+| L1 | **10 µH**, ≥ 1.5 A shielded | `Inductor_SMD:L_Sunlord_MWSA0518_5.4x5.2mm` (CD54, 5.8 × 5.2 mm) | AP62300 3V3 inductor — 10 µH gives 0.32 A ripple, safer than the datasheet's 3.3 µH |
+| L2 | **10 µH**, ≥ 1.5 A shielded | `Inductor_SMD:L_Sunlord_MWSA0518_5.4x5.2mm` (CD54) | MP1584 1V1 inductor; the two 33 µH CD54 parts are spares |
 | FB1 | ferrite bead 0603 | `Inductor_SMD:L_0603_1608Metric` | 600 Ω @ 100 MHz, ≥ 500 mA |
 | SW1, SW2 | 6 × 6 mm tactile | `Button_Switch_THT:SW_PUSH_6mm` | through-hole for strength; fits the 6 × 6 mm body |
 | J1, J5, J6, J10 | 1×10 / 1×6 / 1×4 headers | `Connector_PinHeader_2.54mm:PinHeader_1xNN_P2.54mm_Vertical` | J6 is keyed — add the keying notch or use a shrouded header |
@@ -78,7 +78,7 @@ detail a schematic and layout need.
 | J7 | 2×25 header | `Connector_PinHeader_2.54mm:PinHeader_2x25_P2.54mm_Vertical` | footprint only, **not fitted** |
 | J2 | 2×5 box header, 1.27 mm | `Connector_PinHeader_1.27mm:PinHeader_2x05_P1.27mm_Vertical` | if the connector is unavailable in India, leave J2 unpopulated and use J1 |
 | J8 | USB-C receptacle 16-pin | `Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12` ⚠ | the ubiquitous 16-pin HRO part; if you buy a different receptacle, take the footprint from its datasheet. Micro-USB alternative: `Connector_USB:USB_Micro-B_Molex-105017-0001` (omit R36/R37) |
-| J9 | 5.5/2.1 mm barrel jack | `Connector_BarrelJack:BarrelJack_CUI_PJ-102A_Horizontal` ⚠ | centre positive |
+| J9 | 5.5/2.1 mm barrel jack | `Connector_BarrelJack:BarrelJack_CUI_PJ-102AH_Horizontal` ⚠ | centre positive |
 | JP1 | 2-pin header + shunt | `Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical` | |
 | TP1–TP6 | 1 mm test pads | `TestPoint:TestPoint_Pad_D1.0mm` | nets: 3V3, 2V5, 1V1, GND, DONE, INITN |
 

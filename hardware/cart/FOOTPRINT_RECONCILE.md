@@ -19,7 +19,7 @@ or the part open next to you.
 | 9 | L1, L2 | `L_Bourns_SRR1260` (8×8), `L_Sunlord_SWPA6045S` (6×6) | your inductors' body and pad spacing | ☐ |
 | 10 | C21–C24 | `CP_Elec_6.3x5.4` / `5x5.4` / `10x10.2` / `8x6.9` | your electrolytic cans (diameter × height) | ☐ |
 | 11 | J8 | `Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12` | your receptacle; micro-USB ⇒ different footprint, omit R36/R37 | ☐ |
-| 12 | J9 | `Connector_BarrelJack:BarrelJack_CUI_PJ-102A_Horizontal` | your jack's pin spacing | ☐ |
+| 12 | J9 | `Connector_BarrelJack:BarrelJack_CUI_PJ-102AH_Horizontal` | your jack's pin spacing | ☐ |
 | 13 | J1–J7, J10, JP1 | `Connector_PinHeader_2.54mm:…` | 2.54 mm headers as listed; J2 is 1.27 mm if fitted | ☐ |
 | 14 | SW1, SW2 | `Button_Switch_THT:SW_PUSH_6mm` | your tact switches (6×6 mm, 4 pins) | ☐ |
 | 15 | Q1–Q4 | `Package_TO_SOT_SMD:SOT-23` | pin 1 = gate/base on all four | ☐ |

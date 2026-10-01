@@ -9,6 +9,7 @@
 #   make prog        program the device over JTAG
 #   make pcb-doc     regenerate PCB_COMPONENTS.pdf (KiCad component specs)
 #   make kicad-board open-and-route starting point: footprints + netlist (hardware/sv16_board/)
+#   make tutorial-pdf the exact KiCad how-to (KICAD_TUTORIAL.pdf)
 #   make release     verify the four artifacts and hash them (run before programming)
 #   make prog-flash  write the bitstream into the config flash (U2), persistent
 #   make upload      program the *firmware* over the serial port (needs pyserial)
@@ -141,7 +142,7 @@ TESTBENCHES = \
 	wdt_reset_tb:simulation/regression/wdt_reset_tb.sv
 
 .PHONY: all firmware rom app lint vlint test sim iss bitstream synth prog prog-flash \
-	board-pins board-pdf plan-pdf \
+	board-pins board-pdf plan-pdf tutorial-pdf \
 	upload upload-slot slot-image commit mon-verify mon-boot mon-term \
 	clean help
 
@@ -212,6 +213,11 @@ pcb-doc:
 pcb-pins-csv:
 	@mkdir -p $(BUILD)
 	$(PY) scripts/sv16_pcb_doc.py --csv $(BUILD)/SV16_pinmap.csv
+
+# KICAD_TUTORIAL.md -> KICAD_TUTORIAL.pdf (the click-by-click KiCad how-to)
+tutorial-pdf:
+	$(PY) scripts/sv16_board_pdf.py --src KICAD_TUTORIAL.md --out KICAD_TUTORIAL.pdf \
+	    --title "SV-16 board - finishing it in KiCad, step by step"
 
 # TEAM_PLAN.md -> TEAM_PLAN.pdf (same renderer, same two optional packages)
 plan-pdf:
