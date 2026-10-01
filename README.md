@@ -101,6 +101,8 @@ UART divisor is derived from the built clock automatically (217 at 25 MHz, 326 a
 ```text
 BOARD.md/.pdf    PCB blueprint: components, specs, power tree, connection diagram
 TEAM_PLAN.md/.pdf 4-person build plan: roles, phases, work packages, gates, budget, risks
+hardware/       KiCad board base (footprints placed + full netlist, ready to route)
+                + cart/ (the parts you actually bought, reconciled against footprints)
 board/           device pin database + generated 144-pin net table (BOARD.md appendix)
 docs/            operator manual, memory map, peripherals, flow, verification, ADRs
 rtl/             26 SystemVerilog files: CPU, bus, memory, peripherals, PLL, SoC top

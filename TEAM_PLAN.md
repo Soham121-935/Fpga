@@ -80,7 +80,7 @@ be skipped, because "the design is done" is only true if someone independent rep
 | :--- | :--- | :--- |
 | all | clone, `source scripts/sv16_venv.sh`, `make test`, `make lint`, `make bitstream` | each person has seen the numbers in `REPORT.md` come out of their own machine |
 | all | read, in this order: `README.md`, `docs/MCU_READINESS.md`, `BOARD.md` §1–§4, `REPORT.md` §8 | a 30-minute meeting where each person explains one section to the others |
-| P3 | order: 2 × LFE5U-12F-6TG144C (or speed 7), an FT232H/FT2232H JTAG adapter, a ₹100 QFP-144 practice breakout, solder paste + flux + wick | tracked order numbers in the repo (`hardware/ORDER.md`) |
+| P3 | order: 2 × LFE5U-12F-6TG144C (or speed 7), an FT232H/FT2232H JTAG adapter, a ₹100 QFP-144 practice breakout (a bare QFP-144 breakout board, or any scrap QFP board to practise on), solder paste + flux + wick | tracked order numbers in the repo (`hardware/ORDER.md`) |
 | P4 | set up the shared evidence folder: every Friday's log, screenshot or waveform goes in one place | a link the team can open |
 
 The FPGA order is the **longest-lead item on the whole project** (40+ weeks when the distributors are

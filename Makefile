@@ -8,6 +8,7 @@
 #   make bitstream   Yosys -> nextpnr-ecp5 -> ecppack   (build/sv16_top.bit)
 #   make prog        program the device over JTAG
 #   make pcb-doc     regenerate PCB_COMPONENTS.pdf (KiCad component specs)
+#   make kicad-board open-and-route starting point: footprints + netlist (hardware/sv16_board/)
 #   make release     verify the four artifacts and hash them (run before programming)
 #   make prog-flash  write the bitstream into the config flash (U2), persistent
 #   make upload      program the *firmware* over the serial port (needs pyserial)
@@ -248,6 +249,12 @@ $(BUILD)/$(PROJECT).bit: $(RTL_SRCS) $(ROM_HEX) $(CONSTRAINTS) scripts/sv16_synt
 	@scripts/sv16_synth.sh --out $(BUILD) --rom $(ROM_HEX) --lpf $(CONSTRAINTS) \
 	    --freq $(FPGA_FREQ) --clkdiv $(CLKDIV) --clksrc $(CLKSRC) \
 	    --pllmhz $(PLLMHZ) --speed $(FPGA_SPEED) --limits $(LIMITS) --top $(PROJECT)
+
+# ------------------------------------------------------------- KiCad board base
+# Regenerate the layout starting point (footprints placed + full netlist).
+# No KiCad needed to generate it; open the result in KiCad to route.
+kicad-board:
+	$(PY) scripts/sv16_board_kicad.py
 
 # ------------------------------------------------------- release for the bench
 # Verify the four artifacts that actually make the board run (bitstream, config
