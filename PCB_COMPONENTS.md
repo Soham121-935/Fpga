@@ -58,7 +58,7 @@ detail a schematic and layout need.
 | U7 | AMS1117-2.5 | `Package_TO_SOT_SMD:SOT-223-3_TabPin2` | tab = pin 2 (VOUT) |
 | U8 | USBLC6-2SC6 | `Package_TO_SOT_SMD:SOT-23-6` | |
 | Y1 | **active** 25 MHz XO (4-pad: VCC, GND, OUT, EN) | `Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm` | 5 × 7 mm type: `Oscillator_SMD_Abracon_ASV-4Pin_7.0x5.1mm`. ⚠ a 2-pin HC49/US crystal does **not** fit this and cannot clock the FPGA (§10 correction 5) |
-| Y2 | 12 MHz crystal (CH340G only) | `Crystal:Crystal_HC49-4H_Vertical` (through-hole) or `Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm` (2-pin SMD) | pick the one you buy; omit Y2, C36, C37 with a CH340C |
+| Y2 | 12 MHz crystal (CH340G only) | `Crystal:Crystal_HC49-4H_Vertical` (through-hole, 4.88 mm lead spacing) or `Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm` (2-pin SMD) | must be **12 MHz** — `XI` accepts 11.98–12.02 MHz only, so no other value works. Pick the one you buy; omit Y2, C36, C37 with a CH340C |
 | Q1, Q2, Q3, Q4 | 2N7002 / BC817 / AO3401 / BC807 | `Package_TO_SOT_SMD:SOT-23` | pin 1 = gate/base on all four |
 | D1–D7 | LED 0603 | `LED_SMD:LED_0603_1608Metric` | cathode on the marked end — orientation matters (§4.9) |
 | D8–D11 | SS34 (SMA) | `Diode_SMD:D_SMA` | pin 1 = cathode (band) |
@@ -267,14 +267,26 @@ actually constrains, generated from the LPF.
 | 4 | `V3` | 3V3 + 100 nF (3.3 V operation ties V3 to VCC) |
 | 5 | `UD+` | J8 D+ through U8 (D+ channel) |
 | 6 | `UD−` | J8 D− through U8 (D− channel) |
-| 7 | `XI` | Y2.1, C36 22 pF → GND |
-| 8 | `XO` | Y2.2, C37 22 pF → GND |
+| 7 | `XI` | Y2.1, C36 22 pF → GND (or an active 12 MHz oscillator, with `XO` left open) |
+| 8 | `XO` | Y2.2, C37 22 pF → GND (leave open when `XI` is driven by an oscillator) |
 | 9, 10, 11, 12, 14 | `CTS#`, `DSR#`, `RI#`, `DCD#`, `RTS#` | not connected |
 | 13 | `DTR#` | JP1 → Q1 gate (auto-reconfigure; remove JP1 to disable) |
 | 15 | `R232` | not connected (internal pull-down) |
 | 16 | `VCC` | 3V3 + C27 100 nF |
 
 Keep the XI/XO traces short and symmetrical, and away from the USB pair and the switchers.
+
+Pick **C36/C37 to suit the crystal's load capacitance (CL)**: `C = 2 × (CL − 3…5 pF stray)`, so a
+**CL = 12 pF** crystal wants 18–22 pF and the common **CL = 20 pF** HC49/US type wants 33 pF. WCH's
+own reference schematic quotes 22 pF in one datasheet revision and 33 pF in another for exactly this
+reason. Getting it wrong does not stop the chip working — it pulls the frequency a few tens of ppm,
+well inside the 11.98–12.02 MHz window — but matching is free, so read the crystal's label.
+
+The two-pin crystal works here because the CH340G has its **own inverter** on `XI`/`XO` (unlike the
+ECP5, which has no crystal driver — that is why `Y1` must be an active part, §10 correction 5). If
+you would rather use an active part, the same datasheet says: *"When using an external oscillator
+feed the clock signal into XI pin, and leave XO pin unconnected."* An active 12 MHz 3.3 V XO into
+`XI` with `XO` open also works — it simply costs more than a ₹20 crystal.
 
 ### 4.5 U5 — LM2596S-3.3 (3V3 rail, from VM_IN)
 

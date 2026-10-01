@@ -379,6 +379,15 @@ def osc3225():
                          rect(3, 1.0, -0.8, 1.2, 1.0), rect(4, 1.0, 0.8, 1.2, 1.0)])
 
 
+def crystal_hc49():
+    """HC49/US through-hole crystal, 4.88 mm lead spacing, matches KiCad
+    `Crystal:Crystal_HC49-4H_Vertical` (pads 1.5 mm, 0.8 mm drill)."""
+    return lambda: ("", [circle(1, -2.44, 0.0, 1.5, kind="thru_hole",
+                               layers='"*.Cu" "*.Mask"', drill=0.8),
+                         circle(2, 2.44, 0.0, 1.5, kind="thru_hole",
+                               layers='"*.Cu" "*.Mask"', drill=0.8)])
+
+
 def usb_c_16():
     """USB-C receptacle, 16 pads: 12 signal (0.5 mm pitch) + 4 shell."""
     def build():
@@ -450,7 +459,8 @@ COMPONENTS: list[tuple] = [
     ("U8", "Package_TO_SOT_SMD:SOT-23-6", sot23_6(), "USBLC6-2SC6", "usb"),
     ("Y1", "Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm", osc3225(),
      "25 MHz ACTIVE XO (4-pin)", "fpga"),
-    ("Y2", "Crystal:Crystal_HC49-4H_Vertical", chip(4.88, 1.5, 1.5), "12 MHz + 22 pF (CH340G)", "usb"),
+    ("Y2", "Crystal:Crystal_HC49-4H_Vertical", crystal_hc49(),
+     "12 MHz (CH340G clock)", "usb"),
     ("Q1", "Package_TO_SOT_SMD:SOT-23", sot23(), "2N7002", "jtag"),
     ("Q2", "Package_TO_SOT_SMD:SOT-23", sot23(), "BC817", "jtag"),
     ("Q3", "Package_TO_SOT_SMD:SOT-23", sot23(), "AO3401", "power"),
