@@ -70,15 +70,15 @@ is regenerated, so the schematic and the bitstream cannot silently disagree.
                     +------------------+------------------+
                     |                                     |
             +-------+--------+                    +-------+--------+
-            | U5 LM2596S-3.3 |                    | U6 MP1584EN    |  EN delayed ~13 ms (R41/C31)
+            | U5 AP62300TWU-7|                    | U6 MP1584EN    |  EN delayed ~13 ms (R41/C31)
             | 3.3 V / 3 A    |                    | 1.1 V / 3 A    |  R38/R39 set 1.099 V
-            | + D10 catch    |                    | + D11 catch    |
+            | + C39/C40/C41  |                    | + D11 catch    |
             +-------+--------+                    +-------+--------+
                     |                                     |            (C21 100u, C2-C7 100n)
                   3V3  (C23 470u in, C24 220u, C25 10u)  1V1  ────►  U1 VCC (6 pins)
                     |
-            +-------+--------+   Q3 AO3401 load switch, gate delay ~54 ms (R42/R43/C32)
-            | U7 AMS1117-2.5 |◄─────────────────────────────────────
+            +-------+--------+   U7 enable delay ~21 ms (R43/C32), no P-FET
+            | U7 LP5907-2.5  |◄─────────────────────────────────────
             | 2.5 V / 1 A    |
             +-------+--------+
                     |            (C22 22u, C8-C11 100n)
@@ -194,19 +194,19 @@ chosen for density and is a bad idea when you are soldering it yourself). Electr
 | U2 | **W25Q64JVSSIQ** | 64 Mbit (8 MB) SPI NOR, 2.7–3.6 V, standard SPI + dual/quad | SOIC-8 208 mil | 1 | Sharvie Electronics ₹75 · Hubtronics ₹117 · KTRON · Robu sells a W25Q64 breakout module for ₹77 (§3.5) |
 | U3 | **W25Q64JVSSIQ** | same device — SV-16 firmware slots. `W25Q32JVSSIQ` (4 MB) or `W25Q16JV` is already enough: the images are 32 KB per slot | SOIC-8 208 mil | 1 | as U2 |
 | U4 | **CH340G** | USB 2.0 full-speed ↔ UART, 3.3 V, V3 to 3V3 at 3.3 V operation. **Needs an external 12 MHz crystal (Y2) + 2 × 22 pF (C36/C37, 33 pF if the crystal is a 20 pF-load type)** — the G version has no internal clock; the CH340C is the pin-compatible part that does not need them | SOP-16 150 mil | 1 | iFutureTech · Hubtronics · Robu. Pairs with Y2 below |
-| U5 | **LM2596S-3.3** *(was AP63203)* | buck, 4.5–30 V in, **3.3 V fixed**, 3 A, 150 kHz, non-synchronous → **needs D10** | TO-263-5 | 1 | Robu ₹51 (XBLW) / ₹61 (Slkor) — listed in stock |
+| U5 | **AP62300TWU-7** | synchronous buck, 4.2–18 V in, 0.8–7 V out at 3 A, 750 kHz, **no catch diode**; 0.763 V reference ⇒ R46/R47 set 3.28 V, and `EN` (6 V max) uses the R48/R49 divider | TSOT-26 | 1 | **in the cart** (DigiKey) |
 | U6 | **MP1584EN-LF-Z** *(was TPS62823)* | buck, 4.5–28 V in, adjustable 0.8–20 V, 3 A, up to 1.5 MHz, non-synchronous → **needs D11 and R38/R39** | SOIC-8E | 1 | Hubtronics ₹47 (361 in stock) · Sunrom · others |
-| U7 | **AMS1117-2.5** *(was LP5907)* | LDO, 2.5 V, 1 A, needs ≥10 µF on the output | SOT-223 | 1 | Robu / QuartzComponents ₹12–20 |
+| U7 | **LP5907MFX-2.5** | LDO, 2.5 V, 250 mA, low noise, **with an EN pin** — the R43/C32 RC on EN replaces the Q3 load switch | SOT-23-5 | 1 | **in the cart** (DigiKey) |
 | Y1 | **YIC OSC25M-3.3I/S3-25T** *(was ASEMB)* | **25.000 MHz XO**, 3.3 V CMOS, ±25 ppm, enable/disable | 3.2×2.5 mm SMD-4 | 1 | **digikey.in ₹111** · any 25 MHz **3.3 V active** oscillator in 7050/5032 (Amazon.in / eBay.in sell the 5×7 mm 4-pin type) works |
 | Y2 | **12 MHz quartz crystal** (CH340G only) | **12 MHz exactly** — the chip accepts 11.98–12.02 MHz, so the 25 MHz part cannot be substituted. CL 12–20 pF, 2-pin **passive crystal** — the CH340G's internal inverter oscillates it. HC49/US through-hole or 3225 SMD both work | HC49/US or SMD-2 | 1 | Robu / Zbotic ₹15–25. **Skipped entirely if U4 is a CH340C** |
 | D1–D5 | LED 0603, green | DONE indicator + four user LEDs (GPIOA[3:0], active low) | 0603 | 5 | Robu / Zbotic ₹1–2 each |
 | D6, D7 | LED 0603, red | INITN indicator (DNP by default) + 3V3 power LED | 0603 | 2 | as above |
 | D8, D9 | **SS34** | Schottky 40 V / 3 A — barrel and USB input ORing | SMA | 2 | Robu ₹3 |
-| D10 | **SS34** | catch diode for the 3V3 LM2596 | SMA | 1 | as above |
+| D10 | ~~SS34~~ | **not fitted** — the AP62300 switches both ways internally | — | 0 | keep the bought part as a spare |
 | D11 | **SS34** | catch diode for the 1V1 MP1584 | SMA | 1 | as above |
 | Q1 | **2N7002** | N-MOSFET, PROGRAMN pull-down from DTR (optional auto-reconfigure) | SOT-23 | 1 | Robu / QuartzComponents ₹5 |
 | Q2, Q4 | **BC817 (NPN) / BC807 (PNP)** *(was MMBT3904/3906)* | indicator drivers for DONE and INITN — identical function, the part Indian shops actually stock | SOT-23 | 2 | Zbotic / Robu ₹2 each |
-| Q3 | **AO3401** | P-MOSFET load switch that delays the 2.5 V LDO (sequencing, §4.3) | SOT-23 | 1 | Robu / Zbotic ₹8 |
+| Q3 | ~~AO3401~~ | **not fitted** — deleted with the LP5907's EN pin (revision 1.2) | — | 0 | — |
 | U8 | **USBLC6-2SC6** | USB D+/D− ESD protection, 2 channels + VBUS | SOT-23-6 | 1 | Sunrom ₹30 · DNA Tech ₹32 |
 | — | SN74LVC1T45 *(optional)* | level shifter, only if a 5 V UART adapter is used on J10 | SOT-23-6 | 0 | Robu / QuartzComponents if needed |
 
@@ -249,26 +249,26 @@ chosen for density and is a bad idea when you are soldering it yourself). Electr
 | **R39** | **33 kΩ** | 0603 | 1 | **1V1 feedback divider, bottom** — measure this rail before fitting U1 (§10 step 2). **Corrected from 100 kΩ:** the MP1584 datasheet keeps the *lower* divider resistor **below 40 kΩ**, because the FB pin's ≈20 µA bias current would otherwise push the output outside the FPGA's 1.045–1.155 V window |
 | **R40** | 100 kΩ | 0603 | 1 | MP1584 `FREQ` resistor → **900 kHz** (datasheet: R = 180000/f^1.1 with R in kΩ and f in kHz; its own table gives 100 kΩ = 900 kHz) |
 | **R41** | 100 kΩ | 0603 | 1 | MP1584 `EN` series resistor (with C31 = the ≈13 ms sequencing delay) |
-| **R42** | **1 MΩ** | 0603 | 1 | Q3 gate **to GND** — this is what turns the load switch *on* (with C32 = the 2V5 delay). Revised from 47 kΩ: see R43 |
+| ~~R42~~ | — | — | 0 | deleted with Q3 |
 | C1 | 100 nF | 0603 | 1 | `ext_rst_n` RC (with R1) |
 | C2–C7 | 100 nF | 0603 | 6 | 1V1 decoupling, one per VCC pin (20, 29, 38, 66, 83, 130) |
 | C8–C11 | 100 nF | 0603 | 4 | 2V5 decoupling, one per VCCAUX pin (17, 53, 96, 132) |
 | C12–C20 | 100 nF | 0603 | 9 | 3V3 decoupling, one per VCCIO pin (9, 16, 36, 43, 70, 86, 100, 122, 137) |
 | C21 | 100 µF / 10 V electrolytic + 100 nF | 6.3×5.4 mm / 0603 | 1+1 | 1V1 bulk (MP1584 is non-synchronous — needs real bulk) |
 | C22 | 22 µF / 10 V electrolytic + 100 nF | 5×5 mm / 0603 | 1+1 | 2V5 bulk |
-| C23 | **470 µF / 35 V electrolytic** + 100 nF | 10×10 mm / 0603 | 1+1 | LM2596 input bulk (datasheet value for a 5–12 V input) |
-| C24 | **220 µF / 16 V electrolytic** + 100 nF | 8×7 mm / 0603 | 1+1 | LM2596 output bulk for the 3V3 rail |
+| C23 | 470 µF electrolytic + 100 nF | 8×10.5 mm / 0603 | 1+1 | AP62300 input bulk. ⚠ the bought can is **16 V** on a rail the jack allows to reach 12 V (1.33× derating) — see §10; fit a 25–35 V part if the order can still change |
+| C24 | 220 µF hybrid + 100 nF | 8×10.5 mm / 0603 | 1+1 | AP62300 output bulk for the 3V3 rail (the datasheet also wants the C40/C41 ceramics) |
 | C25 | 10 µF | 0805 | 1 | 3V3 bulk near banks 0/1/6/7 |
 | C26 | 100 nF | 0603 | 1 | Y1 oscillator decoupling |
 | C27 | 100 nF | 0603 | 1 | CH340C decoupling |
 | C28, C29 | 100 nF | 0603 | 2 | flash decoupling (one per device) |
-| **C30** | 10 µF in + 10 µF out | 0805 | 2 | AMS1117 input/output — it wants ≥10 µF, and ceramics can make it ring; bench check (OQ-B10) |
+| **C30** | 10 µF | 0805 | 1 | LP5907 input (U7 now runs from 3V3), i.e. a 3V3-local bypass |
 | **C31** | 470 nF | 0603 | 1 | MP1584 `EN` delay capacitor (≈13 ms with R41) |
-| **C32** | **4.7 µF** | 0805 | 1 | Q3 gate→**source** delay capacitor: τ = (R42∥R43)·C32 = 91 kΩ × 4.7 µF ≈ 428 ms, crossing the AO3401 threshold at ≈54 ms from 12 V |
+| **C32** | **470 nF** | 0603 | 1 | LP5907 `EN` → GND: τ = 100 kΩ × 470 nF = 47 ms, reaching the 1.2 V enable threshold in **≈21 ms** — after 1V1, before POR |
 | C33 | 100 nF | 0603 | 1 | MP1584 bootstrap (`BST`) capacitor |
 | C36, C37 | 22 pF | 0603 | 2 | CH340G crystal load capacitors (XI and XO to GND). **Match to the crystal:** 22 pF for a CL = 12 pF crystal, 33 pF for the common CL = 20 pF HC49/US type (WCH quotes both values across datasheet revisions). **Omit with a CH340C** |
-| **R43** | **100 kΩ** | 0603 | 1 | Q3 gate→source clamp: with R42 it holds Vgs at −VM_IN·1M/1.1M ≈ **−10.9 V** at 12 V, inside the AO3401's ±12 V rating (without it the gate would sit at GND and Vgs = −12 V, right on the absolute maximum) |
-| L1 | **33 µH / 3 A** shielded | 8×8 mm | 1 | LM2596 3V3 inductor (datasheet value) |
+| **R43** | **100 kΩ** | 0603 | 1 | 3V3 → LP5907 `EN` (with C32 = the ≈21 ms 2V5 delay). Replaces the AO3401 Vgs clamp — the P-FET is gone |
+| L1 | **10 µH / ≥1.5 A** shielded | CD54 5.8×5.2 mm | 1 | AP62300 3V3 inductor (the datasheet typical is 3.3 µH; 10 µH is the low-ripple choice) |
 | L2 | **10 µH / 3 A** shielded | 6×6 mm | 1 | MP1584 1V1 inductor |
 | FB1 | ferrite bead 600 Ω @ 100 MHz | 0603 | 1 | VM_IN filtering ahead of the regulators |
 
@@ -309,9 +309,9 @@ console sections with ready-made modules on 4-pin headers — the FPGA section a
 
 | Instead of | Fit | ₹ | Why it is easier |
 | :--- | :--- | :-: | :--- |
-| U5 + L1 + D10 + C23 + C24 (3V3) | an **LM2596 buck module** (Robu ₹43–50) with its output set to 3.3 V | 45 | no inductor/diode/feedback to get wrong; the pot sets the voltage |
+| U5 + L1 + C23 + C24 (3V3) | an **AP62300 buck module** (₹150–250) or any 12 V→3.3 V module — D10 is no longer needed | 45–250 | only worth it if the AP62300 cannot be sourced; the TSOT-26 part is what this board is routed for |
 | U6 + L2 + D11 + R38/R39/R40/C31 + C21 (1V1) | a **Mini360 / MP1584 module** (Robu ₹105), output trimmed to **1.10 V, measured with a meter** | 105 | same reason; the divider risk disappears |
-| U7 + Q3 + C30/C32 (2V5) | a second small buck module set to 2.5 V, or an AMS1117-2.5 breakout | 50–105 | |
+| U7 + C30 (2V5) | an **LP5907-2.5 breakout** (Robu ₹149) fed from 3V3, or a 2.5 V module | 50–150 | the Q3 load switch is gone |
 | U4 + U8 + J8 (USB-UART) | a **CH340C + USB-C serial breakout** (Robu ₹149) — 4-pin header, cross TX/RX | 149 | no SOP-16, no USB routing, no ESD array |
 | J2 + J1 (JTAG) | keep J1 (2.54 mm) — modules cannot replace this | 10 | |
 
@@ -324,14 +324,14 @@ can swap one out.
 
 | Rev 1.0 part | Now | Why it is an equivalent (not just "something similar") |
 | :--- | :--- | :--- |
-| U5 AP63203 (synch. buck, TSOT-26) | **LM2596S-3.3** (TO-263-5) | Same job: 3.3 V rail ≥ 2 A from a 5–12 V input. Slower (150 kHz vs 1.1 MHz) and non-synchronous, so it needs an external Schottky (D10) and much more bulk capacitance (C23/C24) — but 3 A rated and it is on the shelf in India for ₹51. Neutral for the FPGA: the rail is 3.3 V either way |
+| U5 AP63203 (synch. buck, TSOT-26) | **AP62300TWU-7** (TSOT-26, synchronous) — the same idea as the original choice, and what the cart bought. Revision 1.1's LM2596S-3.3 fallback is **superseded**; the board file carries the AP62300 pinout (1 GND, 2 SW, 3 VIN, 4 FB, 5 EN, 6 BST) |
 | U6 TPS62823 (synch. buck, 2.4–5.5 V in) | **MP1584EN** (SOIC-8E) | Same job: 1.1 V core rail, 3 A. Difference: the MP1584 needs **≥4.5 V input**, so it runs from VM_IN instead of from 3V3 — that is what forces the explicit sequencing in §4.3. 0.8 V reference (vs the TPS62823's lower one) sets 1.1 V with a divider, still inside the FPGA's 1.045–1.155 V window with 5 % margin |
-| U7 LP5907-2.5 (LDO, SOT-23-5) | **AMS1117-2.5** (SOT-223) | Same job: 2.5 V for VCCAUX at 16 mA. Bigger, noisier and it needs ≥10 µF output — irrelevant for a 16 mA load of reference input buffers |
+| U7 LP5907-2.5 (LDO, SOT-23-5) | **LP5907MFX-2.5** — as originally specified, and what the cart bought. Its EN pin removes Q3/R42 entirely; the AMS1117-2.5 fallback is **superseded** |
 | Y1 ASEMB-25.000 (XO, 3.2×2.5) | **YIC OSC25M-3.3I/S3-25T** | Same job: 25.000 MHz, 3.3 V CMOS, ±25 ppm (better than the ±50 ppm the ±2 % UART tolerance needs). Any 25 MHz 3.3 V **active** oscillator in 5×7 mm works |
 | R38–R42, C30–C33, D10, D11, Q3 | new | Sequencing and the passives the two new bucks require |
 | passives 0402 | **0603** | Same values, hand-solderable; 0402 stays only if you shrink the board |
 | "no electrolytics anywhere" | 470 µF + 220 µF + 100 µF + 22 µF electrolytics | Consequence of the two non-synchronous bucks |
-| `L1 4.7 µH`, `L2 2.2 µH` | **33 µH** (LM2596) and **10 µH** (MP1584) | Inductor values are set by the switcher, not the load |
+| `L1 4.7 µH`, `L2 2.2 µH` | **10 µH for both** — CD54 shielded parts are what was bought (two 33 µH CD54 are spares). The AP62300's datasheet typical is 3.3 µH; 10 µH is a safe, low-ripple choice |
 
 ## 4. Power architecture
 
@@ -345,8 +345,8 @@ can swap one out.
                                          [FB1]      C23 470u    |
                                             |      (electro)    |
                                   +---------+---------+         |
-                                  |   U5 LM2596S-3.3  |--L1 33uH
-                                  |   3.3 V / 3 A     |  D10 SS34 (catch)
+                                  |  U5 AP62300TWU-7  |--L1 10uH
+                                  |  synch. 3.3 V/3 A |  C39 10u / C40+C41 22u
                                   +---------+---------+
                                             |
                             3V3 ── C24 220u(electro) + C25 10u + 9 x 100n ─────────────+
@@ -356,11 +356,11 @@ can swap one out.
       |                                                                                 |
       |   ┌── U6 MP1584EN ── L2 10uH ── D11 SS34 (catch) ── 1V1 (C21 100u + 6 x 100n) ──┤
       +───┤    EN ◄── R41 100k (VM_IN) + C31 470n (GND)     ← ≈13 ms delay              |
-      |   └── FB ◄── R38 37.4k (OUT) + R39 100k (GND) = 1.099 V                         |
+      |   └── FB ◄── R38 12.4k (OUT) + R39 33k (GND) = 1.1006 V                         |
       |                                                                                 |
-      |   ┌── Q3 AO3401 (P-FET load switch) ── U7 AMS1117-2.5 ── 2V5 (C22 22u + 4 x 100n)
-      +───┤    gate: R42 1M to GND, C32 4.7u to source, R43 100k clamp  ← ≈54 ms delay  |
-          └── (C30 10u in / 10u out)                                                    |
+      |   ┌── U7 LP5907-2.5 (from 3V3) ── 2V5 (C42 10u ceramic + C22 22u + 4 x 100n) ───┤
+      +───┤    EN: R43 100k to 3V3, C32 470n to GND            ← ≈21 ms delay            |
+          └── (C30 10u in)                                                             |
                                                                                         |
    VCC (1.1 V)    = pins 20, 29, 38, 66, 83, 130  ◄─────────────────────────────────────┘
    VCCAUX (2.5 V) = pins 17, 53, 96, 132
@@ -394,7 +394,7 @@ and `nextpnr` emits none). The regulators are therefore specified with a large m
 | Rule | Requirement | How this board satisfies it |
 | :--- | :--- | :--- |
 | Recommended levels | VCC 1.045–1.155 V, VCCAUX 2.375–2.625 V, VCCIO 1.14–3.465 V | fixed-value regulators: 1.10 V / 2.50 V / 3.30 V |
-| Ramp rate | all supplies 0.01–10 V/ms; VCCAUX ≤ 30 mV/µs | LM2596 soft-start ≈ 1 V/ms; MP1584 ≈ 0.5 V/ms; AMS1117 ≈ 0.1 V/ms — all inside the window (verify on the bench, §10 step 3) |
+| Ramp rate | all supplies 0.01–10 V/ms; VCCAUX ≤ 30 mV/µs | AP62300 soft-start ≈ 1 V/ms; MP1584 ≈ 0.5 V/ms; LP5907 is a linear regulator and follows 3V3 |
 | POR release | only when VCC, VCCAUX **and VCCIO8** are all above their trip points (0.90–1.00 V, 2.00–2.20 V, 0.95–1.06 V) | all three rails are generated and all three are monitored by the device itself; no board-side reset generator is needed |
 | Master-SPI order (§3.5) | ramp VCCIO8 above the flash `VIH` (0.7 × 3.3 V ≈ **2.31 V**) **before** VCC or VCCAUX reach their POR trip (0.90–1.00 V and 2.00–2.20 V), or hold PROGRAMN/INITN low until VCCIO8 is valid | **explicitly sequenced** — see the timeline below. Because the India-sourced bucks need ≥4.5 V input, VCC and VCCAUX are no longer derived from 3V3, so the order is created with two RC networks instead of by construction |
 | Fallback if the bench disagrees | the datasheet's second option | drive PROGRAMN low from the host (J1.4 / the CH340C DTR path through Q1) and release it after 3V3 is up; this is a firmware/host action, not a board change |
@@ -406,7 +406,7 @@ and `nextpnr` emits none). The regulators are therefore specified with a large m
 
 | Time | Event | Consequence |
 | ---: | :--- | :--- |
-| ≈0.3 ms | 3V3 (U5, LM2596 soft-start) crosses 2.31 V | VCCIO8 is now above the config flash's `VIH` — the ordering requirement is met with two orders of magnitude of margin |
+| ≈0.3 ms | 3V3 (U5, AP62300 soft-start) crosses 2.31 V |
 | ≈13 ms | U6 starts (EN released by R41/C31; threshold ≈1.2 V at 5 V in: t = −RC·ln(1 − 1.2/Vin), RC = 47 ms) | VCC begins to rise after VCCIO8 is fully valid |
 | ≈14 ms | 1V1 crosses 0.90 V | VCC POR trip, comfortably after VCCIO8 |
 | ≈54 ms | Q3 turns on (gate falls with τ = (R42∥R43)·C32 ≈ 428 ms, crossing the −1.3 V threshold) → 2V5 rises | VCCAUX POR trip, last of the three |
@@ -546,7 +546,7 @@ W25Q datasheet; the CH340C is drawn by pin *name* (the vendor's SOP-16 numbering
 ### 7.1 Sheet 1 — FPGA supply and ground
 
 ```
-       1V1 rail (U6 MP1584EN)            2V5 rail (U7 AMS1117-2.5)        3V3 rail (U5 LM2596S-3.3)
+       1V1 rail (U6 MP1584EN)            2V5 rail (U7 LP5907-2.5)         3V3 rail (U5 AP62300TWU-7)
        from VM_IN, EN delayed 6-13 ms   from Q3 load switch, 54 ms       from VM_IN, valid first
            |                               |                               |
    +---+---+---+---+---+---+       +---+---+---+---+               +---+---+---+---+---+---+---+---+---+
@@ -570,8 +570,8 @@ W25Q datasheet; the CH340C is drawn by pin *name* (the vendor's SOP-16 numbering
               FREQ → R40 100k → GND (= 900 kHz) ; GND (pin 5) and the exposed pad → plane
               COMP (pin 3): needs an RC compensation network to GND — values from the MP1584
               datasheet's typical application for 1.1 V out at 900 kHz (open item OQ-B10)
-   Q3/U7 (2V5): VM_IN → Q3 AO3401 (S) → (D) → U7 AMS1117-2.5 IN → OUT = 2V5 → C22 22u
-              (the AMS1117 needs >= 3.8 V in for a 2.5 V out, so this section runs from VM_IN,
+   U7 (2V5): 3V3 → U7 LP5907-2.5 IN → OUT = 2V5 → C42 10u ceramic + C22 22u
+              (the LP5907 runs from 3V3 and is enabled by R43/C32 about 21 ms after it —
               not from 3V3)
               Q3 gate: R42 1M to GND + C32 4.7uF to source + R43 100k source-to-gate (Vgs clamp);
               the gate starts at source potential (off) and falls with tau = 91k x 4.7uF = 428 ms,
@@ -928,8 +928,10 @@ document), then V2 when the JTAG cable becomes the bottleneck, then V3 when a re
 | `ECP5 and ECP5-5G.pdf` | Lattice FPGA-DS-02012-3.4 — every rail, timing and pin-count number above |
 
 _Revision 1.1 — **India-sourcing edition** (September 2026). The bill of materials was re-sourced so
-that every part is orderable from an Indian vendor: the two regulators became LM2596S-3.3 and MP1584EN,
-the LDO became AMS1117-2.5, the oscillator became the digikey.in YIC part, and the passives moved to
+that every part is orderable from an Indian vendor. **Revision 1.2:** the cart came back with the
+original revision-1.0 power parts — the synchronous AP62300TWU-7 and the LP5907MFX-2.5 — so the
+LM2596S-3.3 / AMS1117-2.5 substitution is history, not the build. The oscillator is still the
+digikey.in part, and the passives moved to
 0603. Because the new bucks need ≥4.5 V input, the power-up order is now created by two RC-delayed
 enables instead of by deriving VCC/VCCAUX from 3V3 — §4.3 has the timeline, §3.6 the full change list,
 and §3.5 a module-first build for a first board. Prices checked against Indian vendor listings in

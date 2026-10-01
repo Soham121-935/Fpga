@@ -60,7 +60,7 @@ NET_ORDER = [
     # USB bridge strapping
     "U4_DTR", "U4_V3", "Y2_XI", "Y2_XO",
     # power tree internals
-    "U5_OUT", "U6_SW", "U6_BST", "U6_EN", "U6_FREQ", "FB_1V1", "Q3_G", "U7_VIN",
+    "U5_SW", "U5_BST", "U5_FB", "U5_EN", "U6_SW", "U6_BST", "U6_EN", "U6_FREQ", "FB_1V1", "U7_EN",
     "U8_DP", "U8_DN",
     # motor / expansion
     "pwm_out", "motor_dir1", "motor_dir2", "motor_fault_n",
@@ -138,15 +138,16 @@ connect("U4", 1, "GND");      connect("U4", 2, "U4_TXD"); connect("U4", 3, "U4_R
 connect("U4", 4, "U4_V3");    connect("U4", 5, "USB_DP_F"); connect("U4", 6, "USB_DN_F")
 connect("U4", 7, "Y2_XI");    connect("U4", 8, "Y2_XO")
 connect("U4", 13, "U4_DTR");  connect("U4", 16, "3V3")
-# --- U5, LM2596S-3.3 (TO-263-5)
-connect("U5", 1, "VM_IN");  connect("U5", 2, "U5_OUT"); connect("U5", 3, "GND")
-connect("U5", 4, "3V3");    connect("U5", 5, "GND")
+# --- U5, AP62300TWU-7 synchronous buck (TSOT-26: 1 GND, 2 SW, 3 VIN, 4 FB, 5 EN, 6 BST)
+connect("U5", 1, "GND");     connect("U5", 2, "U5_SW")
+connect("U5", 3, "VM_IN");   connect("U5", 4, "U5_FB")
+connect("U5", 5, "U5_EN");   connect("U5", 6, "U5_BST")
 # --- U6, MP1584EN (SOIC-8E)
 connect("U6", 1, "U6_SW");   connect("U6", 2, "U6_EN"); connect("U6", 3, "U6_COMP")
 connect("U6", 4, "FB_1V1");  connect("U6", 5, "GND");   connect("U6", 6, "U6_FREQ")
 connect("U6", 7, "VM_IN");   connect("U6", 8, "U6_BST");  connect("U6", 9, "GND")
-# --- U7, AMS1117-2.5 (SOT-223: 1 GND, 2 VOUT/tab, 3 VIN)
-connect("U7", 1, "GND"); connect("U7", 2, "2V5"); connect("U7", 3, "U7_VIN")
+# --- U7, LP5907MFX-2.5 (SOT-23-5: 1 IN, 2 GND, 3 EN, 4 NC, 5 OUT)
+connect("U7", 1, "3V3"); connect("U7", 2, "GND"); connect("U7", 3, "U7_EN"); connect("U7", 5, "2V5")
 # --- U8, USBLC6-2SC6
 connect("U8", 1, "USB_DP");  connect("U8", 2, "GND");  connect("U8", 3, "USB_DN")
 connect("U8", 4, "USB_DN_F"); connect("U8", 5, "USB_VBUS"); connect("U8", 6, "USB_DP_F")
@@ -155,7 +156,6 @@ connect("Y1", 1, "3V3"); connect("Y1", 2, "GND"); connect("Y1", 3, "clk_25m"); c
 # --- drivers
 connect("Q1", 1, "Q1_G"); connect("Q1", 2, "GND"); connect("Q1", 3, "PROGRAMN")
 connect("Q2", 1, "Q2_B"); connect("Q2", 2, "GND"); connect("Q2", 3, "Q2_C")
-connect("Q3", 1, "Q3_G"); connect("Q3", 2, "VM_IN"); connect("Q3", 3, "U7_VIN")
 connect("Q4", 1, "Q4_B"); connect("Q4", 2, "3V3"); connect("Q4", 3, "Q4_C")
 # --- LEDs and their resistors (D1 DONE, D2-5 GPIO, D6 INITN, D7 power)
 connect("D1", 1, "Q2_C"); connect("D1", 2, "D1_A")   # cathode to the driver, anode to R33
@@ -167,10 +167,9 @@ connect("D7", 1, "GND");  connect("D7", 2, "D7_A")
 # --- diodes in the power path
 connect("D8", 1, "VM_IN_RAW"); connect("D8", 2, "J9_VIN")
 connect("D9", 1, "VM_IN_RAW"); connect("D9", 2, "USB_VBUS")
-connect("D10", 1, "U5_OUT"); connect("D10", 2, "GND")
 connect("D11", 1, "U6_SW");  connect("D11", 2, "GND")
 # --- inductors and ferrite
-connect("L1", 1, "U5_OUT"); connect("L1", 2, "3V3")
+connect("L1", 1, "U5_SW");  connect("L1", 2, "3V3")
 connect("L2", 1, "U6_SW");  connect("L2", 2, "1V1")
 connect("FB1", 1, "VM_IN_RAW"); connect("FB1", 2, "VM_IN")
 # --- resistors
@@ -212,8 +211,19 @@ connect("R38", 1, "1V1");    connect("R38", 2, "FB_1V1")
 connect("R39", 1, "FB_1V1"); connect("R39", 2, "GND")
 connect("R40", 1, "U6_FREQ"); connect("R40", 2, "GND")
 connect("R41", 1, "VM_IN");  connect("R41", 2, "U6_EN")
-connect("R42", 1, "Q3_G");   connect("R42", 2, "GND")
-connect("R43", 1, "Q3_G");   connect("R43", 2, "VM_IN")
+# AP62300 feedback and enable dividers (datasheet table for a 0.763 V reference)
+connect("R46", 1, "3V3");   connect("R46", 2, "U5_FB")     # 33k top
+connect("R47", 1, "U5_FB"); connect("R47", 2, "GND")       # 10k bottom -> 3.28 V
+connect("R48", 1, "VM_IN");  connect("R48", 2, "U5_EN")    # 100k top (EN is a 6 V pin)
+connect("R49", 1, "U5_EN");  connect("R49", 2, "GND")      # 33k bottom -> 3.0 V at 12 V in
+# AP62300 support parts
+connect("C38", 1, "U5_BST"); connect("C38", 2, "U5_SW")    # 100 nF bootstrap
+connect("C39", 1, "VM_IN");  connect("C39", 2, "GND")      # 10 uF input ceramic
+connect("C40", 1, "3V3");    connect("C40", 2, "GND")      # 22 uF output ceramic
+connect("C41", 1, "3V3");    connect("C41", 2, "GND")      # 22 uF output ceramic
+# 2V5 sequencing without the P-FET: 100k/470nF on the LP5907 EN pin, ~21 ms
+connect("R43", 1, "3V3");    connect("R43", 2, "U7_EN")
+connect("C42", 1, "2V5");    connect("C42", 2, "GND")      # LP5907 needs a low-ESR output cap
 connect("R44", 1, "3V3");    connect("R44", 2, "D7_A")
 # MP1584 loop compensation (values from the datasheet typical application - open
 # item OQ-B10); added as components so their pads exist to place and route
@@ -236,9 +246,9 @@ connect("C26", 1, "3V3"); connect("C26", 2, "GND")
 connect("C27", 1, "3V3"); connect("C27", 2, "GND")
 connect("C28", 1, "3V3"); connect("C28", 2, "GND")
 connect("C29", 1, "3V3"); connect("C29", 2, "GND")
-connect("C30", 1, "U7_VIN"); connect("C30", 2, "GND")
+connect("C30", 1, "3V3"); connect("C30", 2, "GND")
 connect("C31", 1, "U6_EN");  connect("C31", 2, "GND")
-connect("C32", 1, "Q3_G");   connect("C32", 2, "VM_IN")
+connect("C32", 1, "U7_EN"); connect("C32", 2, "GND")
 connect("C33", 1, "U6_BST"); connect("C33", 2, "U6_SW")
 connect("C34", 1, "U4_V3");  connect("C34", 2, "GND")      # CH340G V3 decoupling
 # CH340G clock: 12 MHz crystal on XI/XO with 22 pF load caps
@@ -388,6 +398,19 @@ def crystal_hc49():
                                layers='"*.Cu" "*.Mask"', drill=0.8)])
 
 
+def sot23_5():
+    """SOT-23-5 (LP5907): pins 1-3 on one side, 4-5 on the other."""
+    return lambda: ("", [rect(1, -0.95, 0.95, 0.9, 0.8), rect(2, 0.0, 1.1, 0.6, 1.1),
+                         rect(3, 0.95, 0.95, 0.9, 0.8), rect(4, 0.95, -0.95, 0.9, 0.8),
+                         rect(5, -0.95, -0.95, 0.9, 0.8)])
+
+
+def eia_7343_31():
+    """Kemet-D (EIA 7343-31) tantalum: pads at +/-3.1125 mm, 2.075 x 2.55 mm."""
+    return lambda: ("", [rect(1, -3.1125, 0.0, 2.075, 2.55),
+                         rect(2, 3.1125, 0.0, 2.075, 2.55)])
+
+
 def usb_c_16():
     """USB-C receptacle, 16 pads: 12 signal (0.5 mm pitch) + 4 shell."""
     def build():
@@ -451,11 +474,11 @@ COMPONENTS: list[tuple] = [
     ("U1", "Package_QFP:LQFP-144_20x20mm_P0.5mm", qfp144(), "LFE5U-12F-6TG144C", "fpga"),
     ("U2", "Package_SO:SOIC-8_5.23x5.23mm_P1.27mm", soic(8, 1.27, 5.4, 2.0, 0.6), "W25Q64JVSSIQ", "flash"),
     ("U3", "Package_SO:SOIC-8_5.23x5.23mm_P1.27mm", soic(8, 1.27, 5.4, 2.0, 0.6), "W25Q64JVSSIQ", "flash"),
-    ("U4", "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm", soic(16, 1.27, 6.0, 2.0, 0.6), "CH340C", "usb"),
-    ("U5", "Package_TO_SOT_SMD:TO-263-5_TabPin3", to263_5(), "LM2596S-3.3", "power"),
+    ("U4", "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm", soic(16, 1.27, 6.0, 2.0, 0.6), "CH340G", "usb"),
+    ("U5", "Package_TO_SOT_SMD:SOT-23-6", sot23_6(), "AP62300TWU-7", "power"),
     ("U6", "Package_SO:SOIC-8-1EP_3.9x4.9mm_P1.27mm_EP2.41x3.3mm",
      soic(8, 1.27, 5.4, 2.0, 0.6, ep=(3.3, 2.41)), "MP1584EN", "power"),
-    ("U7", "Package_TO_SOT_SMD:SOT-223-3_TabPin2", sot223(), "AMS1117-2.5", "power"),
+    ("U7", "Package_TO_SOT_SMD:SOT-23-5", sot23_5(), "LP5907MFX-2.5", "power"),
     ("U8", "Package_TO_SOT_SMD:SOT-23-6", sot23_6(), "USBLC6-2SC6", "usb"),
     ("Y1", "Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm", osc3225(),
      "25 MHz ACTIVE XO (4-pin)", "fpga"),
@@ -463,15 +486,12 @@ COMPONENTS: list[tuple] = [
      "12 MHz (CH340G clock)", "usb"),
     ("Q1", "Package_TO_SOT_SMD:SOT-23", sot23(), "2N7002", "jtag"),
     ("Q2", "Package_TO_SOT_SMD:SOT-23", sot23(), "BC817", "jtag"),
-    ("Q3", "Package_TO_SOT_SMD:SOT-23", sot23(), "AO3401", "power"),
     ("Q4", "Package_TO_SOT_SMD:SOT-23", sot23(), "BC807", "jtag"),
     ("D8", "Diode_SMD:D_SMA", sma(), "SS34", "power"),
     ("D9", "Diode_SMD:D_SMA", sma(), "SS34", "power"),
-    ("D10", "Diode_SMD:D_SMA", sma(), "SS34", "power"),
     ("D11", "Diode_SMD:D_SMA", sma(), "SS34", "power"),
-    ("L1", "Inductor_SMD:L_Bourns_SRR1260", chip(6.0, 4.0, 3.0), "33 uH", "power"),
-    ("L2", "Inductor_SMD:L_Sunlord_SWPA6045S",
-     chip(5.0, 3.4, 2.6), "10 uH", "power"),
+    ("L1", "Inductor_SMD:L_Sunlord_SWPA6045S", chip(5.0, 3.4, 2.6), "10 uH", "power"),
+    ("L2", "Inductor_SMD:L_Sunlord_SWPA6045S", chip(5.0, 3.4, 2.6), "10 uH", "power"),
     ("FB1", "Inductor_SMD:L_0603_1608Metric", chip(1.575, 0.9, 0.95), "600R @100MHz", "power"),
 ]
 
@@ -479,22 +499,62 @@ for index, value in enumerate(["D1", "D2", "D3", "D4", "D5", "D6", "D7"]):
     COMPONENTS.append((value, "LED_SMD:LED_0603_1608Metric", chip(1.575, 0.9, 0.95),
                        "LED green" if index < 5 else "LED red", "leds"))
 
-for index in range(45):          # R1..R45
+# package per reference, from the cart (hardware/cart/RECONCILED.md section 2)
+R_PACKAGE = {
+    "R38": ("Resistor_SMD:R_0402_1005Metric", (1.0, 0.6, 0.7)),
+    "R9": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R10": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R11": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R12": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R31": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R33": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R34": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R39": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R46": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R47": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R49": ("Resistor_SMD:R_1206_3216Metric", (2.9, 1.15, 1.8)),
+    "R2": ("Resistor_SMD:R_0805_2012Metric", (1.9, 1.0, 1.4)),
+    "R3": ("Resistor_SMD:R_0805_2012Metric", (1.9, 1.0, 1.4)),
+    "R4": ("Resistor_SMD:R_0805_2012Metric", (1.9, 1.0, 1.4)),
+    "R27": ("Resistor_SMD:R_0805_2012Metric", (1.9, 1.0, 1.4)),
+    "R28": ("Resistor_SMD:R_0805_2012Metric", (1.9, 1.0, 1.4)),
+    "R29": ("Resistor_SMD:R_0805_2012Metric", (1.9, 1.0, 1.4)),
+    "R30": ("Resistor_SMD:R_0805_2012Metric", (1.9, 1.0, 1.4)),
+    "R36": ("Resistor_SMD:R_0805_2012Metric", (1.9, 1.0, 1.4)),
+    "R37": ("Resistor_SMD:R_0805_2012Metric", (1.9, 1.0, 1.4)),
+}
+R_VALUES = {"R38": "12.4k", "R39": "33k", "R40": "100k", "R41": "100k", "R43": "100k",
+            "R45": "10k", "R46": "33k", "R47": "10k", "R48": "100k", "R49": "33k",
+            "R36": "5.1k", "R37": "5.1k"}
+for index in range(49):          # R1..R49 (R42 not fitted - see the power tree)
     ref = "R%d" % (index + 1)
-    COMPONENTS.append((ref, "Resistor_SMD:R_0603_1608Metric", chip(1.575, 0.9, 0.95), "", "passives"))
-for index in range(37):          # C1..C37
+    if ref == "R42":             # deleted with Q3: the LP5907 EN pin does the delay
+        continue
+    library, geometry = R_PACKAGE.get(ref, ("Resistor_SMD:R_0603_1608Metric", (1.575, 0.9, 0.95)))
+    COMPONENTS.append((ref, library, chip(*geometry), R_VALUES.get(ref, ""), "passives"))
+# electrolytics and ceramics, sized to the parts in the cart
+C_SPECIAL = {
+    "C21": ("Capacitor_Tantalum_SMD:CP_EIA-7343-31_Kemet-D", eia_7343_31, "100uF 25V tant"),
+    "C22": ("Capacitor_SMD:CP_Elec_6.3x5.4", lambda: chip(5.9, 1.8, 2.6), "22uF 63V"),
+    "C23": ("Capacitor_SMD:CP_Elec_8x10.5", lambda: chip(7.6, 2.0, 3.0), "470uF 25V"),
+    "C24": ("Capacitor_SMD:CP_Elec_8x10.5", lambda: chip(7.6, 2.0, 3.0), "220uF 16V"),
+    "C38": ("Capacitor_SMD:C_0603_1608Metric", lambda: chip(1.575, 0.9, 0.95), "100nF"),
+    "C39": ("Capacitor_SMD:C_0805_2012Metric", lambda: chip(1.9, 1.0, 1.4), "10uF"),
+    "C40": ("Capacitor_SMD:C_1206_3216Metric", lambda: chip(2.9, 1.15, 1.8), "22uF"),
+    "C41": ("Capacitor_SMD:C_1206_3216Metric", lambda: chip(2.9, 1.15, 1.8), "22uF"),
+    "C42": ("Capacitor_SMD:C_0805_2012Metric", lambda: chip(1.9, 1.0, 1.4), "10uF"),
+}
+for index in range(42):          # C1..C42
     ref = "C%d" % (index + 1)
-    big = ref in ("C21", "C22", "C23", "C24")
-    library = "Capacitor_SMD:CP_Elec_6.3x5.4" if ref == "C21" else \
-              "Capacitor_SMD:CP_Elec_5x5.4" if ref == "C22" else \
-              "Capacitor_SMD:CP_Elec_10x10.2" if ref == "C23" else \
-              "Capacitor_SMD:CP_Elec_8x6.9" if ref == "C24" else \
-              "Capacitor_SMD:C_0805_2012Metric" if ref in ("C25", "C30", "C32") else \
-              "Capacitor_SMD:C_0603_1608Metric"
-    builder = chip(3.0, 2.0, 2.0) if big else \
-              chip(1.9, 1.0, 1.4) if ref in ("C25", "C30", "C32") else \
-              chip(1.575, 0.9, 0.95)
-    COMPONENTS.append((ref, library, builder, "", "passives"))
+    if ref in C_SPECIAL:
+        library, builder, value = C_SPECIAL[ref]
+        COMPONENTS.append((ref, library, builder(), value, "passives"))
+    elif ref in ("C25", "C30", "C32"):
+        COMPONENTS.append((ref, "Capacitor_SMD:C_0805_2012Metric", chip(1.9, 1.0, 1.4),
+                           {"C25": "10uF", "C30": "10uF", "C32": "470nF"}[ref], "passives"))
+    else:
+        COMPONENTS.append((ref, "Capacitor_SMD:C_0603_1608Metric", chip(1.575, 0.9, 0.95),
+                           "100nF" if ref not in ("C31",) else "470nF", "passives"))
 
 COMPONENTS += [
     ("J1", "Connector_PinHeader_2.54mm:PinHeader_1x10_P2.54mm_Vertical", pin_header(1, 10), "JTAG", "jtag"),
@@ -532,13 +592,17 @@ COMPONENTS += [
 PLACEMENT: dict[str, tuple[float, float, float]] = {
     # power section - top left, away from the FPGA and the motor connector
     "J9": (10, 10, 0), "D8": (16, 8, 90), "D9": (16, 12, 90), "FB1": (22, 10, 0),
-    "C23": (28, 8, 0), "U5": (34, 11, 90), "L1": (42, 8, 0), "D10": (42, 14, 90),
+    "C23": (28, 8, 0), "U5": (34, 11, 0), "L1": (42, 8, 0),
+    "C38": (37, 11, 0), "R46": (37, 14, 0), "R47": (34, 14, 0),
+    "R48": (27, 14, 0), "R49": (30, 17, 0), "C39": (30, 12, 0),
+    "C40": (46, 11, 0), "C41": (46, 14, 0),
     "C24": (34, 17, 0), "C25": (44, 16, 0), "C21": (32, 24, 0), "C22": (38, 26, 0),
+    "C42": (41, 29, 0),
     "U6": (26, 22, 0), "L2": (32, 19, 0), "D11": (32, 27, 90), "C33": (22, 19, 0),
     "R38": (21, 24, 0), "R39": (21, 26, 0), "R40": (21, 28, 0),
     "R41": (25, 30, 0), "C31": (28, 30, 0), "FID3": (8, 36, 0),
     "R45": (23, 22, 0), "C35": (23, 20, 0),
-    "Q3": (30, 34, 0), "R42": (27, 37, 0), "R43": (32, 37, 0), "C32": (35, 34, 0),
+    "R43": (32, 37, 0), "C32": (35, 34, 0),
     "U7": (38, 34, 0), "C30": (41, 37, 0), "TP1": (46, 6, 0), "TP2": (49, 6, 0), "TP3": (52, 6, 0),
     # FPGA and its decoupling
     "U1": (52, 52, 0),
@@ -660,7 +724,7 @@ def build_board() -> str:
     classes = [
         ("Default", "0.25", "0.2", ["\"*\""]),
         ("Power", "0.8", "0.25", ["\"GND\"", "\"VM_IN\"", "\"VM_IN_RAW\"", "\"3V3\"", "\"2V5\"", "\"1V1\"", "\"USB_VBUS\"", "\"5V_USB\""]),
-        ("Switching", "0.8", "0.5", ["\"U5_OUT\"", "\"U6_SW\"", "\"U6_BST\""]),
+        ("Switching", "0.8", "0.5", ["\"U5_SW\"", "\"U5_BST\"", "\"U6_SW\"", "\"U6_BST\""]),
         ("USB", "0.25", "0.2", ["\"USB_DP\"", "\"USB_DN\"", "\"USB_DP_F\"", "\"USB_DN_F\"", "\"CC1\"", "\"CC2\""]),
         ("JTAG", "0.25", "0.25", ["\"TCK\"", "\"TMS\"", "\"TDI\"", "\"TDO\"", "\"PROGRAMN\"", "\"INITN\"", "\"DONE\"", "\"CCLK\""]),
     ]
@@ -680,6 +744,29 @@ def build_board() -> str:
     for text, x, y, size in LABELS:
         lines.append("  (gr_text \"%s\" (at %.2f %.2f) (layer \"F.SilkS\") "
                      "(effects (font (size %.1f %.1f) (thickness 0.2))))" % (text, x, y, size, size))
+    lines.append("")
+
+    # ground planes.  The stack-up (BOARD.md section 14) is
+    # signal / solid GND / solid PWR / signal, so the plane goes on In1.Cu and
+    # the bottom signal layer gets a pour as well.  KiCad fills them on the
+    # first "Fill All Zones" (B) - the polygons below are the outlines only.
+    gnd = NET_ORDER.index("GND") + 1
+    zone_id = 0
+    for layer, inset in (("In1.Cu", 0.25), ("B.Cu", 0.5)):
+        zone_id += 1
+        x0, y0, x1, y1 = inset, inset, BOARD_W - inset, BOARD_H - inset
+        lines.append("  (zone (net %d) (net_name \"GND\") (layer \"%s\") " % (gnd, layer))
+        lines.append("    (uuid 5f16b0a%d-0000-4000-8000-00000000000%d) (hatch edge 0.5)" % (zone_id, zone_id))
+        lines.append("    (connect_pads (clearance 0.5))")
+        lines.append("    (min_thickness 0.25) (filled_areas_thickness no)")
+        lines.append("    (fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5))")
+        lines.append("    (polygon")
+        lines.append("      (pts")
+        lines.append("        (xy %.2f %.2f) (xy %.2f %.2f) (xy %.2f %.2f) (xy %.2f %.2f)"
+                     % (x0, y0, x1, y0, x1, y1, x0, y1))
+        lines.append("      )")
+        lines.append("    )")
+        lines.append("  )")
     lines.append("")
 
     # connections grouped by reference
@@ -751,6 +838,15 @@ def check(text: str) -> int:
     print("  pads:       %d (%d with a net)" % (len(pads), len(with_net)))
     print("  nets:       %d declared" % len(nets))
 
+    names = [name for _, name in nets]
+    net_dupes = {name for name in names if names.count(name) > 1}
+    if net_dupes:
+        print("  FAIL: duplicate net declarations: %s" % sorted(net_dupes))
+        problems += 1
+    zones = re.findall(r'\(zone \(net \d+\) \(net_name "([^"]+)"\) \(layer "([^"]+)"\)', text)
+    if zones:
+        print("  zones:      %s" % ", ".join("%s on %s" % (name, layer) for name, layer in zones))
+
     refs = re.findall(r'\(fp_text reference "([^"]+)"', text)
     duplicates = {ref for ref in refs if refs.count(ref) > 1}
     if duplicates:
@@ -783,6 +879,75 @@ def check(text: str) -> int:
         print("  note: nets with a single connection (check these): %s" % singles)
     print("  %s" % ("OK" if problems == 0 else "FAILED"))
     return problems
+
+
+PROJECT_FILE = OUT / "sv16_board.kicad_pro"
+
+PROJECT_NETCLASSES = [
+    ("Default", 0.20, 0.25, 0.80, 0.40),
+    ("Power", 0.25, 0.80, 1.00, 0.50),
+    ("Switching", 0.50, 0.80, 1.00, 0.50),
+    ("USB", 0.20, 0.25, 0.80, 0.40),
+    ("JTAG", 0.25, 0.25, 0.80, 0.40),
+]
+
+
+def write_project() -> None:
+    """A minimal KiCad 7 project file: net classes with the widths the router
+    should start from (PCB_COMPONENTS.md section 7), USB as a 90 ohm pair."""
+    import json
+
+    classes = []
+    for name, clearance, width, via_dia, via_drill in PROJECT_NETCLASSES:
+        classes.append({
+            "bus_width": 12,
+            "clearance": clearance,
+            "diff_pair_gap": 0.2,
+            "diff_pair_via_gap": 0.25,
+            "diff_pair_width": 0.2,
+            "line_style": 0,
+            "microvia_diameter": 0.3,
+            "microvia_drill": 0.1,
+            "name": name,
+            "pcb_color": "rgba(0, 0, 0, 0.000)",
+            "priority": 0,
+            "schematic_color": "rgba(0, 0, 0, 0.000)",
+            "track_width": width,
+            "via_diameter": via_dia,
+            "via_drill": via_drill,
+            "wire_width": 6,
+        })
+    project = {
+        "board": {
+            "design_settings": {
+                "defaults": {"board_outline_line_width": 0.1, "silk_line_width": 0.12,
+                             "copper_line_width": 0.2},
+                "diff_pair_dimensions": [],
+                "drc_exclusions": [],
+                "rules": {"min_clearance": 0.2, "min_track_width": 0.2,
+                          "min_through_hole_diameter": 0.3, "min_via_diameter": 0.5,
+                          "min_via_annular_width": 0.13},
+                "track_widths": [0.2, 0.25, 0.5, 0.8, 1.0],
+                "via_dimensions": [{"diameter": 0.8, "drill": 0.4},
+                                   {"diameter": 1.0, "drill": 0.5}],
+            },
+            "layer_presets": [],
+            "viewports": [],
+        },
+        "boards": [],
+        "libraries": {"pinned_footprint_libs": [], "pinned_symbol_libs": []},
+        "meta": {"filename": "sv16_board.kicad_pro", "version": 1},
+        "net_settings": {"classes": classes, "meta": {"version": 3}, "net_colors": None},
+        "pcbnew": {"last_paths": {}, "page_layout_descr_file": ""},
+        "schematic": {"annotate_start_num": 0, "drawing": {}, "legacy_lib_dir": "",
+                      "legacy_lib_list": [], "meta": {"version": 1},
+                      "page_layout_descr_file": "", "spice_external_command": "spice \"%I\"",
+                      "subpart_first_id": 65, "subpart_id_separator": 0},
+        "sheets": [],
+        "text_variables": {},
+    }
+    PROJECT_FILE.write_text(json.dumps(project, indent=2) + "\n")
+    print("wrote %s" % PROJECT_FILE.relative_to(ROOT))
 
 
 def draw_preview() -> None:
@@ -850,6 +1015,7 @@ def main() -> int:
         BOARD_FILE.write_text(text)
         print("wrote %s (%d lines, %.0f KB)" % (BOARD_FILE.relative_to(ROOT),
                                                 text.count("\n"), len(text) / 1024.0))
+        write_project()
         draw_preview()
     else:
         text = BOARD_FILE.read_text()

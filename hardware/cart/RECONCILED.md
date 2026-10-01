@@ -84,3 +84,28 @@ Your cart forces a choice about the **2V5 sequencing**, because the LP5907 has a
 Either way the **board file, `PCB_COMPONENTS.md` §2–§3 and `BOARD.md` §4/§7.1 need one revision** to match
 what is on your bench. That revision is written once, after you answer §4 and tell me whether U1, Y1, U4
 and the connectors are already on order.
+
+## 5. Status after the board file was rebuilt (revision 1.2)
+
+Everything below is now **in** `hardware/sv16_board/sv16_board.kicad_pcb` (141 footprints, 596 pads,
+472 on 133 nets, two ground zones, project file with net classes):
+
+| From the cart | What the board file now has |
+| :--- | :--- |
+| U5 AP62300TWU-7 | TSOT-26 footprint, pins 1 GND / 2 SW / 3 VIN / 4 FB / 5 EN / 6 BST, C38 bootstrap, R46/R47 feedback (33 k / 10 k ⇒ 3.28 V), R48/R49 enable divider (EN is a **6 V** pin), C39 input + C40/C41 output ceramics. **D10 deleted** — no catch diode on a synchronous buck |
+| U7 LP5907MFX-2.5 | SOT-23-5 (1 IN, 2 GND, 3 EN, 4 NC, 5 OUT) fed from 3V3, R43/C32 on EN ⇒ ≈21 ms. **Q3 and R42 deleted**; C42 10 µF low-ESR ceramic added because the part is only stable into one |
+| U4 CH340G | SOIC-16 with the G pin numbers, Y2 12 MHz HC49/US through-hole + C36/C37 22 pF |
+| Q2/Q4 MMBT3904/3906 | same SOT-23 pads, value strings updated |
+| Package changes (§2) | R38 0402; the 1206 and 0805 groups; C21 tantalum D-case; C22 6.3×5.4; C23/C24 8×10.5; L1/L2 CD54 |
+| SS34 ×2 needed | D8, D9 (input ORing) and D11 (MP1584 catch) are fitted; the fourth is a spare |
+
+**Still to buy before the board will regulate** (₹100–200 total):
+
+1. **10 kΩ 1 % resistor** — R47, the AP62300 feedback bottom leg.
+2. **Ceramics**: 10 µF (C39, AP62300 input), 2 × 22 µF (C40/C41, 3V3 output), 10 µF (C42, LP5907
+   output), plus the 10 µF ×2 the design already assumed for C25/C30.
+3. **An active 25 MHz 3.3 V XO** for Y1 (4-pin — the HC49/US part is not it), unless you build the
+   Pierce oscillator instead.
+
+And one decision that is yours: the **470 µF input bulk is a 16 V part on a 12 V rail** (1.33×
+derating, where 35 V was specified). Fine on a bench supply that never exceeds 12 V.

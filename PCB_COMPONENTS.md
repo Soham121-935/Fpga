@@ -53,24 +53,24 @@ detail a schematic and layout need.
 | U1 | LFE5U-12F-6TG144C | `Package_QFP:LQFP-144_20x20mm_P0.5mm` | 0.5 mm pitch, no exposed pad. Verify the courtyard against the datasheet's 22 × 22 mm body |
 | U2, U3 | W25Q64JVSSIQ | `Package_SO:SOIC-8_5.23x5.23mm_P1.27mm` | 208 mil body |
 | U4 | CH340G | `Package_SO:SOIC-16_3.9x9.9mm_P1.27mm` | 150 mil body. Needs Y2 + C36/C37 (below) |
-| U5 | LM2596S-3.3 | `Package_TO_SOT_SMD:TO-263-5_TabPin3` | tab = pin 3 (GND); the tab is the heatsink, pour copper under it |
+| U5 | AP62300TWU-7 | `Package_TO_SOT_SMD:SOT-23-6` | TSOT-26. **Synchronous** buck — no catch diode. Needs C38 100 nF on `BST`, the R46/R47 feedback divider and the C39/C40/C41 ceramics |
 | U6 | MP1584EN-LF-Z | `Package_SO:SOIC-8-1EP_3.9x4.9mm_P1.27mm_EP2.41x3.3mm` ⚠ | exposed pad = GND. **Check the pad size against the MP1584 datasheet** — some SOIC-8E parts use a 2.4 × 3.3 mm pad, others 3.3 × 2.4 mm |
-| U7 | AMS1117-2.5 | `Package_TO_SOT_SMD:SOT-223-3_TabPin2` | tab = pin 2 (VOUT) |
+| U7 | LP5907MFX-2.5 | `Package_TO_SOT_SMD:SOT-23-5` | 1 IN, 2 GND, 3 EN, 4 NC, 5 OUT. Wants a **low-ESR ceramic** output cap (C42 10 µF) |
 | U8 | USBLC6-2SC6 | `Package_TO_SOT_SMD:SOT-23-6` | |
 | Y1 | **active** 25 MHz XO (4-pad: VCC, GND, OUT, EN) | `Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm` | 5 × 7 mm type: `Oscillator_SMD_Abracon_ASV-4Pin_7.0x5.1mm`. ⚠ a 2-pin HC49/US crystal does **not** fit this and cannot clock the FPGA (§10 correction 5) |
 | Y2 | 12 MHz crystal (CH340G only) | `Crystal:Crystal_HC49-4H_Vertical` (through-hole, 4.88 mm lead spacing) or `Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm` (2-pin SMD) | must be **12 MHz** — `XI` accepts 11.98–12.02 MHz only, so no other value works. Pick the one you buy; omit Y2, C36, C37 with a CH340C |
-| Q1, Q2, Q3, Q4 | 2N7002 / BC817 / AO3401 / BC807 | `Package_TO_SOT_SMD:SOT-23` | pin 1 = gate/base on all four |
+| Q1, Q2, Q4 | 2N7002 / MMBT3904 / MMBT3906 | `Package_TO_SOT_SMD:SOT-23` | the bought MMBT pair replaces BC817/BC807 — same pinout. **Q3 is not fitted** (the LP5907 EN pin sequences the rail) |
 | D1–D7 | LED 0603 | `LED_SMD:LED_0603_1608Metric` | cathode on the marked end — orientation matters (§4.9) |
-| D8–D11 | SS34 (SMA) | `Diode_SMD:D_SMA` | pin 1 = cathode (band) |
-| R1–R42 | 0603 resistors | `Resistor_SMD:R_0603_1608Metric` | 1 %, 0.1 W |
+| D8, D9, D11 | SS34 (SMA) | `Diode_SMD:D_SMA` | pin 1 = cathode (band). **D10 is not fitted** — the AP62300 is synchronous |
+| R1–R49 (R42 not fitted) | resistors, package per reference | `R_0603_1608Metric`, `R_0805_2012Metric`, `R_1206_3216Metric`, `R_0402_1005Metric` | from the cart: **R38 = 0402**; **R9–R12, R31, R33, R34, R39, R46, R47, R49 = 1206**; **R2, R3, R4, R27–R30, R36, R37 = 0805**; everything else 0603 |
 | C1–C20, C26–C29, C31–C33 + the 100 nF companions | 0603 ceramic | `Capacitor_SMD:C_0603_1608Metric` | X7R, 16 V or 25 V |
-| C25, C30 | 0805 ceramic | `Capacitor_SMD:C_0805_2012Metric` | 10 µF: 25 V X7R (a 10 µF/16 V 0805 is fine on 3V3, marginal on VM_IN) |
-| C21 | 100 µF / 10 V electrolytic | `Capacitor_SMD:CP_Elec_6.3x5.4` ⚠ | verify against the can you buy; 6.3 × 5.4 mm is the common 100 µF/10 V size |
-| C22 | 22 µF / 10 V electrolytic | `Capacitor_SMD:CP_Elec_5x5.4` ⚠ | |
-| C23 | 470 µF / 35 V electrolytic | `Capacitor_SMD:CP_Elec_10x10.2` ⚠ | 10 mm can; **35 V minimum**, this sits on VM_IN |
-| C24 | 220 µF / 16 V electrolytic | `Capacitor_SMD:CP_Elec_8x6.9` ⚠ | |
-| L1 | 33 µH / 3 A shielded | `Inductor_SMD:L_Bourns_SRR1260` or generic 8 × 8 mm ⚠ | pick from the inductor you buy; keep the footprint's pad spacing |
-| L2 | 10 µH / 3 A shielded | generic 6 × 6 mm shielded ⚠ | same |
+| C25, C30, C39, C42 | 0805 ceramic | `Capacitor_SMD:C_0805_2012Metric` | **10 µF each, not bought yet**: C25 on 3V3, C30 on the LP5907 input, C39 on the AP62300 input, C42 on 2V5 |
+| C21 | 100 µF / 25 V **tantalum, D case** | `Capacitor_Tantalum_SMD:CP_EIA-7343-31_Kemet-D` | the cart's D-case tantalum; mind the polarity bar |
+| C22 | 22 µF / 63 V electrolytic | `Capacitor_SMD:CP_Elec_6.3x5.4` | D6.3 × L5.4 mm can from the cart |
+| C23 | 470 µF electrolytic | `Capacitor_SMD:CP_Elec_8x10.5` | D8 × L10.5 mm. ⚠ the bought part is **16 V** on a 12 V rail (1.33×) — see §10 correction 7 |
+| C24 | 220 µF **hybrid** electrolytic | `Capacitor_SMD:CP_Elec_8x10.5` | D8 × L10.5 mm; hybrid polymer is better for ripple |
+| L1 | **10 µH**, ≥ 1.5 A shielded | `Inductor_SMD:L_Sunlord_SWPA6045S` (CD54, 5.8 × 5.2 mm) | AP62300 3V3 inductor — 10 µH gives 0.32 A ripple, safer than the datasheet's 3.3 µH |
+| L2 | **10 µH**, ≥ 1.5 A shielded | `Inductor_SMD:L_Sunlord_SWPA6045S` (CD54) | MP1584 1V1 inductor; the two 33 µH CD54 parts are spares |
 | FB1 | ferrite bead 0603 | `Inductor_SMD:L_0603_1608Metric` | 600 Ω @ 100 MHz, ≥ 500 mA |
 | SW1, SW2 | 6 × 6 mm tactile | `Button_Switch_THT:SW_PUSH_6mm` | through-hole for strength; fits the 6 × 6 mm body |
 | J1, J5, J6, J10 | 1×10 / 1×6 / 1×4 headers | `Connector_PinHeader_2.54mm:PinHeader_1xNN_P2.54mm_Vertical` | J6 is keyed — add the keying notch or use a shrouded header |
@@ -95,19 +95,19 @@ detail a schematic and layout need.
 | U3 | W25Q64JVSSIQ | identical part; holds **firmware images** (slot A at 0x000000, slot B at 0x008000 — 32 KB each). A W25Q32/W25Q16 is already enough | SOIC-8, 208 mil | 1 | as U2 |
 | U4 | **CH340G** | USB 2.0 full-speed ↔ UART bridge, 3.3 V operation (V3 tied to VCC at 3.3 V), up to 2 Mbps. **Requires a 12 MHz crystal (Y2) + 22 pF load caps (C36/C37)** — the G has no internal clock. Pin 13 is DTR# (used for auto-reconfigure); R232 (15) has an internal pull-down; CTS/DSR/RI/DCD/RTS are unused | SOP-16, 150 mil | 1 | iFutureTech · Hubtronics · Robu |
 | Y2 | 12 MHz crystal | 12 MHz quartz, CL 12–20 pF, ESR ≤ 60 Ω, 2-pin passive — oscillated by the CH340G's internal inverter | HC49/US or 3225 SMD | 1 | Robu / Zbotic ₹15–25 |
-| U5 | LM2596S-3.3 | buck, **3.3 V fixed**, VIN 4.5–40 V, 3 A, 150 kHz, non-synchronous, ON/OFF < 1.3 V = on | TO-263-5 (tab = GND) | 1 | Robu ₹51 (XBLW) / ₹61 (Slkor) |
+| U5 | **AP62300TWU-7** | Synchronous buck, 4.2–18 V in, 0.8–7 V out at 3 A, 750 kHz, 155 µA quiescent, no catch diode. **0.763 V reference** (T variant) ⇒ R46 33 kΩ / R47 10 kΩ = **3.28 V**. `EN` is a **6 V pin** ⇒ R48/R49 divider from VM_IN | TSOT-26 | 1 | bought (DigiKey) |
 | U6 | MP1584EN-LF-Z | buck, adjustable 0.8–20 V, VIN 4.5–28 V, 3 A, 100 kHz–1.5 MHz, 0.8 V reference, non-synchronous, EN threshold 1.2 V falling / 1.5 V rising, 1.5 µA internal EN pull-up | SOIC-8E (EP = GND) | 1 | Hubtronics ₹47 · Sunrom |
-| U7 | AMS1117-2.5 | LDO, 2.5 V fixed, 1 A, dropout ≈ 1.3 V, requires ≥ 10 µF at the output for stability | SOT-223 (tab = VOUT) | 1 | Robu / QuartzComponents ₹12–20 |
+| U7 | **LP5907MFX-2.5** | LDO, 2.2–5.5 V in, 250 mA, 2.5 V fixed, low noise. **EN ≥ 1.2 V to enable** (1 MΩ internal pull-down), so the 2V5 delay is an RC on EN: R43 100 kΩ from 3V3 + C32 470 nF to GND ⇒ **≈21 ms** | SOT-23-5 | 1 | bought (DigiKey) |
 | U8 | USBLC6-2SC6 | USB ESD protection: 2 data-line channels + VBUS clamp, 6 V standoff, < 1 nF line capacitance | SOT-23-6 | 1 | Sunrom ₹30 · DNA Tech ₹32 |
 | Y1 | YIC OSC25M-3.3I/S3-25T | 25.000 MHz XO, 3.3 V CMOS, ±25 ppm (UART tolerance needs ±2 %), enable pin, 15 pF drive | 3.2 × 2.5 mm 4-pad | 1 | digikey.in ₹111 · 5 × 7 mm equivalents on Amazon.in/eBay.in |
 | Q1 | 2N7002 | N-MOSFET 60 V / 115 mA, Vgs(th) 2.5 V max — pulls PROGRAMN low from the host's DTR | SOT-23 | 1 | Robu ₹5 |
 | Q2 | BC817 | NPN 45 V / 500 mA — drives the DONE LED | SOT-23 | 1 | ₹2 |
-| Q3 | AO3401 | P-MOSFET −30 V / −4 A, Rds(on) 60 mΩ — load switch that delays the 2.5 V LDO | SOT-23 | 1 | ₹8 |
+| Q3 | ~~AO3401~~ | **not fitted** in revision 1.2 — the LP5907 EN pin replaced the P-FET load switch | — | 0 | — |
 | Q4 | BC807 | PNP 45 V / 500 mA — drives the INITN LED | SOT-23 | 1 | ₹2 |
 | D1–D5 | LED green 0603 | Vf ≈ 2.0 V @ 5 mA, 20 mA max | 0603 | 5 | ₹1–2 |
 | D6, D7 | LED red 0603 | Vf ≈ 1.9 V; D6 is **DNP by default** | 0603 | 2 | ₹1–2 |
 | D8, D9 | SS34 | Schottky 40 V / 3 A, Vf ≈ 0.5 V — input ORing between the barrel jack and USB | SMA | 2 | ₹3 |
-| D10 | SS34 | catch diode for the 3V3 LM2596 (obligatory, non-synchronous) | SMA | 1 | ₹3 |
+| D10 | ~~SS34~~ | **not fitted** — synchronous 3V3 rail. Keep the bought SS34 as a spare | — | 0 | bought |
 | D11 | SS34 | catch diode for the 1V1 MP1584 | SMA | 1 | ₹3 |
 | — | SN74LVC1T45 (optional) | level shifter for a 5 V adapter on J10 | SOT-23-6 | 0 | only if needed |
 
@@ -139,8 +139,8 @@ detail a schematic and layout need.
 | R39 | **33 kΩ** | U6 FB → GND | feedback divider bottom — must stay **below 40 kΩ** (§10 correction 2) |
 | R40 | 100 kΩ | U6 FREQ → GND | switching frequency: the MP1584 datasheet's table gives **900 kHz at 100 kΩ** (formula R = 180000 / f^1.1, R in kΩ, f in kHz) |
 | R41 | 100 kΩ | VM_IN → U6 EN, with C31 to GND | sequencing delay, τ = 47 ms |
-| R42 | **1 MΩ** | Q3 gate → **GND** | turns Q3 on; with C32 this is the 2V5 delay (§10 correction 4) |
-| **R43** | **100 kΩ** | Q3 gate → Q3 source | Vgs clamp: −10.9 V at VM_IN = 12 V, inside the ±12 V rating (§10 correction 4) |
+| R42 | ~~1 MΩ~~ | **not fitted** — deleted with Q3 | — | 0 | — |
+| R43 | **100 kΩ** | 3V3 → LP5907 `EN`, the pull-up half of the 2V5 delay (with C32) | 0603 | 1 | bought (0.1 %) |
 
 ### 3.3 Capacitors
 
@@ -150,25 +150,25 @@ detail a schematic and layout need.
 | C2–C7 | 100 nF ×6 | 0603 | VCC decoupling, one per pin: **20, 29, 38, 66, 83, 130** |
 | C8–C11 | 100 nF ×4 | 0603 | VCCAUX decoupling: pins **17, 53, 96, 132** |
 | C12–C20 | 100 nF ×9 | 0603 | VCCIO decoupling: pins **9, 16, 36, 43, 70, 86, 100, 122, 137** |
-| C21 | 100 µF / 10 V electrolytic + 100 nF | 6.3 × 5.4 + 0603 | 1V1 bulk |
-| C22 | 22 µF / 10 V electrolytic + 100 nF | 5 × 5 + 0603 | 2V5 bulk |
-| C23 | 470 µF / **35 V** electrolytic + 100 nF | 10 × 10 + 0603 | LM2596 input bulk (datasheet value for this input range) |
-| C24 | 220 µF / 16 V electrolytic + 100 nF | 8 × 6.9 + 0603 | LM2596 output bulk on 3V3 |
+| C21 | 100 µF / 25 V tantalum (D case) + 100 nF | D case + 0603 | 1V1 bulk |
+| C22 | 22 µF / 63 V electrolytic + 100 nF | 6.3 × 5.4 + 0603 | 2V5 bulk — the LP5907's *stability* cap is C42, low-ESR ceramic |
+| C23 | 470 µF / **16 V** electrolytic + 100 nF | 8 × 10.5 + 0603 | AP62300 input bulk (the datasheet wants 10 µF ceramic, hence C39). ⚠ 16 V on a 12 V rail = 1.33× derating |
+| C24 | 220 µF hybrid + 100 nF | 8 × 10.5 + 0603 | 3V3 output bulk |
 | C25 | 10 µF | 0805 | 3V3 bulk near banks 0/1/6/7 |
 | C26 | 100 nF | 0603 | Y1 decoupling |
 | C27 | 100 nF | 0603 | CH340C decoupling (plus the 100 nF on V3) |
 | C28, C29 | 100 nF | 0603 | U2, U3 decoupling |
-| C30 | 10 µF in + 10 µF out | 0805 ×2 | AMS1117 input/output — it needs ≥ 10 µF; bench-check for ringing (OQ-B10) |
+| C30 | 10 µF | 0805 | LP5907 **input** cap (U7 runs from 3V3) — 3V3-local bypass |
 | C31 | 470 nF | 0603 | U6 EN delay with R41 (47 ms time constant) |
-| C32 | **4.7 µF** | 0805 | Q3 gate→**source** delay with R42/R43: τ = 91 kΩ × 4.7 µF ≈ 428 ms → ≈54 ms to threshold at 12 V |
-| C33 | 100 nF | 0603 | U6 bootstrap, `BST` → `SW` |
+| C32 | **470 nF** | LP5907 `EN` → GND: τ = 100 kΩ × 470 nF = 47 ms ⇒ **≈21 ms** to the 1.2 V enable threshold | 0603 | 1 | bought |
+| C33 | 100 nF | 0603 | MP1584 bootstrap (`BST`). The AP62300 has its own: **C38** |
 
 ### 3.4 Inductors and filtering
 
 | Ref | Value | Specification | Package | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| L1 | 33 µH | ≥ 3 A saturation, shielded, low DCR | 8 × 8 mm | LM2596 3V3 inductor (datasheet value for 3.3 V fixed) |
-| L2 | 10 µH | ≥ 3 A saturation, shielded | 6 × 6 mm | MP1584 1V1 inductor |
+| L1 | 10 µH | ≥ 1.5 A saturation, shielded | CD54 (5.8 × 5.2) | AP62300 3V3 inductor |
+| L2 | 10 µH | ≥ 1.5 A saturation, shielded | CD54 | MP1584 1V1 inductor |
 | FB1 | 600 Ω @ 100 MHz | ≥ 500 mA, 0603 | 0603 | VM_IN filtering ahead of the regulators |
 
 ### 3.5 Connectors, switches and test points
@@ -257,6 +257,20 @@ actually constrains, generated from the LPF.
 | 7 `/HOLD` | R18 10 kΩ → 3V3 |
 | 8 `VCC` | 3V3 + C29 100 nF |
 
+**Added in revision 1.2** — the AP62300 and the LP5907 need these; buy the four marked:
+
+| Ref | Value | Size | Qty | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| R46 | 33 kΩ (1 %) | 1206 | 1 | AP62300 feedback, top (the datasheet's 33.2 kΩ for the T reference; 33 kΩ gives 3.28 V) |
+| R47 | **10 kΩ (1 %)** — *to buy* | 1206 | 1 | AP62300 feedback, bottom |
+| R48 | 100 kΩ | 0603 | 1 | AP62300 `EN` divider, top — `EN` is a 6 V pin, never tie it to 12 V |
+| R49 | 33 kΩ | 1206 | 1 | AP62300 `EN` divider, bottom (3.0 V at 12 V in, 1.7 V at 7 V in) |
+| C38 | 100 nF | 0603 | 1 | AP62300 bootstrap (`BST` → `SW`) |
+| C39 | 10 µF X5R/X7R 25 V — *to buy* | 0805/1206 | 1 | AP62300 input ceramic (the datasheet value) |
+| C40, C41 | 22 µF X5R 25 V — *to buy* | 1206 | 2 | AP62300 output ceramics (the datasheet value) |
+| C42 | 10 µF X5R 25 V — *to buy* | 0805 | 1 | LP5907 output — it is only stable into a **low-ESR** cap |
+
+
 ### 4.4 U4 — CH340G USB–UART bridge (pin numbers from the WCH datasheet)
 
 | U4 pin | Name | Net |
@@ -288,17 +302,21 @@ you would rather use an active part, the same datasheet says: *"When using an ex
 feed the clock signal into XI pin, and leave XO pin unconnected."* An active 12 MHz 3.3 V XO into
 `XI` with `XO` open also works — it simply costs more than a ₹20 crystal.
 
-### 4.5 U5 — LM2596S-3.3 (3V3 rail, from VM_IN)
+### 4.5 U5 — AP62300TWU-7 (3V3 rail, from VM_IN)
+
+TSOT-26: **1 GND, 2 SW, 3 VIN, 4 FB, 5 EN, 6 BST**.
 
 | U5 pin | Name | Connection |
 | ---: | :--- | :--- |
-| 1 | `VIN` | `VM_IN` after FB1, with C23 470 µF and 100 nF to GND |
-| 2 | `OUT` | switch node: L1 33 µH → `3V3`; D10 cathode here (anode → GND) |
-| 3 | `GND` (tab) | GND — copper pour under the tab |
-| 4 | `FB` | **`3V3`** — the fixed 3.3 V version senses its own output here (TI SNVS124: the FB pin is "removed from output" only in the force-on/force-off test procedures) |
-| 5 | `ON/OFF` | GND (always enabled; < 1.3 V = on) |
+| 1 | `GND` | GND |
+| 2 | `SW` | switch node: L1 10 µH → `3V3`; C38 100 nF → `BST` |
+| 3 | `VIN` | `VM_IN` after FB1, with C23 470 µF, C39 10 µF and 100 nF to GND |
+| 4 | `FB` | divider from `3V3`: R46 33 kΩ top, R47 10 kΩ bottom ⇒ 0.763 × 4.3 = **3.28 V** |
+| 5 | `EN` | divider from `VM_IN`: R48 100 kΩ top, R49 33 kΩ bottom ⇒ 3.0 V at 12 V, 1.7 V at 7 V. **Never tie this pin to VM_IN** — absolute maximum 6 V |
+| 6 | `BST` | C38 100 nF → `SW` |
 
-Output side: C24 220 µF + 100 nF on `3V3`.
+Output side: C24 220 µF hybrid + C40/C41 22 µF ceramics + C25 10 µF. No catch diode — the
+low-side FET is inside the chip (that is why D10 is not fitted).
 
 ### 4.6 U6 — MP1584EN (1V1 rail, from VM_IN)
 
@@ -316,16 +334,20 @@ Output side: C24 220 µF + 100 nF on `3V3`.
 Output side: C21 100 µF + 100 nF on `1V1`. **Measure this rail before fitting U1** (`BOARD.md` §10
 step 2).
 
-### 4.7 U7 and Q3 — the delayed 2V5 rail
+### 4.7 U7 — LP5907MFX-2.5, the delayed 2V5 rail
 
-| Device | Pin | Connection |
-| :--- | :--- | :--- |
-| Q3 (AO3401) | S | `VM_IN` (the AMS1117 needs ≥ 3.8 V in for 2.5 V out, so this section cannot run from 3V3) |
-| | G | R42 1 MΩ → GND, C32 4.7 µF → S (source), **R43 100 kΩ** → S as the Vgs clamp |
-| | D | U7 `VIN` |
-| U7 (AMS1117-2.5) | 1 `GND` | GND |
-| | 2 `VOUT` (tab) | `2V5` + C22 22 µF + 100 nF |
-| | 3 `VIN` | Q3 drain + C30 10 µF to GND |
+SOT-23-5: **1 IN, 2 GND, 3 EN, 4 NC, 5 OUT**. Fed from 3V3 (input range 2.2–5.5 V), so there is no
+P-FET load switch any more — the enable pin does the sequencing.
+
+| U7 pin | Name | Connection |
+| ---: | :--- | :--- |
+| 1 | `IN` | `3V3`, with C30 10 µF to GND |
+| 2 | `GND` | GND |
+| 3 | `EN` | R43 100 kΩ → 3V3, C32 470 nF → GND ⇒ ≈21 ms after 3V3 (threshold 1.2 V) |
+| 4 | `NC` | not connected |
+| 5 | `OUT` | `2V5` with C42 10 µF **low-ESR ceramic** (mandatory) + C22 22 µF bulk + 4 × 100 nF |
+
+Rail order: 3V3 → 1V1 (≈13 ms) → 2V5 (≈21 ms after 3V3) → FPGA POR.
 
 ### 4.8 U8 — USB ESD protection ⚠ (confirm pin numbers against the ST datasheet)
 
@@ -505,7 +527,7 @@ generated from `constraints/ecp5_144tqfp.lpf`, and the connections come from the
 `BOARD.md` §7. The transistor and diode pin conventions, the flash pinouts and the oscillator pinout are
 standard for those packages.
 
-**Five corrections found while writing this document — apply them to the schematic (all four are now
+**Seven corrections found while writing this document — apply them to the schematic (all four are now
 also recorded in `BOARD.md`):**
 
 1. **`U5` pin 4 (`FB`) must be connected to `3V3`.** The earlier sheet shows only VIN, OUT, GND and
@@ -544,6 +566,17 @@ also recorded in `BOARD.md`):**
      1 MΩ feedback, 2 × ~22 pF load caps (match the crystal's CL), optional 470 Ω series to the clock
      pin. It works at 25 MHz but adds three parts, needs a clean layout, and is a bring-up risk — only
      do it if the active part cannot be sourced.
+
+6. **The power tree is the revision-1.0 one, and the cart bought it**: U5 is an **AP62300TWU-7**
+   (synchronous buck, TSOT-26 — better than the LM2596S-3.3 the India revision substituted) and U7 is
+   an **LP5907MFX-2.5** (SOT-23-5; its `EN` pin deletes Q3/R42). The board file now carries both.
+   Still to buy for them: a **10 kΩ 1 %** resistor (R47) and six ceramics (10 µF for C39, 22 µF for
+   C40/C41, 10 µF for C42, plus the two 10 µF the design already assumed for C25/C30). The board will
+   not regulate properly without them — the AP62300's numbers assume ceramics, and the LP5907 is only
+   stable into a low-ESR output capacitor.
+7. **The 470 µF input bulk (C23) is a 16 V part on a rail the jack allows to reach 12 V** — 1.33×
+   derating where a 35 V part was specified. Fine on a bench supply held at 12 V; use 25–35 V if you
+   can still change the order.
 
 **Rows marked ⚠ need your datasheet, not mine:** the MP1584 exposed-pad size, the electrolytic can sizes,
 the inductor footprints, the USB-C receptacle and barrel-jack footprints (they vary by the exact part you
