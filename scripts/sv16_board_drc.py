@@ -344,7 +344,7 @@ def load_board(path=BOARD_FILE):
 
     tracks = []
     for match in re.finditer(r'\(segment \(start (-?[\d.]+) (-?[\d.]+)\) \(end (-?[\d.]+) (-?[\d.]+)\)'
-                             r' \(width ([\d.]+)\) \(layer "([^"]+)"\)(?P<rest>[^)\n]*)', text):
+                             r' \(width ([\d.]+)\) \(layer "([^"]+)"\)(?P<rest>[^\n]*)', text):
         net = re.search(r'\(net (\d+)\)', match.group("rest"))
         start = (float(match.group(1)), float(match.group(2)))
         end = (float(match.group(3)), float(match.group(4)))
@@ -357,7 +357,7 @@ def load_board(path=BOARD_FILE):
                                       layers=(match.group(6),), a=start, b=end)})
     vias = []
     for match in re.finditer(r'\(via \(at (-?[\d.]+) (-?[\d.]+)\) \(size ([\d.]+)\) \(drill ([\d.]+)\)'
-                             r' \(layers ([^)]*)\)(?P<rest>[^)\n]*)', text):
+                             r' \(layers ([^)]*)\)(?P<rest>[^\n]*)', text):
         net = re.search(r'\(net (\d+)\)', match.group("rest"))
         size = float(match.group(3))
         vias.append({"x": float(match.group(1)), "y": float(match.group(2)),

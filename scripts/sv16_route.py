@@ -124,6 +124,7 @@ class Board:
         self.new_tracks, self.new_vias = [], []
         self.notes = []
         self.done_nets = set()
+        self.locked_tracks, self.locked_vias = set(), set()
 
     # ---- helpers -----------------------------------------------------------
     def class_of(self, net):
@@ -135,18 +136,26 @@ class Board:
     def clearance(self, net_a, net_b):
         return clearance_for(net_a, net_b)
 
-    def add_track(self, a, b, width, layer, net):
+    def add_track(self, a, b, width, layer, net, lock=False):
         geom = LineString([a, b]).buffer(width / 2.0, cap_style=1, quad_segs=8)
         item = Item("track", geom, net, (layer,), width)
+        item.locked = lock
         self.items.append(item)
-        self.new_tracks.append((a, b, width, layer, net))
+        entry = (a, b, width, layer, net)
+        self.new_tracks.append(entry)
+        if lock:
+            self.locked_tracks.add(entry)
         return item
 
-    def add_via(self, x, y, size, drill, net):
+    def add_via(self, x, y, size, drill, net, lock=False):
         geom = Point(x, y).buffer(size / 2.0, quad_segs=24)
         item = Item("via", geom, net, LAYERS, size)
+        item.locked = lock
         self.items.append(item)
-        self.new_vias.append((x, y, size, drill, net))
+        entry = (x, y, size, drill, net)
+        self.new_vias.append(entry)
+        if lock:
+            self.locked_vias.add(entry)
         return item
 
     @staticmethod
@@ -430,8 +439,8 @@ def fanout_u1(board, verbose=True):
             if not (EDGE < vx < BOARD_W - EDGE and EDGE < vy < BOARD_H - EDGE):
                 board.notes.append("fan-out off board: U1.%s" % item.pad)
                 continue
-            board.add_track((cx, cy), (vx, vy), FANOUT_STUB, "F.Cu", item.net)
-            via = board.add_via(vx, vy, FANOUT_VIA[0], FANOUT_VIA[1], item.net)
+            board.add_track((cx, cy), (vx, vy), FANOUT_STUB, "F.Cu", item.net, lock=True)
+            via = board.add_via(vx, vy, FANOUT_VIA[0], FANOUT_VIA[1], item.net, lock=True)
             item.via = (vx, vy)
             made += 1
     if verbose:
@@ -467,8 +476,9 @@ def escape_plane_pads(board, verbose=True):
                 missed += 1
                 board.notes.append("no escape via for %s.%s (%s)" % (item.ref, item.pad, net))
                 continue
-            board.add_track((cx, cy), spot, min(0.30, board.width_of(net)), "F.Cu", net)
-            board.add_via(spot[0], spot[1], ESCAPE_VIA[0], ESCAPE_VIA[1], net)
+            board.add_track((cx, cy), spot, min(0.30, board.width_of(net)), "F.Cu", net,
+                            lock=True)
+            board.add_via(spot[0], spot[1], ESCAPE_VIA[0], ESCAPE_VIA[1], net, lock=True)
             item.via = spot
             made += 1
     if verbose:
@@ -942,10 +952,15 @@ def rip_copper(board, net):
     Pads stay - they are the pins - and pours stay, they are geometry derived
     from the pins, but every track and via this net owns is lifted.
     """
-    board.new_tracks = [x for x in board.new_tracks if x[4] != net]
-    board.new_vias = [x for x in board.new_vias if x[4] != net]
+    # a fan-out stub or escape via is a pin's only way off the chip: lifting it
+    # strands the pin, so locked copper survives the rip
+    board.new_tracks = [x for x in board.new_tracks
+                        if x[4] != net or x in board.locked_tracks]
+    board.new_vias = [x for x in board.new_vias
+                      if x[4] != net or x in board.locked_vias]
     board.items = [item for item in board.items
-                   if item.net != net or item.kind in ("pad", "zone")]
+                   if item.net != net or item.kind in ("pad", "zone")
+                   or getattr(item, "locked", False)]
 
 
 def rip_blockers(board, net, node_a, node_b, corridor=1.0, limit=6):
@@ -962,6 +977,8 @@ def rip_blockers(board, net, node_a, node_b, corridor=1.0, limit=6):
     for item in board.items:
         if item.net == net or item.net is None or item.kind not in ("track", "via"):
             continue
+        if item.net in PLANE_NETS or getattr(item, "locked", False):
+            continue      # supply nets are poured and fanned out; leave them
         if item.geom.intersects(line) and item.net not in victims:
             victims.append(item.net)
     if len(victims) > limit:
