@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import math
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -437,6 +438,12 @@ def usb_c_16():
 
 
 def pin_header(rows: int, cols: int, pitch: float = 2.54):
+    """Through-hole header.  The pad shrinks with the pitch: 1.7 mm at 2.54 mm,
+    1.5 mm at 2.00 mm, 0.85 mm at 1.27 mm - a 1.7 mm pad on a 1.27 mm pitch
+    would touch its neighbour and cannot be made."""
+    pad = min(1.7, round(pitch * 0.67, 2))
+    drill = min(1.0, round(pad * 0.6, 2))
+
     def build():
         pads = []
         number = 1
@@ -444,8 +451,8 @@ def pin_header(rows: int, cols: int, pitch: float = 2.54):
             for col in range(cols):
                 y = (cols - 1) * pitch / 2 - col * pitch
                 x = -(rows - 1) * pitch / 2 + row * pitch if rows > 1 else 0.0
-                pads.append(circle(number, x, y, 1.7, kind="thru_hole",
-                                   layers='"*.Cu" "*.Mask"', drill=1.0))
+                pads.append(circle(number, x, y, pad, kind="thru_hole",
+                                   layers='"*.Cu" "*.Mask"', drill=drill))
                 number += 1
         return pads
     return build
@@ -486,7 +493,7 @@ COMPONENTS: list[tuple] = [
     ("U4", "Package_SO:SOIC-16_3.9x9.9mm_P1.27mm", soic(16, 1.27, 6.0, 2.0, 0.6), "CH340G", "usb"),
     ("U5", "Package_TO_SOT_SMD:SOT-23-6", sot23_6(), "AP62300TWU-7", "power"),
     ("U6", "Package_SO:SOIC-8-1EP_3.9x4.9mm_P1.27mm_EP2.41x3.3mm",
-     soic(8, 1.27, 5.4, 2.0, 0.6, ep=(3.3, 2.41)), "MP1584EN", "power"),
+     soic(8, 1.27, 5.4, 2.0, 0.6, ep=(2.41, 3.3)), "MP1584EN", "power"),
     ("U7", "Package_TO_SOT_SMD:SOT-23-5", sot23_5(), "LP5907MFX-2.5", "power"),
     ("U8", "Package_TO_SOT_SMD:SOT-23-6", sot23_6(), "USBLC6-2SC6", "usb"),
     ("Y1", "Oscillator:Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm", osc3225(),
@@ -627,7 +634,10 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     "U3": (78, 52, 0), "C29": (78, 57, 0), "R16": (74, 46, 0), "R17": (74, 49, 0), "R18": (74, 55, 0),
     # USB and console - bottom right
     "J8": (90, 88, 0), "U8": (83, 88, 0), "U4": (74, 84, 0), "C27": (70, 88, 0),
-    "C34": (70, 84, 0), "R36": (88, 82, 0), "R37": (91, 82, 0),
+    "C34": (70, 84, 0),
+    # the two USB-C CC pull-downs sit under the connector: the strip between
+    # J7's last pad row and J8's shell pads is 1.85 mm and an 0805 needs 1.9 mm
+    "R36": (86, 93.5, 0), "R37": (89, 93.5, 0),
     "Y2": (70, 92, 0), "C36": (67, 92, 0), "C37": (73, 92, 0),
     "R21": (70, 79, 0), "R23": (73, 79, 0), "R22": (66, 76, 0), "R24": (69, 76, 0),
     "J10": (62, 88, 0),
@@ -640,7 +650,7 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     "Q2": (26, 80, 0), "R32": (23, 80, 0), "D1": (29, 80, 0), "R33": (32, 80, 0),
     "Q4": (6, 80, 0), "R31": (9, 80, 0), "D6": (12, 80, 0), "R34": (15, 80, 0),
     "D7": (36, 74, 0), "R44": (39, 74, 0), "FID1": (8, 20, 0), "FID2": (92, 14, 0),
-    "FID4": (92, 86, 0),
+    "FID4": (92.5, 93.75, 0),        # moved off the USB-C shell pads (J8)
     # LEDs and expansion - bottom
     "D2": (40, 88, 0), "D3": (43, 88, 0), "D4": (46, 88, 0), "D5": (49, 88, 0),
     "R27": (40, 85, 0), "R28": (43, 85, 0), "R29": (46, 85, 0), "R30": (49, 85, 0),
@@ -708,6 +718,54 @@ def copper_plan():
     return _COPPER
 
 
+ROUTING_FILE = OUT / "routing.json"
+
+
+def board_digest() -> str:
+    """A short fingerprint of everything the router has to lay copper against.
+
+    The routed tracks are only meaningful for the placement and the copper plan
+    they were laid on, so `routing.json` carries this digest and both the board
+    generator and the router's `--check` refuse a stale file.
+    """
+    import hashlib
+    h = hashlib.sha256()
+    for ref, (x, y, rot) in sorted(effective_placement().items()):
+        h.update(("P|%s|%.2f|%.2f|%g\n" % (ref, x, y, rot)).encode())
+    for ref, library, builder, value, group in COMPONENTS:
+        for pad in pads_of(builder):
+            h.update(("D|%s|%s|%.3f|%.3f|%.3f|%.3f|%s|%s\n"
+                      % (ref, pad["number"], pad["x"], pad["y"], pad["w"],
+                         pad["h"], pad["shape"], pad.get("kind", "smd"))).encode())
+    plan = copper_plan()
+    for via in plan.vias:
+        h.update(("V|%s|%.3f|%.3f|%.3f\n" % (via["net"], via["x"], via["y"], via["dia"])).encode())
+    for segment in plan.segments:
+        h.update(("S|%s|%s|%.3f|%.3f|%.3f|%.3f|%.2f\n"
+                  % (segment["net"], segment["layer"], segment["start"][0],
+                     segment["start"][1], segment["end"][0], segment["end"][1],
+                     segment["width"])).encode())
+    return h.hexdigest()[:16]
+
+
+_ROUTED = None
+
+
+def routed_copper():
+    """The signal routing (`routing.json`): (segments, vias, digest, stale)."""
+    global _ROUTED
+    if _ROUTED is None:
+        if ROUTING_FILE.exists():
+            import json
+            data = json.loads(ROUTING_FILE.read_text())
+            digest = data.get("board_digest", "")
+            _ROUTED = (data.get("segments", []), data.get("vias", []), digest,
+                       bool(digest) and digest != board_digest())
+        else:
+            _ROUTED = ([], [], "", False)
+    return _ROUTED
+
+
 MOVE_LEASH = 9.0            # mm a part may travel from its table position
 BOX_MARGIN = 0.55           # mm of courtyard around a footprint's pads
 BOX_GAP = 0.30              # mm the boxes must keep apart (= pad clearance + slack)
@@ -723,7 +781,6 @@ FIXED_REFS = {
 
 def rotate_point(x: float, y: float, degrees: float):
     """KiCad's footprint rotation, in file coordinates (y grows downwards)."""
-    import math
     t = math.radians(degrees)
     c, s = math.cos(t), math.sin(t)
     return (x * c + y * s, -x * s + y * c)
@@ -755,6 +812,81 @@ def _boxes(placement: dict) -> dict:
 def _overlaps(first, second) -> bool:
     return (first[0] < second[2] + BOX_GAP and second[0] < first[2] + BOX_GAP
             and first[1] < second[3] + BOX_GAP and second[1] < first[3] + BOX_GAP)
+
+
+PAD_CLEARANCE = 0.25        # mm that pads of different parts must keep apart
+
+
+def _pad_shape(entry):
+    """(x, y, w, h, is_circle) of a pad entry."""
+    return (entry[3], entry[4], entry[5], entry[6], entry[7] == "circle")
+
+
+def _shape_gap(first, second) -> float:
+    """Edge-to-edge gap between two (x, y, w, h, circle) shapes."""
+    ax, ay, aw, ah, acircle = first
+    bx, by, bw, bh, bcircle = second
+    if acircle and bcircle:
+        return math.hypot(ax - bx, ay - by) - (aw + bw) / 2.0
+    if acircle or bcircle:
+        x, y, r, other = (ax, ay, aw / 2.0, second) if acircle else (bx, by, bw / 2.0, first)
+        ox, oy, ow, oh, _ = other
+        dx = max(abs(x - ox) - ow / 2.0, 0.0)
+        dy = max(abs(y - oy) - oh / 2.0, 0.0)
+        return math.hypot(dx, dy) - r
+    dx = abs(ax - bx) - (aw + bw) / 2.0
+    dy = abs(ay - by) - (ah + bh) / 2.0
+    if dx <= 0 and dy <= 0:
+        return max(dx, dy)
+    return math.hypot(max(dx, 0.0), max(dy, 0.0))
+
+
+def pad_entries(placement: dict) -> list:
+    """Every pad on the board: (ref, number, net, x, y, w, h, kind)."""
+    nets_by_ref: dict = {}
+    for ref, pad, net in CONNECTIONS:
+        nets_by_ref.setdefault(ref, {})[str(pad)] = net
+    entries = []
+    for ref, library, builder, value, group in COMPONENTS:
+        if ref not in placement:
+            continue
+        x, y, rot = placement[ref]
+        for pad in pads_of(builder):
+            number = str(pad["number"])
+            if not number:
+                continue                       # mounting holes: no copper
+            dx, dy = rotate_point(pad["x"], pad["y"], rot)
+            w, h = pad["w"], pad["h"]
+            if round(rot) % 180 == 90:
+                w, h = h, w
+            entries.append((ref, number, nets_by_ref.get(ref, {}).get(number),
+                            x + dx, y + dy, w, h, pad["shape"]))
+    return entries
+
+
+def _pad_buckets(entries: list, cell: float = 4.0) -> dict:
+    buckets: dict = {}
+    for entry in entries:
+        x, y, w, h = entry[3:7]
+        for gy in range(int((y - h) / cell), int((y + h) / cell) + 1):
+            for gx in range(int((x - w) / cell), int((x + w) / cell) + 1):
+                buckets.setdefault((gx, gy), []).append(entry)
+    return buckets
+
+
+def _worst_pad_conflict(entries: list):
+    """The closest pair of pads that belong to different parts and nets."""
+    buckets = _pad_buckets(entries)
+    worst = None
+    for bucket in buckets.values():
+        for index, first in enumerate(bucket):
+            for second in bucket[index + 1:]:
+                if first[0] == second[0] or first[2] == second[2]:
+                    continue
+                gap = _shape_gap(_pad_shape(first), _pad_shape(second))
+                if worst is None or gap < worst[0]:
+                    worst = (gap, first, second)
+    return worst
 
 
 def effective_placement() -> dict:
@@ -805,6 +937,51 @@ def effective_placement() -> dict:
         if not clashed:
             break
 
+    # Second pass: the body boxes can be clear while individual pads still
+    # touch (a fiducial next to a USB shell, a resistor slid under a header).
+    # Parts that are not anchors are nudged to the best spot within 3 mm.
+    for _pass in range(40):
+        entries = pad_entries({ref: tuple(value) for ref, value in moved.items()})
+        worst = _worst_pad_conflict(entries)
+        if worst is None or worst[0] >= PAD_CLEARANCE - 1e-9:
+            break
+        gap, first, second = worst
+        if not movable[first[0]] and not movable[second[0]]:
+            break                              # two anchors: reported, not moved
+        ref = first[0] if movable[first[0]] else second[0]
+        x, y, rot = moved[ref]
+        others = [entry for entry in entries if entry[0] != ref]
+        buckets = _pad_buckets(others)
+        best = None
+        for dx in [i * 0.25 for i in range(-52, 53)]:
+            for dy in [i * 0.25 for i in range(-52, 53)]:
+                if abs(dx) + abs(dy) > 6.0:
+                    continue
+                cx, cy = x + dx, y + dy
+                ox, oy, _rot = PLACEMENT[ref]
+                if abs(cx - ox) > MOVE_LEASH or abs(cy - oy) > MOVE_LEASH:
+                    continue
+                if not (2.0 < cx < BOARD_W - 2.0 and 2.0 < cy < BOARD_H - 2.0):
+                    continue
+                mine = [_pad_shape(entry) for entry in entries if entry[0] == ref]
+                for shape in mine:
+                    shape = (shape[0] + dx, shape[1] + dy, shape[2], shape[3], shape[4])
+                    worst_here = 1e9
+                    for entry in others:
+                        worst_here = min(worst_here, _shape_gap(shape, _pad_shape(entry)))
+                    clear = worst_here >= PAD_CLEARANCE + 0.05
+                    # prefer the *nearest* legal spot: a part may only wander as
+                    # far as it must, which keeps the floorplan readable
+                    key = ((abs(dx) + abs(dy)) if clear else (100.0 - worst_here))
+                    if not clear:
+                        key += 1000.0
+                    if best is None or key < best[0] - 1e-9:
+                        best = (key, worst_here, dx, dy)
+        if best is None or best[1] <= gap + 1e-9:
+            break                              # nothing better: report it instead
+        moved[ref][0] = round(x + best[2], 2)
+        moved[ref][1] = round(y + best[3], 2)
+
     _EFFECTIVE = {ref: (round(x, 2), round(y, 2), rot)
                   for ref, (x, y, rot) in moved.items()}
     return _EFFECTIVE
@@ -814,35 +991,31 @@ _EFFECTIVE: dict | None = None
 
 
 def placement_conflicts(placement: dict | None = None) -> list:
-    """Pad-level overlaps that survive the repair pass, worst first."""
+    """Pad-level clearance problems that survive the repair pass, worst first.
+
+    Pads of different parts (and of different nets) must keep PAD_CLEARANCE
+    apart - that is 0.05 mm more than the copper clearance the router uses, so
+    a placement that passes here always leaves the router its room.
+    """
     placement = placement or effective_placement()
-    nets_by_ref: dict = {}
-    for ref, pad, net in CONNECTIONS:
-        nets_by_ref.setdefault(ref, {})[str(pad)] = net
-    entries = []
-    for ref, library, builder, value, group in COMPONENTS:
-        if ref not in placement:
-            continue
-        x, y, rot = placement[ref]
-        for pad in pads_of(builder):
-            number = str(pad["number"])
-            if not number:
-                continue
-            dx, dy = rotate_point(pad["x"], pad["y"], rot)
-            entries.append((ref, number, nets_by_ref.get(ref, {}).get(number),
-                            x + dx, y + dy, pad["w"], pad["h"]))
+    entries = pad_entries(placement)
+    buckets = _pad_buckets(entries)
     conflicts = []
-    for index, first in enumerate(entries):
-        for second in entries[index + 1:]:
-            if first[0] == second[0] or first[2] is None or second[2] is None \
-                    or first[2] == second[2]:
-                continue
-            gap_x = abs(first[3] - second[3]) - (first[5] + second[5]) / 2
-            gap_y = abs(first[4] - second[4]) - (first[6] + second[6]) / 2
-            if gap_x < 0.2 and gap_y < 0.2:
-                conflicts.append("%s.%s (%s) / %s.%s (%s): %.3f mm"
-                                 % (first[0], first[1], first[2], second[0],
-                                    second[1], second[2], max(gap_x, gap_y)))
+    seen = set()
+    for bucket in buckets.values():
+        for index, first in enumerate(bucket):
+            for second in bucket[index + 1:]:
+                if first[0] == second[0] or first[2] == second[2]:
+                    continue
+                key = (first[0], first[1], second[0], second[1])
+                if key in seen:
+                    continue
+                seen.add(key)
+                gap = _shape_gap(_pad_shape(first), _pad_shape(second))
+                if gap < PAD_CLEARANCE - 1e-9:
+                    conflicts.append("%s.%s (%s) / %s.%s (%s): %.3f mm"
+                                     % (first[0], first[1], first[2] or "no net",
+                                        second[0], second[1], second[2] or "no net", gap))
     return sorted(conflicts)
 
 
@@ -1009,6 +1182,21 @@ def build_board() -> str:
                      % (segment["start"][0], segment["start"][1], segment["end"][0],
                         segment["end"][1], segment["width"], segment["layer"],
                         net_number(segment["net"]), index))
+
+    # and the signal routing: every track and via the maze router laid, with a
+    # different uuid prefix so the two sets stay tellable apart
+    routed_segments, routed_vias, _digest, _stale = routed_copper()
+    for index, via in enumerate(routed_vias):
+        lines.append("  (via (at %.3f %.3f) (size %.2f) (drill %.2f) (layers \"F.Cu\" \"B.Cu\") "
+                     "(net %d) (uuid 5f16b0e0-0000-4000-8000-%012d))"
+                     % (via["x"], via["y"], via["size"], via["drill"],
+                        net_number(via["net"]), index))
+    for index, segment in enumerate(routed_segments):
+        lines.append("  (segment (start %.3f %.3f) (end %.3f %.3f) (width %.2f) "
+                     "(layer \"%s\") (net %d) (uuid 5f16b0f0-0000-4000-8000-%012d))"
+                     % (segment["start"][0], segment["start"][1], segment["end"][0],
+                        segment["end"][1], segment["width"], segment["layer"],
+                        net_number(segment["net"]), index))
     lines.append("")
 
     # connections grouped by reference
@@ -1122,16 +1310,29 @@ def check(text: str) -> int:
                       text, re.M)
     segments = re.findall(r'^  \(segment ', text, re.M)
     inner_zones = re.findall(r'\(zone \(net \d+\) \(net_name "(3V3|2V5|1V1)"\) \(layer "In2.Cu"\)', text)
-    print("  vias:       %d" % len(vias))
-    print("  stubs:      %d segments" % len(segments))
+    routed_segments, routed_vias, digest, stale = routed_copper()
+    copper = copper_plan()
+    print("  vias:       %d (%d planned + %d routed)"
+          % (len(vias), len(copper.vias), len(routed_vias)))
+    print("  segments:   %d (%d stubs + %d routed)"
+          % (len(segments), len(copper.segments), len(routed_segments)))
     if not inner_zones:
         print("  note: no rail pours on In2.Cu")
-    copper = copper_plan()
-    if len(vias) != len(copper.vias) or len(segments) != len(copper.segments):
+    if len(vias) != len(copper.vias) + len(routed_vias) \
+            or len(segments) != len(copper.segments) + len(routed_segments):
         print("  FAIL: the copper in the file does not match the plan "
-              "(%d/%d vias, %d/%d stubs)"
-              % (len(vias), len(copper.vias), len(segments), len(copper.segments)))
+              "(%d/%d vias, %d/%d segments)"
+              % (len(vias), len(copper.vias) + len(routed_vias), len(segments),
+                 len(copper.segments) + len(routed_segments)))
         problems += 1
+    if stale:
+        print("  FAIL: routing.json was laid on a different board (digest %s, now %s)"
+              % (digest, board_digest()))
+        problems += 1
+    for routed_via in routed_vias:
+        if not (0 < routed_via["x"] < BOARD_W and 0 < routed_via["y"] < BOARD_H):
+            print("  FAIL: routed via %s off the board" % routed_via["net"])
+            problems += 1
     placed = [(ref, pads_of(builder), *effective_placement()[ref])
               for ref, library, builder, value, group in COMPONENTS
               if ref in effective_placement()]

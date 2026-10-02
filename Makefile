@@ -8,7 +8,9 @@
 #   make bitstream   Yosys -> nextpnr-ecp5 -> ecppack   (build/sv16_top.bit)
 #   make prog        program the device over JTAG
 #   make pcb-doc     regenerate PCB_COMPONENTS.pdf (KiCad component specs)
-#   make kicad-board open-and-route starting point: footprints + netlist + pours + vias
+#   make schematic   the KiCad schematic (hardware/sv16_board/sv16_board.kicad_sch)
+#   make route       maze-route every signal net (writes hardware/sv16_board/routing.json)
+#   make kicad-board open-and-route starting point: footprints + netlist + pours + vias + routed tracks
 #   make pcb         the whole board starter kit: board file, bitmaps, BOM/CPL,
 #                    FAB_NOTES.md and PCB_CONNECTIONS.md (the wiring, written and drawn)
 #   make pcb-check   parse the board back and re-verify it (nets, pads, DRC-lite)
@@ -194,6 +196,8 @@ lint:
 	$(PY) scripts/sv16_board_pins.py --check
 	$(PY) scripts/sv16_pcb_doc.py --check
 	$(PY) scripts/sv16_board_kicad.py --check
+	$(PY) scripts/sv16_pcb_schematic.py --check
+	$(PY) scripts/sv16_pcb_route.py --check --quiet
 	$(PY) scripts/sv16_pcb_bom.py --check
 	$(PY) scripts/sv16_pcb_connections.py --check
 
@@ -265,6 +269,20 @@ $(BUILD)/$(PROJECT).bit: $(RTL_SRCS) $(ROM_HEX) $(CONSTRAINTS) scripts/sv16_synt
 # ------------------------------------------------------------- KiCad board base
 # Regenerate the layout starting point (footprints placed + full netlist).
 # No KiCad needed to generate it; open the result in KiCad to route.
+ROUTING = hardware/sv16_board/routing.json
+
+# The maze router: reads the placement and the copper plan, lays the signal
+# tracks and vias, checks itself (0.2 mm clearance, every net one piece) and
+# writes routing.json.  The board generator picks that file up, so a fresh
+# clone with no routing.json still builds - it just has no tracks yet.
+route:
+	$(PY) scripts/sv16_pcb_route.py
+
+# The schematic, from the same netlist the board is generated from: 143 symbols,
+# 596 pins, every pin labelled with its net.  `make pcb-check` re-reads it.
+schematic:
+	$(PY) scripts/sv16_pcb_schematic.py
+
 kicad-board:
 	$(PY) scripts/sv16_board_kicad.py
 
@@ -279,7 +297,7 @@ kicad-board:
 #   hardware/sv16_board/JLCPCB_CPL.csv          pick-and-place: Designator,Val,Package,Mid X,Mid Y,Rotation,Layer
 #   hardware/sv16_board/FAB_NOTES.md            ordering card: stack-up, rules, what to upload
 #   PCB_CONNECTIONS.md                          the wiring, written out part by part and drawn
-pcb: kicad-board pcb-bitmap pcb-bom pcb-connections
+pcb: schematic route kicad-board pcb-bitmap pcb-bom pcb-connections
 
 pcb-bitmap:
 	$(PY) scripts/sv16_pcb_bitmap.py
@@ -301,7 +319,9 @@ pcb-connections-pdf: pcb-connections
 # checked for staleness.  This is what `make lint` runs.
 pcb-check:
 	$(PY) scripts/sv16_board_kicad.py --check
+	$(PY) scripts/sv16_pcb_schematic.py --check
 	$(PY) scripts/sv16_pcb_copper.py
+	$(PY) scripts/sv16_pcb_route.py --check --quiet
 	$(PY) scripts/sv16_pcb_bom.py --check
 	$(PY) scripts/sv16_pcb_connections.py --check
 

@@ -14,6 +14,8 @@ connection in `PCB_CONNECTIONS.md` cannot disagree with the board file.
 
 | File | What it is |
 | :--- | :--- |
+| `sv16_board/sv16_board.kicad_sch` | **the schematic**: 143 symbols, 596 pins, each pin labelled with its net — generated from the same netlist as the board, so the two cannot disagree (`make schematic`) |
+| `sv16_board/schematic_preview.png` | the whole schematic sheet as a picture |
 | `sv16_board/sv16_board.kicad_pcb` | **open this in KiCad**: 100 × 100 mm, 4 layers, 141 footprints, 472 pads on 121 nets, 5 zones, 291 vias, 163 stub tracks, no routed signals |
 | `sv16_board/sv16_board.kicad_pro` | the project: five net classes with their widths, and the design rules (open this, not the bare board) |
 | `sv16_board/pcb_top_view.png` | the board from above — every part, pad, silkscreen label, the `In2.Cu` rail pours and every via |

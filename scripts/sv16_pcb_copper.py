@@ -192,11 +192,36 @@ class Copper:
         self.skipped: list[str] = []
 
     # -- geometry helpers -------------------------------------------------
+    @staticmethod
+    def _segment_gap(x: float, y: float, segment: dict) -> float:
+        """Distance from a point to a stub track's rectangle."""
+        (x0, y0), (x1, y1) = segment["start"], segment["end"]
+        half_w = abs(x1 - x0) / 2.0 + segment["width"] / 2.0
+        half_h = abs(y1 - y0) / 2.0 + segment["width"] / 2.0
+        dx = max(abs(x - (x0 + x1) / 2.0) - half_w, 0.0)
+        dy = max(abs(y - (y0 + y1) / 2.0) - half_h, 0.0)
+        return math.hypot(dx, dy)
+
+    @staticmethod
+    def _segment_gap_segment(first: dict, second: dict) -> float:
+        """Edge-to-edge gap between two axis-aligned stub tracks."""
+        def box(segment):
+            (x0, y0), (x1, y1) = segment["start"], segment["end"]
+            half = segment["width"] / 2.0
+            return (min(x0, x1) - half, min(y0, y1) - half,
+                    max(x0, x1) + half, max(y0, y1) + half)
+        a, b = box(first), box(second)
+        dx = max(a[0] - b[2], b[0] - a[2], 0.0)
+        dy = max(a[1] - b[3], b[1] - a[3], 0.0)
+        if dx == 0.0 and dy == 0.0:
+            return max(max(a[0] - b[2], b[0] - a[2]), max(a[1] - b[3], b[1] - a[3]))
+        return math.hypot(dx, dy)
+
     def _clear_of(self, x: float, y: float, net: str, radius: float,
                   pads: list[Pad]) -> bool:
         """True when a circle at (x, y) keeps CLEARANCE from every other net."""
         for pad in pads:
-            if pad.net is None or pad.net == net:
+            if pad.net == net:
                 continue
             if rect_distance(x, y, pad) < radius + CLEARANCE:
                 return False
@@ -204,6 +229,11 @@ class Copper:
             if via["net"] == net:
                 continue
             if math.hypot(via["x"] - x, via["y"] - y) < 2 * radius + CLEARANCE:
+                return False
+        for segment in self.segments:
+            if segment["net"] == net:
+                continue
+            if self._segment_gap(x, y, segment) < radius + CLEARANCE:
                 return False
         return True
 
@@ -216,9 +246,20 @@ class Copper:
             px = pad.x + (x - pad.x) * t
             py = pad.y + (y - pad.y) * t
             for other in pads:
-                if other is pad or other.net is None or other.net == net:
+                if other is pad or other.net == net:
                     continue
                 if rect_distance(px, py, other) < STUB_WIDTH / 2.0 + CLEARANCE:
+                    return False
+            for via in self.vias:
+                if via["net"] == net:
+                    continue
+                if math.hypot(px - via["x"], py - via["y"]) \
+                        < STUB_WIDTH / 2.0 + via["dia"] / 2.0 + CLEARANCE:
+                    return False
+            for segment in self.segments:
+                if segment["net"] == net:
+                    continue
+                if self._segment_gap(px, py, segment) < STUB_WIDTH / 2.0 + CLEARANCE:
                     return False
         return True
 
@@ -428,7 +469,7 @@ def verify(copper: Copper, placed, nets_by_ref) -> int:
     for via in copper.vias:
         net = via["net"]
         for pad in pads:
-            if pad.net is None or pad.net == net:
+            if pad.net == net:
                 continue
             gap = rect_distance(via["x"], via["y"], pad) - via["dia"] / 2.0
             if gap < CLEARANCE - 1e-6:
@@ -455,7 +496,7 @@ def verify(copper: Copper, placed, nets_by_ref) -> int:
             t = index / steps
             px, py = x0 + (x1 - x0) * t, y0 + (y1 - y0) * t
             for pad in pads:
-                if pad.net is None or pad.net == net:
+                if pad.net == net:
                     continue
                 if math.hypot(px - pad.x, py - pad.y) < 0.02:
                     continue                     # the pad this stub starts from
@@ -464,6 +505,25 @@ def verify(copper: Copper, placed, nets_by_ref) -> int:
                           % (net, pad.ref, pad.num, pad.net))
                     problems += 1
                     break
+    for segment in copper.segments:
+        net = segment["net"]
+        for via in copper.vias:
+            if via["net"] == net:
+                continue
+            gap = Copper._segment_gap(via["x"], via["y"], segment) - via["dia"] / 2.0
+            if gap < CLEARANCE - 1e-6:
+                print("  FAIL: %s stub and %s via at (%.2f, %.2f) are %.3f mm apart"
+                      % (net, via["net"], via["x"], via["y"], gap))
+                problems += 1
+    for index, first in enumerate(copper.segments):
+        for second in copper.segments[index + 1:]:
+            if first["net"] == second["net"]:
+                continue
+            gap = Copper._segment_gap_segment(first, second)
+            if gap < CLEARANCE - 1e-6:
+                print("  FAIL: %s stub and %s stub are %.3f mm apart"
+                      % (first["net"], second["net"], gap))
+                problems += 1
     for via in copper.vias:
         if not (0 < via["x"] < 100 and 0 < via["y"] < 100):
             print("  FAIL: via %s off the board" % via["net"])

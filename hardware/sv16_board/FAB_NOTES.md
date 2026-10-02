@@ -48,15 +48,15 @@ python3 scripts/sv16_pcb_copper.py --report   # what the copper plan did and wha
 
 Open the board in KiCad and, in this order: **Tools -> Update Footprints from
 Library**, **B (fill zones)**, then **Inspect -> Design Rules Checker**. The
-generated file already carries the rail pours, 291 vias and 163 stub
+generated file already carries the rail pours, 266 vias and 156 stub
 tracks; DRC's remaining complaints are the ones routing has to fix.
 
 ## What the generator already did for you
 
 * 141 footprints placed, 596 pads, 472 on 133 nets — the netlist is complete
 * 5 zones: solid GND on In1.Cu, GND pour on B.Cu, 3V3 / 2V5 / 1V1 pours on In2.Cu with priorities
-* 291 vias: 1V1 11, 2V5 8, 3V3 55, GND 217
-* 163 stub tracks (0.2 mm) connecting each of those pads to its via
+* 266 vias: 1V1 11, 2V5 8, 3V3 52, GND 195
+* 156 stub tracks (0.2 mm) connecting each of those pads to its via
 * DNP parts marked in the file, on the silkscreen and in the BOM/CPL
 * the pad-collision repair pass: 97 parts were nudged so no two pads of
   different nets touch (the raw placement table had overlaps)

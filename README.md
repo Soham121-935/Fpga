@@ -80,8 +80,8 @@ SV-16 monitor v1
 | Command | Result |
 | :--- | :--- |
 | `make test` | lint + all eighteen Verilator suites (473 checks) |
-| `make pcb` | the whole board starter kit: KiCad board file, five bitmaps, BOM/CPL, `FAB_NOTES.md`, `PCB_CONNECTIONS.md` |
-| `make pcb-check` | parse the generated board back and re-verify it (nets, pads, DRC-lite, placement) |
+| `make pcb` | the whole board starter kit: KiCad schematic and board file, six bitmaps, BOM/CPL, `FAB_NOTES.md`, `PCB_CONNECTIONS.md` |
+| `make pcb-check` | parse the generated schematic and board back and re-verify them (nets, pads, DRC-lite, placement) |
 | `make app` | build the example application image |
 | `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 25 MHz |
 | `make synth` | Yosys only (fast synthesizability check) |
@@ -104,8 +104,9 @@ UART divisor is derived from the built clock automatically (217 at 25 MHz, 326 a
 ```text
 BOARD.md/.pdf    PCB blueprint: components, specs, power tree, connection diagram
 TEAM_PLAN.md/.pdf 4-person build plan: roles, phases, work packages, gates, budget, risks
-hardware/       KiCad board base (footprints + netlist + rail pours + escape vias, ready to route)
-                + five board bitmaps (top, bottom, net map, power map, connection sheets)
+hardware/       KiCad schematic (sv16_board.kicad_sch) + board base (footprints + netlist
+                + rail pours + escape vias, ready to route)
+                + six board bitmaps (top, bottom, net map, power map, connection sheets, schematic)
                 + BOM.csv, JLCPCB_BOM.csv, JLCPCB_CPL.csv, FAB_NOTES.md (ordering and assembly)
                 + cart/ (the parts you actually bought, reconciled against footprints)
 PCB_CONNECTIONS.md/.pdf  the wiring: every pad, every net, every connector pinout, drawn
