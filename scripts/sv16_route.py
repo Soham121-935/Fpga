@@ -83,6 +83,7 @@ ESCAPE_VIA = (0.45, 0.25)
 ROUTE_VIA = (0.60, 0.30)
 EDGE = 0.30
 U1_RING = Polygon([(38.1, 38.1), (65.9, 38.1), (65.9, 65.9), (38.1, 65.9)])
+U1_BODY = box(42.4, 42.4, 61.6, 61.6)     # the TQFP body: empty on In1 and In2
 
 
 # ----------------------------------------------------------------- board model
@@ -410,8 +411,20 @@ def fanout_u1(board, verbose=True):
                 skipped += 1
                 continue
             (nx, ny), half = normals_for(shape, cx, cy)
-            radius = half + FANOUT_R[index % 2]
-            vx, vy = cx + nx * radius, cy + ny * radius
+            if item.net in PLANE_NETS:
+                # Power and ground go inwards, to a via under the chip body.
+                # Outwards they land in the fence of 96 signal fan-out vias,
+                # where the gaps between them are narrower than the clearance a
+                # pour has to keep; under the body both power layers are empty,
+                # so every supply pin drops straight into its plane.
+                radius = half + 1.3
+                vx, vy = cx - nx * radius, cy - ny * radius
+                if not U1_BODY.contains(Point(vx, vy)):
+                    radius = half + FANOUT_R[index % 2]
+                    vx, vy = cx + nx * radius, cy + ny * radius
+            else:
+                radius = half + FANOUT_R[index % 2]
+                vx, vy = cx + nx * radius, cy + ny * radius
             if not (EDGE < vx < BOARD_W - EDGE and EDGE < vy < BOARD_H - EDGE):
                 board.notes.append("fan-out off board: U1.%s" % item.pad)
                 continue
@@ -484,62 +497,60 @@ def net_span(nodes):
 
 
 def connect(board, net, target, width, to_node, via_size, via_drill,
-            layers=SIGNAL_LAYERS, margin=None):
-    """Route one connection: from the already-routed copper to `to_node`.
+            layers=SIGNAL_LAYERS, margin=None, tries=4):
+    """Route one connection: from one island's copper to `to_node`.
+
+    Each candidate node is tried on its own - the start cells have to belong to
+    the same piece of copper the track is then snapped to, or the track is drawn
+    on a layer where that copper does not exist and touches nothing.  An island
+    can hold a dozen pads and pours; the four nearest are enough.
 
     The window is kept as tight as the connection allows - an A* over a
     board-sized window explores a million cells and takes minutes, and almost
     every connection here needs a window a fraction of that.  If the tight
     window fails, the caller asks again with a bigger one.
     """
-    near = min(target, key=lambda n: math.hypot(n["xy"][0] - to_node["xy"][0],
-                                                n["xy"][1] - to_node["xy"][1]))
-    span = math.hypot(near["xy"][0] - to_node["xy"][0], near["xy"][1] - to_node["xy"][1])
-    if margin is None:
-        margin = min(12.0, max(3.0, 0.5 * span))
-    bounds = window_for([near["xy"], to_node["xy"]], margin)
-    windows = free_for(board, net, width, bounds, layers)
-    vmask = via_mask(board, net, via_size, bounds)
-    starts = []
-    for node in target:
-        starts += entry_cells(windows, node, layers)
-    goals = entry_cells(windows, to_node, layers)
-    if not starts or not goals:
-        return False, "no free cell next to the pad"
-    via_ok = (vmask.data == 0) if len(layers) > 1 else None
-    path = astar(windows, via_ok, starts, goals)
-    if path is None:
-        return False, "no path in a %.0f mm window" % margin
-    emit(board, path, windows, width, net, via_size, via_drill,
-         snap_first=snap_point(near, near["xy"]),
-         snap_last=snap_point(to_node, to_node["xy"]))
-    return True, ""
-
-
-def route_net(board, net, verbose=False):
-    """Make one net a single piece of copper."""
-    return join_pieces(board, net, board.width_of(net), SIGNAL_ATTEMPTS, verbose)
-
-
-def route_spines(board, verbose=True):
-    """The rails that are not planes: wide copper, In2.Cu where it fits.
-
-    These are the last copper a board can do without - miss one and the FPGA
-    has no core supply - so a connection that will not go through on the power
-    layer is retried on the signal layers and, failing that, at half width.  A
-    trunk that has to neck down for its last few millimetres is normal practice
-    and still carries an amp or more.
-    """
-    for net in ("2V5", "1V1", "USB_VBUS", "VM_IN_RAW", "VM_IN"):
-        if net not in SPINE_WIDTH:
+    ordered = sorted(target, key=lambda n: (n["xy"][0] - to_node["xy"][0]) ** 2
+                     + (n["xy"][1] - to_node["xy"][1]) ** 2)[:tries]
+    why = "no free cell next to the pad"
+    for near in ordered:
+        span = math.hypot(near["xy"][0] - to_node["xy"][0],
+                          near["xy"][1] - to_node["xy"][1])
+        pad_margin = margin if margin is not None else min(12.0, max(3.0, 0.5 * span))
+        bounds = window_for([near["xy"], to_node["xy"]], pad_margin)
+        windows = free_for(board, net, width, bounds, layers)
+        vmask = via_mask(board, net, via_size, bounds)
+        starts = entry_cells(windows, near, layers)
+        goals = entry_cells(windows, to_node, layers)
+        if not starts or not goals:
+            why = "no free cell next to the pad"
             continue
-        width = SPINE_WIDTH[net]
-        if verbose:
-            print("  spine %-10s %.2f mm wide, %d island(s)"
-                  % (net, width, len(net_pieces(board, net))), flush=True)
-        join_pieces(board, net, width, SPINE_ATTEMPTS, verbose)
-        if verbose:
-            print("    -> %d island(s) left" % len(net_pieces(board, net)), flush=True)
+        via_ok = (vmask.data == 0) if len(layers) > 1 else None
+        path = astar(windows, via_ok, starts, goals)
+        if path is None:
+            why = "no path in a %.0f mm window" % pad_margin
+            continue
+        emit(board, path, windows, width, net, via_size, via_drill,
+             snap_first=snap_point(near, near["xy"]),
+             snap_last=snap_point(to_node, to_node["xy"]))
+        return True, ""
+    return False, why
+
+
+def snap_point(node, xy):
+    """A point on the node's copper near `xy`.
+
+    The centroid of a poured polygon can sit in one of its clearance voids, and
+    a track ended there touches nothing - the two islands stay separate however
+    many tracks are laid.  Always end on copper.
+    """
+    geom = node["geom"]
+    point = Point(xy)
+    if geom.contains(point):
+        return xy
+    from shapely.ops import nearest_points
+    on_copper, _ = nearest_points(geom, point)
+    return (on_copper.x, on_copper.y)
 
 
 def net_pieces(board, net):
@@ -580,22 +591,6 @@ def net_pieces(board, net):
     for index, part in enumerate(parts):
         groups.setdefault(find(index), []).append(part)
     return list(groups.values())
-
-
-def snap_point(node, xy):
-    """A point on the node's copper near `xy`.
-
-    The centroid of a poured polygon can sit in one of its clearance voids, and
-    a track ended there touches nothing - the two islands stay separate however
-    many tracks are laid.  Always end on copper.
-    """
-    geom = node["geom"]
-    point = Point(xy)
-    if geom.contains(point):
-        return xy
-    from shapely.ops import nearest_points
-    on_copper, _ = nearest_points(geom, point)
-    return (on_copper.x, on_copper.y)
 
 
 def closest_nodes(one, other):
@@ -645,15 +640,12 @@ def join_pieces(board, net, width, attempts, verbose=False):
                                 via[0], via[1], layers=layers, margin=margin)
             if good:
                 break
-        if verbose:
-            print("      %s: %.1f mm %s" % (net, math.sqrt(best[0]) if best else 0.0,
-                                             "ok" if good else why), flush=True)
         if not good:
             failed_pairs.add(signature)
             ok = False
             board.notes.append("unrouted %s -> %s (%s)" % (net, _label(to_node), why))
             if verbose:
-                print("      %s: %s" % (net, why), flush=True)
+                print("      %s -> %s: %s" % (net, _label(to_node), why), flush=True)
             # three blocked pairs is plenty of trying: a net that needs more
             # track joins than that is better served by a bigger pour
             if len(failed_pairs) >= 3:
