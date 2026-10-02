@@ -278,6 +278,13 @@ ROUTING = hardware/sv16_board/routing.json
 route:
 	$(PY) scripts/sv16_pcb_route.py
 
+# The router, with its failure ignored: used by `make pcb`, which should still
+# hand you the board and the documents when a few nets come up short, and says
+# so loudly in the log.  `make route` is the strict one - run it when you are
+# working on the routing itself, and `make pcb-check` to verify the result.
+route-soft:
+	-$(PY) scripts/sv16_pcb_route.py
+
 # The schematic, from the same netlist the board is generated from: 143 symbols,
 # 596 pins, every pin labelled with its net.  `make pcb-check` re-reads it.
 schematic:
@@ -297,7 +304,7 @@ kicad-board:
 #   hardware/sv16_board/JLCPCB_CPL.csv          pick-and-place: Designator,Val,Package,Mid X,Mid Y,Rotation,Layer
 #   hardware/sv16_board/FAB_NOTES.md            ordering card: stack-up, rules, what to upload
 #   PCB_CONNECTIONS.md                          the wiring, written out part by part and drawn
-pcb: schematic route kicad-board pcb-bitmap pcb-bom pcb-connections
+pcb: schematic route-soft kicad-board pcb-bitmap pcb-bom pcb-connections
 
 pcb-bitmap:
 	$(PY) scripts/sv16_pcb_bitmap.py
