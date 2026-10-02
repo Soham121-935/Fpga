@@ -90,7 +90,8 @@ EDGE = 0.30
 # Distances between pads are unchanged, so the search windows stay the
 # size that was proven to close the power rails.
 SCALE = 1.0
-MAX_WINDOW = 60.0 * SCALE         # mm, the largest search window A* will take
+MAX_WINDOW = max(BOARD_W, BOARD_H)  # mm; the grid coarsens instead of cropping
+CELL_BUDGET = 620.0               # cells across the widest window we will solve
 # The fan-out ring and the body outline are measured from where U1 actually
 # sits, not hard-coded: move the chip (or grow the board) and they follow.
 U1_RING_HALF = 13.9       # mm from the chip centre to the fan-out ring
@@ -238,6 +239,22 @@ class Layer:
 
     def blocked(self):
         return self.data != 0
+
+
+def choose_cell(window_mm):
+    """Grid resolution for a window this wide.
+
+    A* costs what the window costs in cells, so the window is allowed to be as
+    big as the board and the grid pays for it: a 94 mm window is 940,000 cells
+    at 0.1 mm and a fifth of that at 0.2 mm.  Every clearance figure is in
+    millimetres and is inflated onto the grid by the grid's own size, so a
+    coarser grid keeps its distance from other copper - it just places tracks
+    less finely.
+    """
+    for cell in (0.1, 0.15, 0.2, 0.3):
+        if window_mm / cell <= CELL_BUDGET:
+            return cell
+    return 0.4
 
 
 def window_for(points, margin):
@@ -563,43 +580,53 @@ def connect(board, net, target, width, to_node, via_size, via_drill,
                           near["xy"][1] - to_node["xy"][1])
         pad_margin = margin if margin is not None else min(12.0, max(3.0, 0.5 * span))
         bounds = window_for([near["xy"], to_node["xy"]], pad_margin)
-        # A* is the whole cost of this program, and its cost is the window area.
-        # A long connection with a wide margin asks for a 100 mm window - a
-        # million cells, minutes for one track. Cap the search: a detour of
-        # 20 mm either side is as much as a real track would take anyway.
-        if (bounds[2] - bounds[0]) > MAX_WINDOW or (bounds[3] - bounds[1]) > MAX_WINDOW:
-            mx = (bounds[0] + bounds[2]) / 2.0
-            my = (bounds[1] + bounds[3]) / 2.0
-            bounds = (max(0.0, mx - MAX_WINDOW / 2.0), max(0.0, my - MAX_WINDOW / 2.0),
-                      min(BOARD_W, mx + MAX_WINDOW / 2.0),
-                      min(BOARD_H, my + MAX_WINDOW / 2.0))
-        windows = free_for(board, net, width, bounds, layers)
-        vmask = via_mask(board, net, via_size, bounds)
-        starts = entry_cells(windows, near, layers)
-        goals = entry_cells(windows, to_node, layers)
-        if not starts or not goals:
-            why = "no free cell next to the pad"
-            continue
-        via_ok = (vmask.data == 0) if len(layers) > 1 else None
-        path = astar(windows, via_ok, starts, goals)
-        if path is None:
-            why = "no path in a %.0f mm window" % pad_margin
-            continue
-        # Snap to the copper from the end of the path, not from the node's
-        # centre.  A* only guarantees the cells it walked are clear; dragging
-        # the end of a 2 mm trunk back to a pad centre can sweep it across
-        # copper the search never looked at.
-        head = windows[path[0][0]].center(path[0][1], path[0][2])
-        tail = windows[path[-1][0]].center(path[-1][1], path[-1][2])
-        first = snap_point(near, head)
-        last = snap_point(to_node, tail)
-        if not (clear_run(board, net, head, first, width, path[0][0])
-                and clear_run(board, net, tail, last, width, path[-1][0])):
-            why = "the last millimetre is blocked"
-            continue
-        emit(board, path, windows, width, net, via_size, via_drill,
-             snap_first=first, snap_last=last)
-        return True, ""
+        # Both ends have to be inside the window: A* cannot reach a goal that
+        # is not in the grid.  Cropping the box to a fixed size around the
+        # midpoint dropped the ends off the edge of any window longer than the
+        # cap, and every long net then failed with "no path" no matter how much
+        # board was free.  Cap the margin instead, and let the grid go coarse
+        # so a big window stays affordable.
+        xs = [near["xy"][0], to_node["xy"][0]]
+        ys = [near["xy"][1], to_node["xy"][1]]
+        room = MAX_WINDOW - max(max(xs) - min(xs), max(ys) - min(ys))
+        fitted = max(0.0, min(pad_margin, room / 2.0))
+        bounds = (max(0.0, min(xs) - fitted), max(0.0, min(ys) - fitted),
+                  min(BOARD_W, max(xs) + fitted), min(BOARD_H, max(ys) + fitted))
+        global CELL, SLACK, VIA_COST
+        saved = (CELL, SLACK, VIA_COST)
+        CELL = choose_cell(max(bounds[2] - bounds[0], bounds[3] - bounds[1]))
+        SLACK = CELL * 0.71
+        VIA_COST = int(2.5 / CELL)      # a via is worth 2.5 mm of track, at any grid
+        try:
+            windows = free_for(board, net, width, bounds, layers)
+            vmask = via_mask(board, net, via_size, bounds)
+            starts = entry_cells(windows, near, layers)
+            goals = entry_cells(windows, to_node, layers)
+            if not starts or not goals:
+                why = "no free cell next to the pad"
+                continue
+            via_ok = (vmask.data == 0) if len(layers) > 1 else None
+            path = astar(windows, via_ok, starts, goals)
+            if path is None:
+                why = "no path in a %.0f mm window" % pad_margin
+                continue
+            # Snap to the copper from the end of the path, not from the node's
+            # centre.  A* only guarantees the cells it walked are clear;
+            # dragging the end of a 2 mm trunk back to a pad centre can sweep
+            # it across copper the search never looked at.
+            head = windows[path[0][0]].center(path[0][1], path[0][2])
+            tail = windows[path[-1][0]].center(path[-1][1], path[-1][2])
+            first = snap_point(near, head)
+            last = snap_point(to_node, tail)
+            if not (clear_run(board, net, head, first, width, path[0][0])
+                    and clear_run(board, net, tail, last, width, path[-1][0])):
+                why = "the last millimetre is blocked"
+                continue
+            emit(board, path, windows, width, net, via_size, via_drill,
+                 snap_first=first, snap_last=last)
+            return True, ""
+        finally:
+            CELL, SLACK, VIA_COST = saved
     return False, why
 
 
@@ -771,7 +798,13 @@ SPINE_ATTEMPTS = [(layers, scale, margin, via)
 
 
 def route_net(board, net, verbose=False):
-    """Make one net a single piece of copper."""
+    """Make one net a single piece of copper.
+
+    join_pieces already lifts blocking copper once, narrowly.  A wider, more
+    persistent rip-up was tried and was a losing trade: it freed a handful of
+    pads and unmade more routes than it made, and the board ended every pass
+    with less copper on it than it started with.
+    """
     return join_pieces(board, net, board.width_of(net), SIGNAL_ATTEMPTS, verbose)
 
 
