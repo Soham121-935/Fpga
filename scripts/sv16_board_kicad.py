@@ -51,7 +51,7 @@ POWER_NETS = ["GND", "VM_IN", "3V3", "2V5", "1V1"]
 NET_ORDER = [
     "GND", "VM_IN_RAW", "VM_IN", "3V3", "2V5", "1V1", "5V_USB",
     # FPGA configuration / JTAG
-    "CCLK", "U2_CLK", "MOSI", "U2_DI", "MISO", "U2_DO", "CSSPIN", "U2_CS",
+    "CCLK", "U2_CLK", "U2_DI", "U2_DO", "U2_CS",
     "U2_WP", "U2_HOLD", "PROGRAMN", "INITN", "DONE", "CFG_0", "CFG_1", "CFG_2",
     "TCK", "TMS", "TDI", "TDO", "ext_rst_n", "Q1_G", "Q1_D", "DTR", "DTR_F",
     "Q2_B", "Q2_C", "DONE_LED", "Q4_B", "Q4_C", "INITN_LED",
@@ -96,8 +96,14 @@ for pin in (9, 16, 36, 43, 70, 86, 100, 122, 137):
 for pin in (8, 15, 21, 32, 42, 65, 75, 85, 87, 101, 123, 129, 131, 138):
     connect("U1", pin, "GND")
 # configuration
-connect("U1", 54, "CCLK");    connect("U1", 46, "MISO")
-connect("U1", 47, "MOSI");    connect("U1", 49, "CSSPIN")
+connect("U1", 54, "CCLK")
+# Pins 46, 47 and 49 are the ECP5's own configuration pins - MISO, MOSI and
+# CSSPIN - and they double as gpio_a[1], gpio_a[2] and gpio_a[4] once the
+# device has booted (scripts/sv16_board_pins.py marks all three as
+# dual-purpose, and constraints/ecp5_144tqfp.lpf locates gpio_a[1..4] there).
+# One pin is one net, so these carry their GPIO names, and the configuration
+# flash hangs on the same copper through R10, R11 and R12.  Either name would
+# do; the GPIO name was kept so the sheet reads the same as the HDL.
 connect("U1", 57, "PROGRAMN"); connect("U1", 55, "INITN"); connect("U1", 56, "DONE")
 connect("U1", 62, "CFG_0");   connect("U1", 59, "CFG_1");   connect("U1", 58, "CFG_2")
 connect("U1", 63, "TCK");     connect("U1", 64, "TMS")
@@ -184,9 +190,12 @@ connect("R6", 1, "CFG_0"); connect("R6", 2, "GND")
 connect("R7", 1, "CFG_2"); connect("R7", 2, "GND")
 connect("R8", 1, "CCLK"); connect("R8", 2, "3V3")
 connect("R9", 1, "CCLK");     connect("R9", 2, "U2_CLK")
-connect("R10", 1, "MOSI");    connect("R10", 2, "U2_DI")
-connect("R11", 1, "MISO");    connect("R11", 2, "U2_DO")
-connect("R12", 1, "CSSPIN");  connect("R12", 2, "U2_CS")
+# Series resistors between the FPGA and the configuration flash, so an
+# external programmer can drive the flash without fighting the FPGA.  The
+# FPGA side is the shared config/GPIO net: A2, A1, A4 (see U1 above).
+connect("R10", 1, "A2");      connect("R10", 2, "U2_DI")
+connect("R11", 1, "A1");      connect("R11", 2, "U2_DO")
+connect("R12", 1, "A4");      connect("R12", 2, "U2_CS")
 connect("R13", 1, "U2_CS");   connect("R13", 2, "3V3")
 connect("R14", 1, "U2_WP");   connect("R14", 2, "3V3")
 connect("R15", 1, "U2_HOLD"); connect("R15", 2, "3V3")
@@ -634,7 +643,7 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     "SW1": (24.10, 76.10, 0), "SW2": (34.10, 76.10, 0), "R1": (21.61, 69.85, 0), "C1": (23.11, 71.35, 0),
     "R2": (38.07, 84.08, 0), "R3": (38.07, 82.08, 0), "R4": (40.82, 80.08, 0),
     "R5": (43.61, 84.10, 0), "R6": (47.11, 84.10, 0), "R7": (50.61, 84.10, 0),
-    "Q1": (23.02, 83.98, 0), "R25": (24.86, 86.60, 0), "R26": (21.61, 87.10, 0), "JP1": (25.98, 82.49, 0) if False else (19.84, 72.30, 0),
+    "Q1": (23.02, 83.98, 0), "R25": (24.86, 86.60, 0), "R26": (21.61, 87.10, 0), "JP1": (25.98, 82.49, 0),
     "Q2": (44.77, 92.48, 0), "R32": (35.36, 94.10, 0), "D1": (44.61, 97.60, 0), "R33": (46.65, 95.53, 0),
     "Q4": (21.78, 93.98, 0), "R31": (22.40, 97.03, 0), "D6": (24.86, 89.10, 0), "R34": (24.15, 91.03, 0),
     "D7": (50.11, 88.10, 0), "R44": (52.61, 86.60, 0), "FID1": (22.10, 34.10, 0), "FID2": (106.10, 34.10, 0),
