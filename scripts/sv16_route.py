@@ -45,6 +45,7 @@ import heapq
 import json
 import math
 import re
+import shutil
 import sys
 import time
 from collections import defaultdict
@@ -82,6 +83,7 @@ FANOUT_R = (0.70, 1.25)
 ESCAPE_VIA = (0.45, 0.25)
 ROUTE_VIA = (0.60, 0.30)
 EDGE = 0.30
+MAX_WINDOW = 60.0                 # mm, the largest search window A* will take
 U1_RING = Polygon([(38.1, 38.1), (65.9, 38.1), (65.9, 65.9), (38.1, 65.9)])
 U1_BODY = box(42.4, 42.4, 61.6, 61.6)     # the TQFP body: empty on In1 and In2
 
@@ -497,7 +499,7 @@ def net_span(nodes):
 
 
 def connect(board, net, target, width, to_node, via_size, via_drill,
-            layers=SIGNAL_LAYERS, margin=None, tries=4):
+            layers=SIGNAL_LAYERS, margin=None, tries=3):
     """Route one connection: from one island's copper to `to_node`.
 
     Each candidate node is tried on its own - the start cells have to belong to
@@ -518,6 +520,16 @@ def connect(board, net, target, width, to_node, via_size, via_drill,
                           near["xy"][1] - to_node["xy"][1])
         pad_margin = margin if margin is not None else min(12.0, max(3.0, 0.5 * span))
         bounds = window_for([near["xy"], to_node["xy"]], pad_margin)
+        # A* is the whole cost of this program, and its cost is the window area.
+        # A long connection with a wide margin asks for a 100 mm window - a
+        # million cells, minutes for one track. Cap the search: a detour of
+        # 20 mm either side is as much as a real track would take anyway.
+        if (bounds[2] - bounds[0]) > MAX_WINDOW or (bounds[3] - bounds[1]) > MAX_WINDOW:
+            mx = (bounds[0] + bounds[2]) / 2.0
+            my = (bounds[1] + bounds[3]) / 2.0
+            bounds = (max(0.0, mx - MAX_WINDOW / 2.0), max(0.0, my - MAX_WINDOW / 2.0),
+                      min(BOARD_W, mx + MAX_WINDOW / 2.0),
+                      min(BOARD_H, my + MAX_WINDOW / 2.0))
         windows = free_for(board, net, width, bounds, layers)
         vmask = via_mask(board, net, via_size, bounds)
         starts = entry_cells(windows, near, layers)
@@ -604,7 +616,7 @@ def closest_nodes(one, other):
     return best
 
 
-def join_pieces(board, net, width, attempts, verbose=False):
+def join_pieces(board, net, width, attempts, verbose=False, depth=0):
     """Keep joining the two closest islands until the net is one piece.
 
     `attempts` is a list of (layers, width scale, margin, via) to try in order,
@@ -640,6 +652,20 @@ def join_pieces(board, net, width, attempts, verbose=False):
                                 via[0], via[1], layers=layers, margin=margin)
             if good:
                 break
+        if not good and depth == 0:
+            # walled in: lift the copper in the way and have one more go
+            start = min(target, key=lambda n: (n["xy"][0] - to_node["xy"][0]) ** 2
+                        + (n["xy"][1] - to_node["xy"][1]) ** 2)
+            lifted = rip_blockers(board, net, start, to_node)
+            if lifted:
+                for layers, scale, margin, via in attempts:
+                    good, why = connect(board, net, target, width * scale, to_node,
+                                        via[0], via[1], layers=layers, margin=margin)
+                    if good:
+                        break
+                for other in lifted:
+                    join_pieces(board, other, board.width_of(other), attempts,
+                                depth=depth + 1)
         if not good:
             failed_pairs.add(signature)
             ok = False
@@ -659,9 +685,12 @@ def _label(node):
     return "%s at %.2f, %.2f" % (node["kind"], node["xy"][0], node["xy"][1])
 
 
-SIGNAL_ATTEMPTS = [(SIGNAL_LAYERS, 1.0, margin, via)
-                   for via in (ROUTE_VIA, ESCAPE_VIA, FANOUT_VIA)
-                   for margin in (None, 6.0, 12.0, 20.0)]
+SIGNAL_ATTEMPTS = [(SIGNAL_LAYERS, 1.0, None, ROUTE_VIA),
+                   (SIGNAL_LAYERS, 1.0, 6.0, ROUTE_VIA),
+                   (SIGNAL_LAYERS, 1.0, 12.0, ROUTE_VIA),
+                   (SIGNAL_LAYERS, 1.0, 12.0, ESCAPE_VIA),
+                   (SIGNAL_LAYERS, 1.0, 20.0, ESCAPE_VIA),
+                   (SIGNAL_LAYERS, 1.0, 20.0, FANOUT_VIA)]
 
 SPINE_ATTEMPTS = [(layers, scale, margin, via)
                   for via in (ROUTE_VIA, ESCAPE_VIA)
@@ -874,11 +903,21 @@ CHECKPOINT = ROOT / "hardware" / "sv16_board" / "routing_state.json"
 
 
 def save_state(board, path=CHECKPOINT):
-    """Dump the copper routed so far, so a long run can be resumed."""
+    """Dump the copper routed so far, so a long run can be resumed.
+
+    The previous dump is kept as .bak: a run that goes badly should not be
+    able to destroy the work that came before it.
+    """
     data = {"tracks": [[list(a), list(b), w, layer, net]
                        for a, b, w, layer, net in board.new_tracks],
             "vias": [[x, y, size, drill, net] for x, y, size, drill, net in board.new_vias],
-            "done": sorted(set(board.done_nets))}
+            "done": sorted(set(board.done_nets)),
+            "notes": list(board.notes)}
+    if path.exists():
+        try:
+            shutil.copyfile(path, path.with_suffix(".json.bak"))
+        except OSError:
+            pass
     path.write_text(json.dumps(data))
     return len(data["tracks"])
 
@@ -893,7 +932,44 @@ def load_state(board, path=CHECKPOINT):
     for x, y, size, drill, net in data["vias"]:
         board.add_via(x, y, size, drill, net)
     board.done_nets = set(data.get("done", []))
+    board.notes = list(data.get("notes", []))
     return len(data["tracks"])
+
+
+def rip_copper(board, net):
+    """Take a net's tracks and vias back off the board entirely.
+
+    Pads stay - they are the pins - and pours stay, they are geometry derived
+    from the pins, but every track and via this net owns is lifted.
+    """
+    board.new_tracks = [x for x in board.new_tracks if x[4] != net]
+    board.new_vias = [x for x in board.new_vias if x[4] != net]
+    board.items = [item for item in board.items
+                   if item.net != net or item.kind in ("pad", "zone")]
+
+
+def rip_blockers(board, net, node_a, node_b, corridor=1.0, limit=6):
+    """Lift the nets whose copper sits in the corridor between two nodes.
+
+    A pad that no track can reach is almost always walled in by tracks routed
+    before it, and ripping the failing net up again does nothing about that.
+    The corridor is deliberately narrow and the number of victims capped: a
+    wide corridor across a long connection lifts half the board, and putting
+    that back is worse than leaving the one pad unrouted.
+    """
+    line = LineString([node_a["xy"], node_b["xy"]]).buffer(corridor)
+    victims = []
+    for item in board.items:
+        if item.net == net or item.net is None or item.kind not in ("track", "via"):
+            continue
+        if item.geom.intersects(line) and item.net not in victims:
+            victims.append(item.net)
+    if len(victims) > limit:
+        return []
+    for other in victims:
+        rip_copper(board, other)
+        board.notes = [n for n in board.notes if not n.startswith("unrouted %s " % other)]
+    return sorted(victims)
 
 
 def rip_net(board, net):
@@ -1005,7 +1081,7 @@ def main() -> int:
                 board.done_nets.add(net)
             else:
                 failed += 1
-            if index % 10 == 0 or index == len(nets):
+            if True:
                 save_state(board)
                 print("    %d/%d nets, %d tracks, %d vias, %d unrouted, %.0f s"
                       % (index, len(nets), len(board.new_tracks), len(board.new_vias),
