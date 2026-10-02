@@ -1,0 +1,761 @@
+{
+ "part": "LFE5U-12F-6TG144C",
+ "package": "TQFP144 (20 x 20 mm, 0.5 mm pitch)",
+ "sources": {
+  "io_pins_and_banks": "prjtrellis database/ECP5/LFE5U-12F/iodb.json packages.TQFP144 + pio_metadata",
+  "pad_names_and_dedicated_pins": "Lattice BSDL FPGA-MD-02097 (LFE5U_25F_XXTG144 PIN_MAP, TQFP144); LFE5U-12F/LFE5U-25F/LFE5U-45F share the 144 TQFP pinout (datasheet FPGA-DS-02012-3.4 Table 1.1: 98 user I/O each)",
+  "rail_limits": "FPGA-DS-02012-3.4 Tables 3.1/3.2/3.3/3.4/3.5/3.11"
+ },
+ "summary": {
+  "user_io": 98,
+  "config": 7,
+  "jtag": 4,
+  "vcc": 6,
+  "vccaux": 4,
+  "vccio": 9,
+  "gnd": 14,
+  "nc": 2
+ },
+ "pins": {
+  "1": {
+   "pad": "PL5C",
+   "kind": "io",
+   "bank": 7
+  },
+  "2": {
+   "pad": "PL5D",
+   "kind": "io",
+   "bank": 7
+  },
+  "3": {
+   "pad": "PL5B",
+   "kind": "io",
+   "bank": 7
+  },
+  "4": {
+   "pad": "PL8A",
+   "kind": "io",
+   "bank": 7
+  },
+  "5": {
+   "pad": "PL8C",
+   "kind": "io",
+   "bank": 7
+  },
+  "6": {
+   "pad": "PL8B",
+   "kind": "io",
+   "bank": 7
+  },
+  "7": {
+   "pad": "PL8D",
+   "kind": "io",
+   "bank": 7
+  },
+  "8": {
+   "pad": "VSSIO7",
+   "kind": "gnd",
+   "function": "ground net VSSIO7"
+  },
+  "9": {
+   "pad": "VCCIO7",
+   "kind": "vccio",
+   "bank": 7,
+   "function": "VCCIO7 I/O bank 7 supply"
+  },
+  "10": {
+   "pad": "PL14A",
+   "kind": "io",
+   "bank": 7
+  },
+  "11": {
+   "pad": "PL14C",
+   "kind": "io",
+   "bank": 7
+  },
+  "12": {
+   "pad": "PL14B",
+   "kind": "io",
+   "bank": 7
+  },
+  "13": {
+   "pad": "PL14D",
+   "kind": "io",
+   "bank": 7
+  },
+  "14": {
+   "pad": "PL23D",
+   "kind": "io",
+   "bank": 7
+  },
+  "15": {
+   "pad": "VSSIO6",
+   "kind": "gnd",
+   "function": "ground net VSSIO6"
+  },
+  "16": {
+   "pad": "VCCIO6",
+   "kind": "vccio",
+   "bank": 6,
+   "function": "VCCIO6 I/O bank 6 supply"
+  },
+  "17": {
+   "pad": "VCCAUX",
+   "kind": "vccaux",
+   "function": "VCCAUX supply 2.5 V"
+  },
+  "18": {
+   "pad": "PL32B",
+   "kind": "io",
+   "bank": 6
+  },
+  "19": {
+   "pad": "PL35B",
+   "kind": "io",
+   "bank": 6
+  },
+  "20": {
+   "pad": "VCC",
+   "kind": "vcc",
+   "function": "VCC core supply 1.1 V"
+  },
+  "21": {
+   "pad": "VSS",
+   "kind": "gnd",
+   "function": "ground net VSS"
+  },
+  "22": {
+   "pad": "PL35C",
+   "kind": "io",
+   "bank": 6
+  },
+  "23": {
+   "pad": "PL35D",
+   "kind": "io",
+   "bank": 6
+  },
+  "24": {
+   "pad": "PL38A",
+   "kind": "io",
+   "bank": 6
+  },
+  "25": {
+   "pad": "PL38B",
+   "kind": "io",
+   "bank": 6
+  },
+  "26": {
+   "pad": "PL41C",
+   "kind": "io",
+   "bank": 6
+  },
+  "27": {
+   "pad": "PL41D",
+   "kind": "io",
+   "bank": 6
+  },
+  "28": {
+   "pad": "PL44A",
+   "kind": "io",
+   "bank": 6
+  },
+  "29": {
+   "pad": "VCC",
+   "kind": "vcc",
+   "function": "VCC core supply 1.1 V"
+  },
+  "30": {
+   "pad": "PL44B",
+   "kind": "io",
+   "bank": 6
+  },
+  "31": {
+   "pad": "PL44C",
+   "kind": "io",
+   "bank": 6
+  },
+  "32": {
+   "pad": "VSSIO6",
+   "kind": "gnd",
+   "function": "ground net VSSIO6"
+  },
+  "33": {
+   "pad": "PL44D",
+   "kind": "io",
+   "bank": 6
+  },
+  "34": {
+   "pad": "PL47A",
+   "kind": "io",
+   "bank": 6
+  },
+  "35": {
+   "pad": "PL47B",
+   "kind": "io",
+   "bank": 6
+  },
+  "36": {
+   "pad": "VCCIO6",
+   "kind": "vccio",
+   "bank": 6,
+   "function": "VCCIO6 I/O bank 6 supply"
+  },
+  "37": {
+   "pad": "PL47C",
+   "kind": "io",
+   "bank": 6
+  },
+  "38": {
+   "pad": "VCC",
+   "kind": "vcc",
+   "function": "VCC core supply 1.1 V"
+  },
+  "39": {
+   "pad": "PB6A",
+   "kind": "io",
+   "bank": 8
+  },
+  "40": {
+   "pad": "PB4A",
+   "kind": "io",
+   "bank": 8
+  },
+  "41": {
+   "pad": "PB6B",
+   "kind": "io",
+   "bank": 8
+  },
+  "42": {
+   "pad": "VSSIO8",
+   "kind": "gnd",
+   "function": "ground net VSSIO8"
+  },
+  "43": {
+   "pad": "VCCIO8",
+   "kind": "vccio",
+   "bank": 8,
+   "function": "VCCIO8 I/O bank 8 supply"
+  },
+  "44": {
+   "pad": "PB4B",
+   "kind": "io",
+   "bank": 8
+  },
+  "45": {
+   "pad": "PB9A",
+   "kind": "io",
+   "bank": 8
+  },
+  "46": {
+   "pad": "PB11A",
+   "kind": "io",
+   "bank": 8
+  },
+  "47": {
+   "pad": "PB11B",
+   "kind": "io",
+   "bank": 8
+  },
+  "48": {
+   "pad": "PB13A",
+   "kind": "io",
+   "bank": 8
+  },
+  "49": {
+   "pad": "PB15A",
+   "kind": "io",
+   "bank": 8
+  },
+  "50": {
+   "pad": "PB13B",
+   "kind": "io",
+   "bank": 8
+  },
+  "51": {
+   "pad": "PB15B",
+   "kind": "io",
+   "bank": 8
+  },
+  "52": {
+   "pad": "PB18A",
+   "kind": "io",
+   "bank": 8
+  },
+  "53": {
+   "pad": "VCCAUX",
+   "kind": "vccaux",
+   "function": "VCCAUX supply 2.5 V"
+  },
+  "54": {
+   "pad": "CCLK",
+   "kind": "config",
+   "bank": 8,
+   "function": "CCLK / MCLK \u2014 Master-mode config clock output, to flash SCK"
+  },
+  "55": {
+   "pad": "INITN",
+   "kind": "config",
+   "bank": 8,
+   "function": "INITN \u2014 open-drain, low = config memory being cleared / config error"
+  },
+  "56": {
+   "pad": "DONE",
+   "kind": "config",
+   "bank": 8,
+   "function": "DONE \u2014 open-drain, high = configuration complete, user mode"
+  },
+  "57": {
+   "pad": "PROGRAMN",
+   "kind": "config",
+   "bank": 8,
+   "function": "PROGRAMN \u2014 active-low reconfiguration request (has internal pull-up)"
+  },
+  "58": {
+   "pad": "CFG_2",
+   "kind": "config",
+   "bank": 8,
+   "function": "CFGMDN2 \u2014 mode strap, latched on rising edge of INITN"
+  },
+  "59": {
+   "pad": "CFG_1",
+   "kind": "config",
+   "bank": 8,
+   "function": "CFGMDN1 \u2014 mode strap, latched on rising edge of INITN"
+  },
+  "60": {
+   "pad": "TDO",
+   "kind": "jtag",
+   "bank": 8,
+   "function": "JTAG test data out (internal pull-up)"
+  },
+  "61": {
+   "pad": "TDI",
+   "kind": "jtag",
+   "bank": 8,
+   "function": "JTAG test data in (internal pull-up)"
+  },
+  "62": {
+   "pad": "CFG_0",
+   "kind": "config",
+   "bank": 8,
+   "function": "CFGMDN0 \u2014 mode strap, latched on rising edge of INITN"
+  },
+  "63": {
+   "pad": "TCK",
+   "kind": "jtag",
+   "bank": 8,
+   "function": "JTAG test clock (no internal pull-up)"
+  },
+  "64": {
+   "pad": "TMS",
+   "kind": "jtag",
+   "bank": 8,
+   "function": "JTAG test mode select (internal pull-up)"
+  },
+  "65": {
+   "pad": "VSS",
+   "kind": "gnd",
+   "function": "ground net VSS"
+  },
+  "66": {
+   "pad": "VCC",
+   "kind": "vcc",
+   "function": "VCC core supply 1.1 V"
+  },
+  "67": {
+   "pad": "PR47B",
+   "kind": "io",
+   "bank": 3
+  },
+  "68": {
+   "pad": "PR47D",
+   "kind": "io",
+   "bank": 3
+  },
+  "69": {
+   "pad": "PR47C",
+   "kind": "io",
+   "bank": 3
+  },
+  "70": {
+   "pad": "VCCIO3",
+   "kind": "vccio",
+   "bank": 3,
+   "function": "VCCIO3 I/O bank 3 supply"
+  },
+  "71": {
+   "pad": "PR47A",
+   "kind": "io",
+   "bank": 3
+  },
+  "72": {
+   "pad": "PR44C",
+   "kind": "io",
+   "bank": 3
+  },
+  "73": {
+   "pad": "PR41D",
+   "kind": "io",
+   "bank": 3
+  },
+  "74": {
+   "pad": "PR41C",
+   "kind": "io",
+   "bank": 3
+  },
+  "75": {
+   "pad": "VSSIO3",
+   "kind": "gnd",
+   "function": "ground net VSSIO3"
+  },
+  "76": {
+   "pad": "PR41B",
+   "kind": "io",
+   "bank": 3
+  },
+  "77": {
+   "pad": "PR41A",
+   "kind": "io",
+   "bank": 3
+  },
+  "78": {
+   "pad": "PR35D",
+   "kind": "io",
+   "bank": 3
+  },
+  "79": {
+   "pad": "PR35B",
+   "kind": "io",
+   "bank": 3
+  },
+  "80": {
+   "pad": "PR35C",
+   "kind": "io",
+   "bank": 3
+  },
+  "81": {
+   "pad": "PR35A",
+   "kind": "io",
+   "bank": 3
+  },
+  "82": {
+   "pad": "PR32D",
+   "kind": "io",
+   "bank": 3
+  },
+  "83": {
+   "pad": "VCC",
+   "kind": "vcc",
+   "function": "VCC core supply 1.1 V"
+  },
+  "84": {
+   "pad": "PR32C",
+   "kind": "io",
+   "bank": 3
+  },
+  "85": {
+   "pad": "VSS",
+   "kind": "gnd",
+   "function": "ground net VSS"
+  },
+  "86": {
+   "pad": "VCCIO3",
+   "kind": "vccio",
+   "bank": 3,
+   "function": "VCCIO3 I/O bank 3 supply"
+  },
+  "87": {
+   "pad": "VSSIO3",
+   "kind": "gnd",
+   "function": "ground net VSSIO3"
+  },
+  "88": {
+   "pad": "PR23D",
+   "kind": "io",
+   "bank": 2
+  },
+  "89": {
+   "pad": "PR23B",
+   "kind": "io",
+   "bank": 2
+  },
+  "90": {
+   "pad": "PR23C",
+   "kind": "io",
+   "bank": 2
+  },
+  "91": {
+   "pad": "PR23A",
+   "kind": "io",
+   "bank": 2
+  },
+  "92": {
+   "pad": "PR20D",
+   "kind": "io",
+   "bank": 2
+  },
+  "93": {
+   "pad": "PR20B",
+   "kind": "io",
+   "bank": 2
+  },
+  "94": {
+   "pad": "PR20C",
+   "kind": "io",
+   "bank": 2
+  },
+  "95": {
+   "pad": "PR20A",
+   "kind": "io",
+   "bank": 2
+  },
+  "96": {
+   "pad": "VCCAUX",
+   "kind": "vccaux",
+   "function": "VCCAUX supply 2.5 V"
+  },
+  "97": {
+   "pad": "PR14B",
+   "kind": "io",
+   "bank": 2
+  },
+  "98": {
+   "pad": "PR14C",
+   "kind": "io",
+   "bank": 2
+  },
+  "99": {
+   "pad": "PR14A",
+   "kind": "io",
+   "bank": 2
+  },
+  "100": {
+   "pad": "VCCIO2",
+   "kind": "vccio",
+   "bank": 2,
+   "function": "VCCIO2 I/O bank 2 supply"
+  },
+  "101": {
+   "pad": "VSSIO2",
+   "kind": "gnd",
+   "function": "ground net VSSIO2"
+  },
+  "102": {
+   "pad": "PR8D",
+   "kind": "io",
+   "bank": 2
+  },
+  "103": {
+   "pad": "PR8B",
+   "kind": "io",
+   "bank": 2
+  },
+  "104": {
+   "pad": "PR8C",
+   "kind": "io",
+   "bank": 2
+  },
+  "105": {
+   "pad": "PR8A",
+   "kind": "io",
+   "bank": 2
+  },
+  "106": {
+   "pad": "PR2D",
+   "kind": "io",
+   "bank": 2
+  },
+  "107": {
+   "pad": "PR2C",
+   "kind": "io",
+   "bank": 2
+  },
+  "108": {
+   "pad": "PR2B",
+   "kind": "io",
+   "bank": 2
+  },
+  "109": {
+   "pad": "NC",
+   "kind": "nc",
+   "function": "not connected on this package"
+  },
+  "110": {
+   "pad": "PT67A",
+   "kind": "io",
+   "bank": 1
+  },
+  "111": {
+   "pad": "PT62B",
+   "kind": "io",
+   "bank": 1
+  },
+  "112": {
+   "pad": "PT62A",
+   "kind": "io",
+   "bank": 1
+  },
+  "113": {
+   "pad": "PT60B",
+   "kind": "io",
+   "bank": 1
+  },
+  "114": {
+   "pad": "PT60A",
+   "kind": "io",
+   "bank": 1
+  },
+  "115": {
+   "pad": "PT58B",
+   "kind": "io",
+   "bank": 1
+  },
+  "116": {
+   "pad": "PT58A",
+   "kind": "io",
+   "bank": 1
+  },
+  "117": {
+   "pad": "PT56B",
+   "kind": "io",
+   "bank": 1
+  },
+  "118": {
+   "pad": "PT56A",
+   "kind": "io",
+   "bank": 1
+  },
+  "119": {
+   "pad": "PT53B",
+   "kind": "io",
+   "bank": 1
+  },
+  "120": {
+   "pad": "PT53A",
+   "kind": "io",
+   "bank": 1
+  },
+  "121": {
+   "pad": "PT51A",
+   "kind": "io",
+   "bank": 1
+  },
+  "122": {
+   "pad": "VCCIO1",
+   "kind": "vccio",
+   "bank": 1,
+   "function": "VCCIO1 I/O bank 1 supply"
+  },
+  "123": {
+   "pad": "VSSIO1",
+   "kind": "gnd",
+   "function": "ground net VSSIO1"
+  },
+  "124": {
+   "pad": "PT42B",
+   "kind": "io",
+   "bank": 1
+  },
+  "125": {
+   "pad": "PT42A",
+   "kind": "io",
+   "bank": 1
+  },
+  "126": {
+   "pad": "PT40B",
+   "kind": "io",
+   "bank": 1
+  },
+  "127": {
+   "pad": "PT40A",
+   "kind": "io",
+   "bank": 1
+  },
+  "128": {
+   "pad": "PT29A",
+   "kind": "io",
+   "bank": 0
+  },
+  "129": {
+   "pad": "VSSIO0",
+   "kind": "gnd",
+   "function": "ground net VSSIO0"
+  },
+  "130": {
+   "pad": "VCC",
+   "kind": "vcc",
+   "function": "VCC core supply 1.1 V"
+  },
+  "131": {
+   "pad": "VSS",
+   "kind": "gnd",
+   "function": "ground net VSS"
+  },
+  "132": {
+   "pad": "VCCAUX",
+   "kind": "vccaux",
+   "function": "VCCAUX supply 2.5 V"
+  },
+  "133": {
+   "pad": "PT15B",
+   "kind": "io",
+   "bank": 0
+  },
+  "134": {
+   "pad": "PT15A",
+   "kind": "io",
+   "bank": 0
+  },
+  "135": {
+   "pad": "PT13B",
+   "kind": "io",
+   "bank": 0
+  },
+  "136": {
+   "pad": "PT13A",
+   "kind": "io",
+   "bank": 0
+  },
+  "137": {
+   "pad": "VCCIO0",
+   "kind": "vccio",
+   "bank": 0,
+   "function": "VCCIO0 I/O bank 0 supply"
+  },
+  "138": {
+   "pad": "VSSIO0",
+   "kind": "gnd",
+   "function": "ground net VSSIO0"
+  },
+  "139": {
+   "pad": "PT9B",
+   "kind": "io",
+   "bank": 0
+  },
+  "140": {
+   "pad": "PT9A",
+   "kind": "io",
+   "bank": 0
+  },
+  "141": {
+   "pad": "PT6B",
+   "kind": "io",
+   "bank": 0
+  },
+  "142": {
+   "pad": "PT4B",
+   "kind": "io",
+   "bank": 0
+  },
+  "143": {
+   "pad": "PT6A",
+   "kind": "io",
+   "bank": 0
+  },
+  "144": {
+   "pad": "NC",
+   "kind": "nc",
+   "function": "not connected on this package"
+  }
+ }
+}

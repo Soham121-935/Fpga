@@ -1,121 +1,137 @@
-// SV-16 Rev A — Unit Testbench for GPIO Controller
-// Module: sv16_gpio_tb
+// SV-16 Rev B — Testbench: GPIO port (`sv16_gpio`, `0xF010` / `0xF070`)
 //
-// Verifies:
-// 1. Reset state (outputs low, direction = input)
-// 2. Setting pin direction (GPIO_DIR)
-// 3. Output writing (GPIO_DATA)
-// 4. Atomic bit setting (GPIO_SET)
-// 5. Atomic bit clearing (GPIO_CLR)
-// 6. Input synchronization and reading
+// Both GPIO ports are the same module, so one testbench covers both.  What is
+// checked is what firmware actually depends on:
+//
+//   1. reset state: every pin an input, output-enable low, pad data clear
+//   2. DIR drives the pad output enable, and DATA drives the pad latch
+//   3. reading DATA returns the pin for inputs and the latch for outputs
+//   4. inputs are synchronised (a change appears two clocks later, not on the
+//      clock that caused it)
+//   5. SET and CLR are atomic: they change only the bits named, and they are
+//      safe with a mixed input/output port -- which a read-modify-write write to
+//      DATA is not, because DATA reads back *pins* on the input bits
 
 `timescale 1ns / 1ps
 
 module sv16_gpio_tb;
 
-    logic        clk;
+    logic        clk = 1'b0;
+    always #10 clk = ~clk;          // 50 MHz
+
     logic        rst_n;
     logic [3:0]  addr;
-    logic [15:0] wdata;
-    logic [15:0] rdata;
-    logic        req;
-    logic        we;
-    logic        ack;
-    logic [15:0] gpio_in;
-    logic [15:0] gpio_out;
-    logic [15:0] gpio_oen;
+    logic [15:0] wdata, rdata;
+    logic        req, we, ack;
+    logic [15:0] gpio_in, gpio_out, gpio_oen;
 
-    int error_count;
+    int          checks = 0, errors = 0;
+    logic [15:0] rd;
 
-    sv16_gpio uut (.*);
+    localparam logic [3:0] DATA = 4'h0,
+                           DIR  = 4'h1,
+                           SET  = 4'h2,
+                           CLR  = 4'h3;
 
-    always #20 clk = ~clk;
+    sv16_gpio dut (
+        .clk(clk), .rst_n(rst_n),
+        .addr(addr), .wdata(wdata), .rdata(rdata),
+        .req(req), .we(we), .ack(ack),
+        .gpio_in(gpio_in), .gpio_out(gpio_out), .gpio_oen(gpio_oen)
+    );
 
-    task bus_write(input [3:0] a, input [15:0] d);
-        @(posedge clk);
-        addr  = a;
-        wdata = d;
-        we    = 1;
-        req   = 1;
-        @(posedge clk);
-        while (!ack) @(posedge clk);
-        req   = 0;
-        we    = 0;
-    endtask
-
-    task bus_read(input [3:0] a, output [15:0] d);
-        @(posedge clk);
-        addr  = a;
-        we    = 0;
-        req   = 1;
-        @(posedge clk);
-        while (!ack) @(posedge clk);
-        #1;
-        d     = rdata;
-        req   = 0;
-    endtask
+    `include "periph_tb.svh"
 
     initial begin
-        clk = 0;
-        rst_n = 0;
-        addr = 0;
-        wdata = 0;
-        req = 0;
-        we = 0;
-        gpio_in = 16'h5555;
-        error_count = 0;
+        rst_n = 1'b0;
+        addr = 4'h0; wdata = 16'h0; req = 1'b0; we = 1'b0;
+        gpio_in = 16'h0000;
 
-        #100;
-        rst_n = 1;
-        #40;
+        repeat (4) @(posedge clk);
+        rst_n = 1'b1;
+        repeat (4) @(posedge clk);
 
-        // 1. Verify reset state: gpio_oen == 0x0000, gpio_out == 0x0000
-        if (gpio_oen !== 16'h0000 || gpio_out !== 16'h0000) begin
-            $display("[FAIL] GPIO reset defaults failed!");
-            error_count++;
+        $display("== SV-16 GPIO test ==");
+
+        // ---- 1. reset ------------------------------------------------------
+        $display("-- 1. reset state --");
+        bus_read(DIR, rd);
+        check_eq16(rd, 16'h0000, "DIR after reset (all inputs)");
+        check_eq16(gpio_oen, 16'h0000, "pad output enable off after reset");
+        bus_read(DATA, rd);
+        check_eq16(rd, 16'h0000, "DATA after reset");
+        check_eq16(gpio_out, 16'h0000, "pad data clear after reset");
+
+        // ---- 2. direction and data -----------------------------------------
+        $display("-- 2. DIR and DATA reach the pads --");
+        bus_write(DIR, 16'h00FF);
+        check_eq16(gpio_oen, 16'h00FF, "pads 7:0 became outputs");
+        bus_write(DATA, 16'h00A5);
+        check_eq16(gpio_out, 16'h00A5, "pad data latch follows DATA");
+        bus_read(DIR, rd);
+        check_eq16(rd, 16'h00FF, "DIR reads back");
+        bus_read(DATA, rd);
+        check_eq16(rd, 16'h00A5, "output pins read back the latch");
+
+        // ---- 3. inputs read as pins ----------------------------------------
+        $display("-- 3. reading DATA mixes pins (inputs) and latch (outputs) --");
+        gpio_in = 16'h5A00;
+        repeat (4) @(posedge clk);
+        bus_read(DATA, rd);
+        check_eq16(rd, 16'h5AA5, "inputs read as pins, outputs as the latch");
+
+        // ---- 4. the input synchroniser -------------------------------------
+        // The pin is not readable in the same clock it changes (no combinational
+        // path), and it reaches the bus register exactly two clocks later: that
+        // latency is what stops a mid-transition pin from being sampled.
+        $display("-- 4. inputs are synchronised (two flops) --");
+        begin
+            int cycles;
+            gpio_in[8] = 1'b1;
+            check(dut.sync_stage2[8] == 1'b0,
+                  "no combinational path from the pin to the register");
+            cycles = 0;
+            while ((dut.sync_stage2[8] !== 1'b1) && (cycles < 6)) begin
+                @(negedge clk);
+                cycles++;
+            end
+            check(cycles == 2,
+                  $sformatf("pin reaches the register after 2 clocks (%0d)", cycles));
+            bus_read(DATA, rd);
+            check(rd[8] == 1'b1, "and the bus reads it back once it is there");
         end
 
-        // 2. Set direction to output for lower 8 bits (GPIO_DIR = 0x00FF at offset 1)
-        bus_write(4'h1, 16'h00FF);
-        #1;
-        if (gpio_oen !== 16'h00FF) begin
-            $display("[FAIL] GPIO_DIR write failed! Got 0x%h", gpio_oen);
-            error_count++;
-        end
+        // ---- 5. SET and CLR are atomic -------------------------------------
+        $display("-- 5. SET / CLR touch only the bits named --");
+        bus_write(SET, 16'h0010);
+        bus_read(DATA, rd);
+        // high byte = pins (0x5B now that pin 8 is high), low byte = latch
+        check_eq16(rd, 16'h5BB5, "SET adds one bit");
+        bus_write(CLR, 16'h0001);
+        bus_read(DATA, rd);
+        check_eq16(rd, 16'h5BB4, "CLR removes one bit");
+        check_eq16(gpio_oen, 16'h00FF, "SET/CLR leave DIR alone");
+        bus_write(SET, 16'hFF00);             // bits that are *inputs* here
+        check_eq16(gpio_out[15:8], 16'hFF, "SET latches the pad data");
 
-        // 3. Atomic bit set: Set bit 0 and bit 2 (GPIO_SET = 0x0005 at offset 2)
-        bus_write(4'h2, 16'h0005);
-        #1;
-        if (gpio_out !== 16'h0005) begin
-            $display("[FAIL] GPIO_SET failed! Got 0x%h, Expected 0x0005", gpio_out);
-            error_count++;
-        end
+        // Why SET/CLR matter: DATA reads back *pins* on the input bits, so a
+        // read-modify-write of DATA writes those pin values into the output
+        // latch.  Writing back exactly what was read is enough to corrupt it.
+        bus_read(DATA, rd);
+        bus_write(DATA, rd);
+        check_eq16(gpio_out[15:8], 16'h5B,
+                   "RMW on DATA folded the input pins into the latch (0xFF -> 0x5B)");
+        check_eq16(gpio_out[7:0], 16'hB4, "the output bits themselves survived");
 
-        // 4. Atomic bit clear: Clear bit 0 (GPIO_CLR = 0x0001 at offset 3)
-        bus_write(4'h3, 16'h0001);
-        #1;
-        if (gpio_out !== 16'h0004) begin
-            $display("[FAIL] GPIO_CLR failed! Got 0x%h, Expected 0x0004", gpio_out);
-            error_count++;
-        end
+        // SET/CLR are write-only: a read of those offsets returns 0
+        bus_read(SET, rd);
+        check_eq16(rd, 16'h0000, "SET is write-only");
+        bus_read(CLR, rd);
+        check_eq16(rd, 16'h0000, "CLR is write-only");
 
-        // 5. Read back GPIO inputs (offset 0)
-        // gpio_in is 0x5555, upper byte has dir=0 (input), so upper byte should read 0x55
-        logic [15:0] read_val;
-        repeat (3) @(posedge clk); // Allow synchronizer to settle
-        bus_read(4'h0, read_val);
-        if (read_val[15:8] !== 8'h55) begin
-            $display("[FAIL] GPIO input read failed! Got: 0x%h", read_val);
-            error_count++;
-        end
-
-        if (error_count == 0) begin
-            $display("[PASS] sv16_gpio unit test passed with 0 errors.");
-        end else begin
-            $display("[FAIL] sv16_gpio unit test failed with %0d errors.", error_count);
-        end
-
-        $finish;
+        finish_suite("SV-16 GPIO test");
     end
 
-endmodule : sv16_gpio_tb
+    initial suite_timeout(200_000);
+
+endmodule

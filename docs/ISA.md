@@ -19,6 +19,14 @@ SV-16 uses 16-bit baseline instruction words. Certain instructions (e.g. 16-bit 
 - Used for 3-operand or 2-operand ALU operations (`Rd <= Rs1 OP Rs2`).
 
 ### Format I (Register-Immediate Operations)
+
+The immediate is **nine-bit two's complement**: bit 8 is the sign, so the field
+covers `-256..255`. Write a negative constant either as a negative literal
+(`ADDI R5, -5`) or as its nine-bit form (`ADDI R5, 0x1FB`); the assembler accepts
+both and rejects anything outside the range rather than masking it.
+`ADDI`/`SUBI` also take the destination register as their first operand —
+`ADDI Rd, imm` — because there is no third register field to name one
+([ADR-020](ARCHITECTURE_DECISIONS.md#adr-020-the-i-format-source-operand-and-a-latched-alu-result-for-writeback)).
 ```text
 15    12 11   9 8                  0
 ┌───────┬──────┬────────────────────┐
@@ -58,7 +66,13 @@ SV-16 uses 16-bit baseline instruction words. Certain instructions (e.g. 16-bit 
 └───────┴──────┴────────────────────┘
   4-bit  3-bit         9-bit
 ```
-- Used for `PUSH Rx`, `POP Rx`, `CALL`, `RET`, `NOP`, `HALT`, `RETI`.
+- Used for `PUSH Rx`, `POP Rx`, `CALL`, `RET`, `NOP`, `HALT`, `EI`, `DI`, `RETI`.
+- Opcode `0x0` carries a nine-bit control sub-opcode in `instr[8:0]`; the five
+  values are `0x000` `NOP`, `0x001` `HALT`, `0x002` `EI`, `0x003` `DI`, `0x004`
+  `RETI`. Any other value is a reserved sub-opcode and traps as an illegal
+  instruction. The assembler emitted `0x000` for all five until
+  [ADR-022](ARCHITECTURE_DECISIONS.md#adr-022-three-instruction-level-defects-control-encodings-halt-and-the-divider-wait-state),
+  so `HALT`/`EI`/`DI`/`RETI` were unusable from assembly before that.
 
 ---
 
@@ -85,7 +99,7 @@ SV-16 uses 16-bit baseline instruction words. Certain instructions (e.g. 16-bit 
 | `0001` (`0x1`) | `ALU_RR` | R | Register-Register ALU operations (SubOp in [2:0]) | Z, C, N, V |
 | `0010` (`0x2`) | `ADDI` | I | Add Immediate: `Rd <= Rd + sign_ext(imm9)` | Z, C, N, V |
 | `0011` (`0x3`) | `SUBI` | I | Subtract Immediate: `Rd <= Rd - sign_ext(imm9)` | Z, C, N, V |
-| `0010` (`0x4`) | `LDI` | S (2-word) | Load 16-bit Immediate: `Rd <= imm16` (word 2) | Z, N |
+| `0100` (`0x4`) | `LDI` | S (2-word) | Load 16-bit Immediate: `Rd <= imm16` (word 2) | Z, N |
 | `0101` (`0x5`) | `LOAD` | M | Memory Load: `Rd <= MEM[Rb + offset]` | Z, N |
 | `0110` (`0x6`) | `STORE`| M | Memory Store: `MEM[Rb + offset] <= Rd` | None |
 | `0111` (`0x7`) | `MOV` | R | Register Copy: `Rd <= Rs1` | Z, N |
@@ -148,3 +162,56 @@ SV-16 uses 16-bit baseline instruction words. Certain instructions (e.g. 16-bit 
 Any undefined opcode or sub-opcode (such as reserved condition codes or reserved ALU operations) will:
 1. Trigger an illegal instruction exception (if interrupt vector initialized), OR
 2. Treat the instruction as a `NOP` without modifying architectural registers or flags, asserting an `illegal_instr` debug flag on the CPU core interface.
+
+---
+
+## 7. Rev B notes (the ISA itself is unchanged)
+
+Rev B did **not** change the ISA: the encodings in sections 1-6 are exactly what
+Rev A defined, and every application written for Rev A executes unchanged. What
+changed around it is how a program gets *started* and how it talks to the new
+hardware:
+
+* **Execution entry.** At power-up the CPU is released by the boot sequencer
+  (`rtl/sv16_startup.sv`), not by a hard-wired reset vector. It enters either the
+  boot ROM monitor at `0xE000`, or the application's own `entry` address (with the
+  application's own `SP`, taken from the flash image header). Programs are
+  therefore assembled for the address they will run at — `make app` links at
+  `0x0000` because the loader copies payloads to SRAM address 0.
+* **Interrupts.** The vector table is 8 words at `0x0020-0x0027`, one 16-bit
+  handler address per source ([MEMORY_MAP.md](MEMORY_MAP.md#interrupt-vector-indices)).
+  The CPU still pushes `SR` and `PC` before the vector fetch and `RETI` restores
+  them; enabling an interrupt now also requires the per-source bit in `IRQ_EN`
+  (`0xF090`) and the global bit `SYS_CTRL.IRQEN` (`0xF001`). Interrupts are
+  enabled from software with `EI` and disabled with `DI` — the two instructions
+  the assembler could not encode until ADR-022. **Latency (measured): 11-31
+  cycles from the peripheral's line going high to the first handler instruction,
+  of which 1 cycle is the interrupt controller; `DIV` (22 cycles) is the worst
+  case because it is not abandoned mid-flight.** See
+  [ADR-023](ARCHITECTURE_DECISIONS.md#adr-023-interrupt-latency-budget).
+* **`HALT`.** `HALT` stops the core at an instruction boundary until an enabled
+  interrupt is taken, the debug port single-steps/continues, or reset. It is the
+  intended idle state for an application that has nothing to do; `SYS_STAT` and
+  `SYS_CTRL` expose the same halt request to a debugger.
+* **Trap.** An illegal opcode takes vector 7 and, in addition, latches the
+  offending address in `SYS_FAULT_ADDR` and increments `SYS_FAULT_CNT` so a
+  monitor or the application itself can diagnose the fault.
+* **Memory map.** SRAM is 16 K words at `0x0000`, the boot ROM is at `0xE000`,
+  peripherals are at `0xF000-0xF0FF`; see [MEMORY_MAP.md](MEMORY_MAP.md). Rev A's
+  map (8 K words of SRAM, four peripherals) is superseded.
+* **DIV and MOD are multi-cycle.** The ISA is unchanged — same encodings, same
+  results, same flags (including divide-by-zero: `V=1`, quotient `0xFFFF`,
+  remainder `0x0000`) — but the ALU serves them with one iterative restoring
+  divider instead of a combinational one, so they hold the core for **~22
+  cycles** from `S_EXECUTE` to writeback rather than 1 (ADR-018; measured after
+  ADR-022, which is what actually put the FSM into its wait state — before that
+  the instruction wrote back a stale result). Every other operation, including
+  `MUL`, is still executed in the single `S_EXECUTE` cycle. Firmware that counts
+  cycles around a division must allow for the extra ~21; nothing else changes.
+* **No new instructions.** In particular there is still **no register-indirect
+  jump or call**: `JMP` and `CALL` take a 16-bit immediate, and returns use `RET`
+  through the stack. That is enough for handlers (the CPU fetches the handler
+  address from the vector table itself) and for the monitor's dispatcher
+  (compare-and-branch trampolines), but it is the main obstacle to a C compiler —
+  a function-pointer call has no encoding. Adding one is an ISA extension that
+  would need its own ADR ([OPEN_QUESTIONS.md](OPEN_QUESTIONS.md), OQ-16).

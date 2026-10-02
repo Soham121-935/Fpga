@@ -1,4 +1,4 @@
-// SV-16 Rev A — Status Register (SR)
+// SV-16 Rev B — Status Register (SR)
 // Module: sv16_status_reg
 //
 // Architectural Flag Mapping:
@@ -11,9 +11,11 @@
 //
 // Control Inputs:
 //   flag_update_en : Enables latching of new flags from ALU
-//   sr_write_en    : Enables direct architectural write to SR (e.g. from MOV or POP SR)
+//   sr_write_en    : Enables direct architectural write to SR (interrupt
+//                    return / debug port writes)
 //   ie_set         : Atomic enable of global interrupts (EI instruction)
-//   ie_clr         : Atomic disable of global interrupts (DI instruction)
+//   ie_clr         : Atomic disable of global interrupts (DI instruction and
+//                    hardware interrupt entry)
 
 `timescale 1ns / 1ps
 
@@ -68,7 +70,7 @@ module sv16_status_reg (
             reg_v  <= 1'b0;
             reg_ie <= 1'b0;
         end else if (sr_write_en) begin
-            // Direct architectural overwrite of Status Register
+            // Direct architectural overwrite (RETI restores the saved frame)
             reg_z  <= sr_write_data[0];
             reg_c  <= sr_write_data[1];
             reg_n  <= sr_write_data[2];
@@ -83,11 +85,11 @@ module sv16_status_reg (
                 reg_v <= flag_v_in;
             end
 
-            // Atomic IE control (takes precedence or can be set concurrently)
-            if (ie_set) begin
-                reg_ie <= 1'b1;
-            end else if (ie_clr) begin
+            // Atomic IE control (DI / interrupt entry take precedence)
+            if (ie_clr) begin
                 reg_ie <= 1'b0;
+            end else if (ie_set) begin
+                reg_ie <= 1'b1;
             end
         end
     end

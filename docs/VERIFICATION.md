@@ -1,38 +1,177 @@
-# SV-16 Rev A — Verification Strategy and Test Plan
+# SV-16 Rev B — Verification
+
+Verification for Rev B is simulation-based: self-checking Verilator testbenches
+plus two static checks (RTL lint and Verilator elaboration of the whole SoC).
+The regression is what the repository's `make test` actually runs — nothing in
+the tables below is aspirational.
 
 ---
 
-## 1. Verification Strategy
+## 1. What runs today
 
-SV-16 Rev A enforces strict bottom-up verification (Rule 2 and Rule 40):
-1. **Module Unit Testing**:
-   - Every RTL module must have an accompanying self-checking testbench (`module_tb.sv` or equivalent).
-   - Testbenches check nominal behavior, boundary cases, and invalid inputs.
-2. **Subsystem Integration Testing**:
-   - Datapath testing: Register File + ALU + SR integration.
-   - Memory Subsystem testing: Bus arbiter + RAM + Bus timing.
-3. **CPU Execution Verification**:
-   - Automated instruction execution tests: verifying every opcode and flag setting against expected architectural state.
-   - Self-checking firmware programs run in simulation before FPGA bitstream generation.
-4. **Automated Regression Suite**:
-   - Executable via command line script (`python3 scripts/run_tests.py` / `make test`).
-   - Every git commit must maintain a clean regression run without errors.
+```sh
+source scripts/sv16_venv.sh
+make test            # lint + firmware + all sixteen simulation suites
+make sim TB=wdt_tb   # a single suite
+```
+
+| Suite | File | Checks | Result | What it proves |
+| :--- | :--- | ---: | :--- | :--- |
+| `wdt_tb` | `simulation/unit/wdt_tb.sv` | 49 | PASS | the watchdog: exact period `(PRESET+1)x2^PRESC`, one-cycle reset request, self-rearm, keyed writes, magic-word feeds, integer prescaler, early-warning interrupt `MARGIN` ticks ahead, windowed feeding, LOCK freezing enable/period/prescaler/window, write-1-to-clear flags, hard-reset-only clearing |
+| `wdt_reset_tb` | `simulation/regression/wdt_reset_tb.sv` | 14 | PASS | the whole point of it: an application that hangs is restarted by the hardware — bite, `RSTCAUSE.WDT`, re-boot of the image, application runs again, second hang caught again, external pin clears it |
+| `div_tb` | `simulation/unit/div_tb.sv` | 41 | PASS | the ALU's iterative divider (ADR-018): the handshake (16-cycle busy, a start while busy does not restart the run, no stale result after reset), the arithmetic including `0/5`, `1/2`, `0xFFFF/1`, `0x8000/0x8000`, divide-by-zero per OQ-04, and that every other operation is still single-cycle |
+| `flash_ctrl_tb` | `simulation/unit/flash_ctrl_tb.sv` | 48 | PASS | the flash controller's command set: ID, read stream, page program + flush, sector erase, CRC over a range, status/wait-state handling, error flags |
+| `boot_tb` | `simulation/unit/boot_tb.sv` | 26 | PASS | the hardware boot loader against a behavioural SPI NOR model: header parse, CRCs, payload streaming into SRAM, `BOOT_STAT`/`BOOT_ERR`, verify-only mode, rejection of corrupt images, and a clean "no image anywhere" verdict |
+| `slot_tb` | `simulation/unit/slot_tb.sv` | 57 | PASS | the A/B policy end to end (ADR-019), with the loader, the flash controller and the flash model wired as `sv16_top` wires them, including the slot-record program handshake: the pick order (pending > trial > good > no record > bad), a pending image being marked TRIED *before* the CPU is released, a restart inside the trial retiring it to BAD and booting the other slot, a confirmed update retiring the previous image so the update sticks, a torn record being refused, and `BOOT_CTRL[4]` booting `BOOT_SRC` with the records ignored |
+| `soc_boot_tb` | `simulation/regression/soc_boot_tb.sv` | 21 | PASS | end-to-end: reset → boot engine → SRAM contains the image → CPU released at the entry point with the image's stack pointer |
+| `monitor_tb` | `simulation/regression/monitor_tb.sv` | 21 | PASS | the whole field-programming story over a bit-banged UART: banner, `?`, `C` upload of a real image, `R` readback, `E` erase, `V` CRC, `K` confirm (ADR-019), `B` boot, the application actually running and driving GPIO/PWM/direction pins, and the monitor being the fallback |
+| `sv16_alu_tb` | `simulation/unit/sv16_alu_tb.sv` | 35 | PASS | the ALU as an instruction sees it: every arithmetic and logic operation, the flag rules (including `MUL` overflow setting both C and V), shifts with their count field, and the divider's `DIV`/`MOD` results cross-checked against a software model |
+| `sv16_ram_tb` | `simulation/unit/sv16_ram_tb.sv` | 11 | PASS | the SRAM at the CPU's real geometry (32 KB, 14-bit address): the read-first behaviour the bus depends on, byte-write masking, out-of-range wrapping, and the `INIT_FILE` path the loader uses |
+| `sv16_timer_tb` | `simulation/unit/sv16_timer_tb.sv` | 21 | PASS | timer 0's full register set: prescaler, reload, up/down counting, the compare and overflow interrupts, write-1-to-clear flags, one-shot mode, the enable gating every other bit obeys, and the IRQ output |
+| `sv16_pwm_tb` | `simulation/unit/sv16_pwm_tb.sv` | 23 | PASS | PWM 0's waveform rather than its registers: the period and duty counts are measured edge to edge, duty 0 % and 100 % extremes, the fault input stopping the output, dead-time, and the interrupt |
+| `sv16_gpio_tb` | `simulation/unit/sv16_gpio_tb.sv` | 20 | PASS | the GPIO block's direction/data/interrupt registers, the two-clock input synchroniser on every pin, the read-modify-write behaviour of a write to `DATA`, and the pin-change interrupt |
+| `sv16_uart_tb` | `simulation/unit/sv16_uart_tb.sv` | 27 | PASS | the UART end to end at the bit level: divisor, TX/RX FIFOs and their level fields, framing, the loopback of a byte, overrun and frame-error flags, and that the self-clearing FIFO-clear pulse bits can never be latched by a read-modify-write |
+| `isa_tb` | `simulation/regression/isa_tb.sv` | 11 | PASS | the ISA itself, running `firmware/tests/isa_regress.s` on the CPU with an SRAM: reset state, every conditional branch in both its taken and fall-through form, ADDI/SUBI values including a negative immediate, PUSH/POP, CALL/RET, stack balance and the final self-loop. It also runs `DIV`/`MOD` and checks the quotient and remainder, because the instruction-level divider path (the FSM wait state) is where the writeback can go missing — see [ADR-022](ARCHITECTURE_DECISIONS.md#adr-022-three-instruction-level-defects-control-encodings-halt-and-the-divider-wait-state). This is the suite that found the two defects in [ADR-020](ARCHITECTURE_DECISIONS.md#adr-020-the-i-format-source-operand-and-a-latched-alu-result-for-writeback) |
+| `control_tb` | `simulation/regression/control_tb.sv` | 27 | PASS | the control-instruction group (`NOP`/`HALT`/`EI`/`DI`/`RETI`) checked at all three levels that can disagree: the *assembler* must emit five distinct words (it emitted `0x0000` for all five until ADR-022), the *decoder* must select exactly one and trap a reserved sub-opcode, and the *core* must really clear/set `SR.IE`, really stop on `HALT` (PC frozen), wake a halted core into the handler on an enabled interrupt with `RETI` returning to the instruction after the `HALT`, and stay halted with an interrupt disabled but pending |
+| `irq_latency_tb` | `simulation/regression/irq_latency_tb.sv` | 13 | PASS | the interrupt path end to end and its timing budget ([ADR-023](ARCHITECTURE_DECISIONS.md#adr-023-interrupt-latency-budget)): the testbench raises IRQ source 0, the controller latches the edge and reports how many cycles it adds, the core takes the interrupt at the next instruction boundary over a 24-point sweep of arrival moments (so `DIV`, the longest instruction, is hit as well as `NOP`), the interrupted `DIV` still completes and lands, `RETI` leaves `SP` balanced, and the pending bit clears on hardware acknowledge. Measured: controller 1 cycle, **11–31 cycles request → handler**, a 3-word handler + `RETI` costs 16 cycles |
+| `pll_clock_tb` | `simulation/regression/pll_clock_tb.sv` | 8 | PASS | the PLL clock configuration end to end (ADR-021): the SoC is elaborated with `CLKSRC=pll` and really holds `rst_n` low while the PLL is unlocked, the generated clock measures 1.5x the 25 MHz reference, the UART divisor is the one derived from 37.5 MHz (326), and a real monitor frame decodes at that divisor — which is what makes firmware clock-rate agnostic rather than a claim |
+| `sv16_rtl_lint.py` | `scripts/sv16_rtl_lint.py` | 26 files | clean | structural checks: multiple drivers, missing `default` in combinational `case`, `always_ff` without reset, latches, etc. |
+| Verilator elaboration | `make vlint` | top | clean | the whole SoC (package + 25 modules) elaborates as one design |
+
+Total: **473 checks, 0 failures.** Every suite is registered in the Makefile's
+`TESTBENCHES` list, so `make sim` is the whole regression; `sv16_run_tb.sh`
+fails a suite unless it prints `RESULT: PASS`, which means a testbench that
+crashes or times out can no longer be mistaken for a pass.
+
+The SPI flash model implements the physics the A/B record depends on: a page
+program can only clear bits (`mem <= mem & data`) and an erase sets a whole
+sector back to `0xFF`. Modelling a program as a plain assignment would hide an
+encoding that needs a bit set back — a real chip cannot do that without erasing
+the sector, image and all — so `slot_tb` would pass here and fail on the board.
+
+`monitor_tb` is the most valuable suite in the set: it is a *system* test. It
+bakes `build/rom/monitor.hex` into the ROM model, brings up a blank flash, drives
+a real image (`build/fw/motor_test_img.hex`) through the monitor's upload
+protocol byte by byte with the ack/dot handshake, verifies the flash contents,
+and then checks that a `B` command hands control to the uploaded application with
+the expected side effects on the peripherals. `wdt_reset_tb` is the other system
+test: it boots a deliberately hanging application out of flash and watches the
+watchdog recover it, twice, with no host involved. All suites are run from the
+repository root (they read files from `build/`).
+
+### Testbench infrastructure
+
+* `scripts/sv16_run_tb.sh` builds any testbench with Verilator (`build/vlt/<top>/`),
+  adding `rtl/*.sv` (package first, top last), the SoC top, and the SPI flash
+  model when the testbench instantiates it. Testbenches must run from the repo
+  root because they `$readmemh` from `build/`.
+* **The runner decides pass or fail itself.** Every run is teed to
+  `build/vlt/<top>/run.log`, and the script exits non-zero unless a suite
+  explicitly prints `RESULT: PASS` — a testbench that crashes, hangs past its own
+  watchdog or `$finish`es early can no longer be mistaken for a pass. Peripheral
+  suites share `simulation/unit/periph_tb.svh`, which also carries a per-suite
+  absolute timeout.
+* Peripheral and CPU-side suites sample `always_ff` outputs at `negedge` (or
+  after `#1`) — reading at the active edge returns the pre-edge value and was the
+  cause of several early "failures" in the rewritten suites.
+* `simulation/unit/sv16_flash_model.sv` is a behavioural SPI NOR (64 KB,
+  256-byte pages, 4 KB sectors, `tPROG`/`tERASE` modelled in clocks, JEDEC ID
+  `0xEF4018`) shared by `flash_ctrl_tb`, `boot_tb`, `soc_boot_tb` and
+  `monitor_tb`.
+* Watchdogs: every suite has an absolute cycle limit and fails loudly instead of
+  hanging, and the CPU-side suites watch `dut.dbg_pc` for runaway execution.
 
 ---
 
-## 2. Test Plan Matrix
+## 2. Bugs this suite has caught
 
-| Module | Testbench Path | Key Corner Cases to Verify | Status |
-| :--- | :--- | :--- | :--- |
-| **Register File** (`sv16_regfile`) | `simulation/unit/sv16_regfile_tb.sv` | Simultaneous read of same reg, write enable 0 vs 1, read-during-write | Pending Phase 3 |
-| **ALU** (`sv16_alu`) | `simulation/unit/sv16_alu_tb.sv` | 0, `0xFFFF`, `0x7FFF`, signed overflow, carry, shift amounts (0, 1, 15, 16), DIV by 0 | Pending Phase 4 |
-| **Status Register** (`sv16_status_reg`) | `simulation/unit/sv16_status_reg_tb.sv` | Flag update gating, bit positioning, clear/set | Pending Phase 5 |
-| **Program Counter** (`sv16_pc`) | `simulation/unit/sv16_pc_tb.sv` | Reset to 0x0000, increment, target branch load, hold on stall | Pending Phase 6 |
-| **Instruction Decoder** (`sv16_decoder`) | `simulation/unit/sv16_decoder_tb.sv` | All 16 primary opcodes, extended sub-opcodes, illegal opcodes | Pending Phase 7 |
-| **Control Unit** (`sv16_control_unit`) | `simulation/unit/sv16_control_unit_tb.sv`| FSM transitions, bus wait-states, multi-cycle sequencing | Pending Phase 8 |
-| **Minimal CPU Core** (`sv16_cpu`) | `simulation/regression/sv16_cpu_tb.sv` | Execute test program (`MOV`, `ADD`, `SUB`, `JMP`) | Pending Phase 9 |
-| **Memory Bus Subsystem** | `simulation/regression/sv16_soc_tb.sv` | RAM read/write, memory-mapped peripheral read/write | Pending Phase 10 |
-| **GPIO Controller** | `simulation/unit/sv16_gpio_tb.sv` | Pin direction, pin read, atomic SET/CLR | Pending Phase 13 |
-| **Timer 0** | `simulation/unit/sv16_timer_tb.sv` | Prescaler clock division, compare match, auto-reload, interrupt | Pending Phase 14 |
-| **PWM Controller 0** | `simulation/unit/sv16_pwm_tb.sv` | Frequency, 0% duty, 50% duty, 100% duty, emergency fault shutdown | Pending Phase 15 |
-| **UART 0** | `simulation/unit/sv16_uart_tb.sv` | TX serial framing, RX framing, baud generator precision | Pending Phase 16 |
+Worth recording, because they are the reason the boot path is trustworthy now:
+
+1. **A slave's `ack` was not qualified by its own transfer.** A peripheral acked
+   for a request it had already serviced, so the CPU could latch a *stale* read
+   value — this corrupted instruction fetches during the loader's RAM writes and
+   showed up as monitor code walking off the end of its own text. Fixed by
+   qualifying every slave ack with the request (and reply routing with the
+   granted master).
+2. **A bus master could be starved forever.** Arbitration was rewritten to a
+   held-grant scheme with the loader at lower priority: a master keeps the bus
+   until its transfer completes, and a pending CPU store cannot be lost while an
+   image streams past it.
+3. **The boot loader's START strobe was level-based.** The CPU holds a store on
+   the bus until it is acknowledged, so a level-sensitive start restarted the
+   load on every cycle it stayed asserted (a "boot storm"). `BOOT_CTRL.START` is
+   now a latched, self-clearing request.
+4. **The loader's start pulse was multi-cycle.** `sv16_startup` now emits a
+   single-cycle `boot_go`.
+5. **Flash read streaming was off by one** (wait states after the last byte),
+   and the monitor's hex helper printed one nibble short.
+6. **The watchdog's feed was swallowed by its own tick** (found by `wdt_tb`):
+   at `PRESC = 0` every clock is a tick, and the counter's decrement was
+   evaluated after — and therefore overrode — the reload a feed had just
+   requested, so feeding the watchdog at its most common setting did nothing.
+   The counter now has an explicit priority: window fault, feed, then tick.
+7. **A 16-bit period and an 8-bit key cannot share one word**: the first cut
+   stored the whole keyed value as the period, so a 32-tick watchdog ran for
+   23048 clocks. `CTRL` is keyed; the period registers are frozen by `LOCK`.
+8. **The window was enforced on the very first feed**, which would have reset a
+   correctly written application one period after arming the watchdog; the first
+   period after `ENABLE` is now exempt.
+9. **`ADDI`/`SUBI` computed the wrong thing** (found by the new `isa_tb`): the
+   I-format read port was decoded from the immediate field, so the source was
+   `R{imm[8:6]}` instead of `Rd`, *and* writeback re-evaluated the ALU one state
+   after its operand select had dropped, committing `Rd + R_{Rs2 field}`. Neither
+   the 277 checks that existed at the time nor any shipped firmware noticed,
+   because no program in the repository had ever executed an immediate
+   arithmetic instruction — production code reaches for `LDI` + `ADD`. Both are
+   fixed ([ADR-020](ARCHITECTURE_DECISIONS.md#adr-020-the-i-format-source-operand-and-a-latched-alu-result-for-writeback));
+   the regression that caught them is `isa_tb`.
+10. **The 25 MHz timing failure was misdiagnosed in the documentation.** It was
+   attributed to the CPU's flag/branch path (`u_sys.illegal_pc`'s decrement), with
+   "split the flag decision" offered as the fix; the nextpnr critical-path report
+   plus a constant-folding experiment showed the culprit was the ALU's
+   combinational 16/16 divider. Fixing that (multi-cycle DIV/MOD, ADR-018) took
+   Fmax from 14.68 MHz to 46.17 MHz and the shipped clock from 12.5 MHz to
+   25 MHz — `div_tb`. The writeback latch from ADR-020 shortened the path
+   further: the ALU is no longer on it at all. (The P9→PLL builds measure
+   44.70 MHz for the same logic: Yosys/nextpnr results shift by a few percent
+   when the file set changes. The flow itself is deterministic — the same
+   sources produce the same number on every run.)
+
+---
+
+## 3. What is *not* verified
+
+Being explicit about coverage gaps is part of the verification story:
+
+| Area | Status |
+| :--- | :--- |
+| Real silicon | **never run.** Everything below is simulation + place-and-route. Electrical behaviour, the real flash part, reset-line RC time constants and the 25 MHz oscillator are unproven |
+| Reset glitch / power sequencing | only clean pulses are simulated; no brown-out or runt-pulse testing |
+| UART framing errors, overrun, break conditions | the model drives clean 8-N-1 only |
+| Interrupt latency | **measured and bounded** (ADR-023): 11–31 cycles request → handler over a 24-point sweep, 1 of them in the controller, 6 in the entry sequence; `irq_latency_tb` enforces the bounds |
+| Timer/PWM/GPIO/UART boundaries | covered functionally by `sv16_timer_tb`/`sv16_pwm_tb`/`sv16_gpio_tb`/`sv16_uart_tb`; still no randomised or constrained-random stimulus, and no cross-peripheral concurrency test (two peripherals interrupting at once) |
+| Watchdog under a fault-injection campaign | window, lock and interrupt paths are covered functionally, but not with randomised timing or injected faults |
+| Divider performance | DIV/MOD hold the core for ~22 cycles from `S_EXECUTE` to writeback (measured, ADR-022); no per-instruction cycle table for the rest of the ISA exists yet |
+| The 12.5 MHz fallback configuration | `CLKDIV=2` still builds and the RTL divider is unchanged, but only the default configuration is exercised in simulation and by the default bitstream |
+| The PLL on silicon | `pll_clock_tb` proves the logic and the derived constants, but the feedback tap is now the one `ecppll` generates (ADR-024) but cannot be verified in simulation, and OQ-19 tracks board validation: bring-up must confirm the actual console rate. The PLL model is a delay-based oscillator, not an analog/jitter/lock-time model |
+| Software (monitor) | exercised through `monitor_tb` only; no unit tests for the assembler, packer or `sv16_mon.py` against a golden corpus |
+| Flash endurance / power-loss during program | not modelled |
+| Timing | closed by nextpnr's static analysis at 25 MHz (Fmax 44.70 MHz) and at 37.5 MHz with `CLKSRC=pll PLLMHZ=37.5` (45.45 MHz); no SDF/back-annotated simulation and no on-board measurement |
+
+The Rev A testbenches that remain in `simulation/unit/` and `test_*.py` scripts
+document the earlier module-level work; they are excluded from `make sim`
+deliberately rather than left broken by accident.
+
+---
+
+## 4. Reproducing a failure
+
+```sh
+source scripts/sv16_venv.sh
+scripts/sv16_run_tb.sh simulation/regression/monitor_tb.sv monitor_tb
+build/vlt/monitor_tb/monitor_tb | head -60     # full trace, from the repo root
+```
+
+Assertion helpers `chk()`/`check()` print `[PASS]`/`[FAIL]` lines with a
+`== N checks, M failures ==` summary, and each suite exits non-zero on failure,
+so it can be used directly from CI (`make test`).

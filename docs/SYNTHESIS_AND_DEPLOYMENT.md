@@ -1,117 +1,279 @@
-# SV-16 Rev A — Synthesis, Implementation & Physical Deployment Guide
+# SV-16 Rev B — Synthesis, Timing and Deployment
 
-This guide details the complete procedure for synthesizing the SV-16 Rev A microcontroller, closing timing, and deploying the bitstream to the target **Lattice ECP5 LFE5U-12F-6TG144C** FPGA hardware.
-
----
-
-## 1. Hardware Target Specifications
-
-- **Device**: Lattice ECP5 `LFE5U-12F`
-- **Package**: 144-pin TQFP (`144TQFP`, 0.5 mm pitch)
-- **Speed Grade**: `-6`
-- **Operating Voltage**: 1.1V Core, 3.3V I/O Banks
-- **Primary Clock**: 25.0 MHz onboard oscillator connected to dedicated PCLK pin `P63`
-- **Physical Constraints**: `constraints/ecp5_144tqfp.lpf`
+Target: **Lattice ECP5 `LFE5U-12F-6TG144C`** (12K LUT, TQFP-144, speed grade 6).
+Everything in this document was executed against the tree in this repository; the
+numbers are measured, not estimated.
 
 ---
 
-## 2. FPGA Resource Utilization Estimates
+## 1. Toolchain
 
-The SV-16 Rev A design is optimized for high resource efficiency on the 12K LUT ECP5:
+Two ways to get a working flow:
 
-| Resource Type | Available on 12F | Estimated Used | Utilization (%) |
-| :--- | :--- | :--- | :--- |
-| **LUT4 Logic Elements** | 12,000 | ~1,650 | ~13.8% |
-| **Registers (Flip-Flops)**| 12,000 | ~780 | ~6.5% |
-| **sysMEM DP16KD Blocks**| 32 blocks (576 Kb) | 8 blocks (128 Kb) | 25.0% |
-| **sysDSP Multiplier Slices**| 28 slices | 1 slice (16×16 MUL) | 3.6% |
-| **I/O Pins** | Up to 118 | 12 pins | ~10.2% |
+**A. Let the repository fetch its own toolchain (recommended, fully scripted).**
 
-Ample FPGA resources remain available for further memory expansion or additional accelerators in Rev B.
+```sh
+source scripts/sv16_venv.sh      # Verilator + Yosys + nextpnr-ecp5 + ecppack
+make test                        # lint + 4 simulation suites
+make bitstream                   # Yosys -> nextpnr-ecp5 -> ecppack
+```
+
+`sv16_venv.sh` creates `/tmp/sv16-venv` with self-contained wheels
+(Verilator 5.49, Yosys 0.69, nextpnr-ecp5 0.11.1, ecppack, all via yowasp) and
+symlinks `yosys`, `nextpnr-ecp5` and `ecppack` into `/tmp/sv16-ccwrap`, which it
+puts on `PATH`. It must be sourced in the same shell as any build. Re-running it
+is cheap and idempotent; `/tmp` being wiped only costs one source.
+
+**B. Use system packages.** Yosys ≥ 0.4x with `synth_ecp5`, nextpnr-ecp5 ≥ 0.6,
+`ecppack` (prjtrellis), Verilator ≥ 5.x. The Makefile calls these by name.
 
 ---
 
-## 3. Toolchain Option A: Open-Source Flow (Project Trellis)
+## 2. Build targets
 
-The open-source flow uses **Yosys**, **nextpnr-ecp5**, and **Project Trellis**:
+| Command | What it does |
+| :--- | :--- |
+| `make firmware` | builds the boot ROM (`build/rom/monitor.hex`) and the example application image |
+| `make rom` | assembles `firmware/monitor/monitor.s` (+ `.lst` listing) |
+| `make app` | assembles + packs `firmware/examples/motor_test.s` |
+| `make lint` | repository RTL lint (`scripts/sv16_rtl_lint.py`, 25 files, no external tools) |
+| `make vlint` | Verilator lint of the whole SoC |
+| `make sim` | builds and runs all four Verilator testbenches (`TB=name` to pick one) |
+| `make test` | `lint` + `firmware` + `sim` |
+| `make bitstream` | synthesis + place & route + bitstream → `build/sv16_top.bit` |
+| `make synth` | Yosys only (fast "is it still synthesizable for this part?" check) |
+| `make prog` | program the device over JTAG (`openFPGALoader`) |
+| `make iss` | run the instruction-set simulator on the legacy Rev A ROM image |
 
-### Step 1: Synthesis with Yosys
-```bash
-yosys -p "read_verilog -sv rtl/*.sv; synth_ecp5 -top sv16_top -json sv16_top.json"
+Useful overrides: `CLKDIV=1|2`, `FPGA_FREQ=25`, `TB=boot_tb`,
+`PORT=/dev/ttyUSB0` (upload), `BOARD=`/`CABLE=` (programming).
+
+### How the boot ROM gets into the bitstream
+
+The ROM is a `$readmemh` initialisation in `rtl/sv16_rom.sv` driven by the macro
+`SV16_ROM_INIT_FILE`. `scripts/sv16_synth.sh` writes a one-line header,
+`build/sv16_defines.svh`, containing
+
+```verilog
+`define SV16_ROM_INIT_FILE "build/rom/monitor.hex"
+`define SV16_CLKDIV 2
 ```
 
-### Step 2: Place & Route with nextpnr-ecp5
-```bash
-nextpnr-ecp5 \
-    --12k \
-    --package TQFP144 \
-    --speed 6 \
-    --json sv16_top.json \
-    --lpf constraints/ecp5_144tqfp.lpf \
-    --textcfg sv16_top_out.config
-```
-
-### Step 3: Bitstream Packing with ecppack
-```bash
-ecppack --compress sv16_top_out.config sv16_top.bit
-```
-
-### Step 4: Programming the FPGA
-```bash
-openFPGALoader -b ecp5 sv16_top.bit
-```
-
-Or using `make`:
-```bash
-make bitstream
-make prog
-```
+and passes it as the first source file of `read_verilog`, so a bitstream always
+bakes in the monitor that was assembled from `firmware/monitor/monitor.s`. The
+same header carries the clock divider, which is why the console baud divisor
+(`sv16_top` → `sv16_uart.BAUD_DIV_RESET`) always matches the system clock.
+Building without a ROM (`--no-rom`) yields a chip that boots to nothing — useful
+only for synthesis experiments.
 
 ---
 
-## 4. Toolchain Option B: Commercial Flow (Lattice Diamond)
+## 3. Synthesis and place & route
 
-1. Launch **Lattice Diamond**.
-2. Open or create project `sv16_rev_a.ldf`.
-3. Select Part:
-   - Family: `ECP5U`
-   - Device: `LFE5U-12F`
-   - Performance Grade: `-6`
-   - Package: `TQFP144`
-4. Add all SystemVerilog files from `rtl/*.sv`.
-5. Add constraint file `constraints/ecp5_144tqfp.lpf`.
-6. Run **Synthesize Design** (Synplify Pro or LSE).
-7. Run **Translate Design**, **Map Design**, and **Place & Route Design**.
-8. Verify Static Timing Analysis (STA) reports zero timing violations against the 25.0 MHz constraint (Period = 40.0 ns, slack > +15.0 ns typical).
-9. Run **Export Files** to generate JEDEC / Bitstream (`sv16_top.bit`).
-10. Open **Lattice Diamond Programmer** and write the bitstream to internal SRAM or onboard SPI Flash.
+```sh
+make bitstream        # == scripts/sv16_synth.sh --clkdiv 1 --freq 25
+```
+
+1. **Yosys** (`synth_ecp5`, ABC9): 7,931 logic LUT4, 4,772 FFs, 18 `DP16KD`
+   block RAMs (16 for SRAM, 2 for the boot ROM), 1 `MULT18X18D`
+   for the ALU multiplier, 52 I/O buffers. The synthesis script, its log and the
+   netlist are kept: `build/sv16_synth.ys`, `build/sv16_yosys.log`,
+   `build/sv16_top.json`.
+2. **nextpnr-ecp5** `--12k --package TQFP144 --speed 6 --freq 25` with
+   `constraints/ecp5_144tqfp.lpf`. Report: `build/sv16_nextpnr.log`,
+   `build/sv16_top.timing.json`.
+3. **ecppack** `--compress` → `build/sv16_top.bit` (295,665 bytes, ~1.5 Mbit
+   stream for a 12F; the `CLKSRC=pll PLLMHZ=37.5` build packs to 292,752
+   bytes).
+
+### Device utilisation (measured)
+
+| Resource | Used (default build) | Datasheet budget (LFE5U-12F) | % | nextpnr's denominator |
+| :--- | ---: | ---: | ---: | ---: |
+| LUT4 (incl. carry) | 9,407 | **12,144** | **77 %** | 24,288 (the die) |
+| Flip-flops | 4,772 | 12,144 | 39 % | 24,288 |
+| `DP16KD` block RAM | 18 | **32** | **56 %** | 56 |
+| `MULT18X18D` | 1 | 28 | 4 % | 28 |
+| I/O buffers | 52 | **98** (bonded on TQFP-144) | 53 % | 197 (BGA packages) |
+| `EHXPLLL` | 0 (1 with `CLKSRC=pll`) | 2 | 0 % (50 %) | 2 |
+
+**Read the third column, not the last one.** prjtrellis models the LFE5U-12F with
+the LFE5U-25F's die — the database files are byte-identical and only the idcode
+differs (`0x21111043` vs `0x41111043`) — so nextpnr's denominators are the *die's*
+resources and a 25F-sized design would be accepted into a 12F bitstream. The
+datasheet's numbers for the part in the BOM are the budget, `make bitstream`
+enforces them (see ADR-025), and every "X % free" claim in these documents means
+"free against the datasheet". The design fits: **the tightest resource is LUT4 at
+77 %**, then block RAM at 56 %.
+
+The `CLKSRC=pll PLLMHZ=37.5` build uses 9,191 LUT4 (76 % of the datasheet budget) —
+the PLL is a hard macro, so it costs nothing in fabric (the difference from the
+oscillator build is netlist mapping, not the PLL). What is left is **~2,700 LUT4
+(23 %) and 14 block RAM blocks (28 KB)**: enough for the roadmap items in
+[MCU_READINESS.md](MCU_READINESS.md), but not enough to grow the design casually —
+a second 16 KB SRAM plus a JTAG bridge would use most of it. `make bitstream`
+refuses to build a design that crosses the datasheet budget.
+
+### Timing
+
+The board oscillator is 25 MHz. By default (`CLKSRC=osc`, `CLKDIV=1`) the SoC
+runs directly from that oscillator with no PLL and no fabric divider, so the whole
+machine — CPU, RAM, ROM and every peripheral — is one 25 MHz clock domain promoted
+to a global network by nextpnr. The on-chip PLL is available as an alternative
+source (ADR-021): the fabric has ~43 MHz of Fmax, so a faster clock has to come
+from the PLL rather than from the oscillator.
+
+```sh
+make bitstream                          # 25 MHz from the oscillator (default)
+make bitstream CLKSRC=pll PLLMHZ=37.5   # 37.5 MHz from the EHXPLLL
+make bitstream CLKDIV=2                 # 12.5 MHz fallback (fabric divider)
+```
+
+The PLL relations are `fPFD = 25/CLKI_DIV` (10–400 MHz), `fOUT = fPFD × CLKFB_DIV`
+and `fVCO = fOUT × CLKOP_DIV` (400–800 MHz) — the CLKOP divider is inside the
+feedback loop, so `CLKFB_DIV` sets the output frequency. `scripts/sv16_synth.sh`
+searches the divider pair for the requested frequency, prints
+`PLL: 37.5 MHz = 25 / 2 x 3 (VCO 600 MHz), requested 37.5 MHz, error 0.00%`, and
+refuses a configuration whose VCO would be illegal. Multiples of 25 MHz and of
+12.5 MHz are exact; anything else is rounded, and the achieved frequency is what
+the RTL uses (so the console stays at 115200 either way).
+
+**Measured, on an LFE5U-12F-6 (speed grade 6):**
+
+| Configuration | Achieved Fmax | Requirement | Result |
+| :--- | ---: | ---: | :--- |
+| `CLKSRC=osc`, 25 MHz, heap placer (**default**) | **44.70 MHz** post-route (36.29 pre-route) | 25 MHz | **PASS, ~79 % margin** |
+| `CLKSRC=pll PLLMHZ=37.5` | **45.45 MHz** post-route (37.73 pre-route) | 37.5 MHz | **PASS, ~21 % margin** |
+| `CLKSRC=osc`, 25 MHz, before the PLL option (P9) | 46.17 MHz post-route | 25 MHz | PASS — the ~2 MHz difference is synthesis ordering, not logic |
+| `CLKDIV=2`, 12.5 MHz, heap placer | 43.73 MHz | 12.5 MHz | PASS |
+| `CLKDIV=1`, heap `--placer-heap-timingweight 50` | 13.15 / 14.18 MHz | 25 MHz | worse; not used |
+| simulated annealing (`--placer sa`) | — | — | **fails to place** carry chains |
+| `CLKDIV=1`, **before** the divider fix (ADR-018) | 14.38 MHz | 25 MHz | FAIL — why the part shipped at 12.5 MHz |
+
+`make bitstream` is expected to exit 0 with `PASS`. The flow is deterministic:
+nextpnr runs with its default fixed seed, so re-running the same sources
+reproduces the same Fmax and the same bitstream byte count (verified by building
+twice into different directories). If a board ever turns out not to run at 25 MHz,
+`CLKDIV=2` is the fallback and the console keeps working because the UART's
+divisor is recomputed from the same constant.
+
+Unverified on silicon: the PLL build has never been programmed into a part, and
+the internal feedback tap (see `rtl/sv16_pll.sv`; ADR-024 fixed it to the
+wiring `ecppll` generates, and OQ-19 tracks validating it) is the one thing this
+flow cannot check — bring-up should confirm the console rate with a scope or by
+measuring the banner timing, which is why the PLL is opt-in and the oscillator
+remains the default.
+
+**A note on these numbers.** They move by ~10 % whenever the RTL changes, even
+when the change is semantically empty: appending two *constant-driven* status
+bits to `sv16_sys` (no gates, nothing observable) took Yosys from 7,569 to 8,382
+LUT4 and post-route Fmax from 46.17 to 43.73 MHz. The same effect showed up
+again after [ADR-022](ARCHITECTURE_DECISIONS.md#adr-022-three-instruction-level-defects-control-encodings-halt-and-the-divider-wait-state):
+the functional fixes there (a HALT latch, one extra FSM branch) re-measured at
+**44.70 MHz / 7,931 LUT4**, i.e. the numbers are not comparable across trees. That is ABC's LUT mapping and
+the placer responding to a perturbed netlist, not a regression in the design —
+which is why this document quotes current measurements *and* what they used to
+be. The flow is deterministic for a given source tree (two builds of the same
+sources produce identical numbers and identical bitstream sizes); only *changing*
+the sources moves them.
+
+#### Why 25 MHz was impossible before (the corrected diagnosis)
+
+For most of Rev B the documentation blamed the CPU: "register file → ALU → flags
+→ control-unit next-state, plus `u_sys.illegal_pc`'s decrement", with an extra FSM
+state offered as the fix. Reading the actual nextpnr critical-path report showed
+that the path was **the ALU's combinational 16/16 divider** (`a / b`, `a % b`),
+which sat in the same `always_comb` block as the adder and therefore appeared in
+every arithmetic instruction's timing path. A one-line experiment — replacing
+`a / b` and `a % b` with constants — moved Fmax from **14.68 MHz to 44.31 MHz**.
+
+The fix (ADR-018) is a single iterative restoring divider inside `sv16_alu`,
+driven by a `div_start`/`div_busy` handshake and held by the new `S_DIV_WAIT`
+state of the control unit. DIV and MOD keep their encodings, results and flags;
+they hold the core for ~22 cycles from `S_EXECUTE` to writeback instead of 1
+(measured; the FSM's wait state was unreachable until [ADR-022](ARCHITECTURE_DECISIONS.md#adr-022-three-instruction-level-defects-control-encodings-halt-and-the-divider-wait-state)
+fixed it, so the number this document used to quote was never what the hardware
+did). Every other operation is unchanged and
+still single-cycle. That is what took the design from 12.5 MHz to the full 25 MHz
+and left ~85 % timing margin for future logic.
+
+Remaining headroom work, in increasing order of effort: instantiate an `EHXPLLL`
+to replace the fabric divider and run 40–50 MHz (the fabric now supports it), and
+split the flag/branch decision across an extra FSM state if a future feature eats
+the margin.
+
+### Pin constraints
+
+`constraints/ecp5_144tqfp.lpf` locates every port of `sv16_top` on a real I/O
+site of this package (verified against the prjtrellis device database; for TQFP
+packages the `SITE` name is the bare pin number). Note that four of the Rev A
+pin assignments (`P63` clock, `P60` reset, `P38` LED0, `P100` PWM) were **not
+bonded I/O on the TQFP-144 part at all** — they could never have been placed.
+The Rev B map was rebuilt from the device database; only the Rev A UART pins
+were kept.
+
+| Signal | Pin | Notes |
+| :--- | :--- | :--- |
+| `clk_25m` | 133 | 25 MHz oscillator |
+| `ext_rst_n` | 134 | `PULLMODE=UP` — a floating reset pin means "not reset" |
+| `uart_rx` / `uart_tx` | 73 / 74 | kept from Rev A; console + firmware upload |
+| `flash_sck` / `cs_n` / `mosi` / `miso` | 110 / 111 / 112 / 113 | dedicated SPI port to the application flash |
+| `spi0_sck` / `cs_n` / `mosi` / `miso` | 114 / 115 / 116 / 117 | expansion bus |
+| `led[0..3]` | 39 / 40 / 41 / 44 | mirror GPIOA[3:0] |
+| `gpio_a[15:0]` | 45-52, 97-99, 104-108 | also the motor-control connector |
+| `gpio_b[15:0]` | 135, 136, 139-143, 128, 124-127, 1-4 | second, independent port |
+| `pwm_out` | 88 | `DRIVE=16` |
+| `motor_dir1` / `motor_dir2` | 89 / 102 | |
+| `motor_fault_n` | 103 | `PULLMODE=UP`; hardware PWM shutdown |
+
+All I/O is `LVCMOS33`. There is no pin muxing: each port has one function fixed
+at synthesis time, so changing a peripheral's pin means editing the LPF.
 
 ---
 
-## 5. Physical Electrical Hardware Connection (Bench Test)
+## 4. Programming the FPGA
 
-```text
- ┌─────────────────────────┐               ┌──────────────────────────┐
- │   Lattice ECP5 Board    │               │  External Motor Driver   │
- │   (LFE5U-12F TQFP144)   │               │   (e.g., L298N / DRV)    │
- │                         │               │                          │
- │  Pin P100 (PWM Out)     ├──────────────►│ IN1 / PWM (Speed)        │
- │  Pin P101 (DIR1)        ├──────────────►│ IN2 / DIR (Phase A)      │
- │  Pin P102 (DIR2)        ├──────────────►│ IN3 / DIR (Phase B)      │
- │  Pin P103 (FAULT_N)     │◄──────────────┤ Fault / Overtemp Out     │
- │                         │               │                          │
- │  GND                    ├───────────────┤ GND (Common Ground)      │
- └─────────────────────────┘               └────────────┬─────────────┘
-                                                        │
-                                                        ▼
-                                                ┌───────────────┐
-                                                │   DC Motor    │
-                                                │   (12V / 24V) │
-                                                └───────────────┘
+```sh
+make prog                                   # openFPGALoader, defaults
+make prog BOARD=ecp5-evn CABLE=ft2232       # board/cable overrides
+openFPGALoader --fpga-part LFE5U-12F build/sv16_top.bit   # equivalent
 ```
 
-### Critical Safety Precautions:
-1. **Common Ground**: Ensure the FPGA digital ground and motor driver ground are securely connected.
-2. **Flyback Diodes**: Ensure inductive kickback clamp diodes (flyback diodes) are present across motor terminals.
-3. **Power Isolation**: Never power the motor directly from the FPGA development board's 3.3V or 5V rail; use an isolated bench power supply for the motor driver stage.
-4. **Hardware Emergency Shutdown**: Verify that pulling pin `P103` (`motor_fault_n`) low immediately inhibits PWM output and halts motor rotation.
+The configuration is volatile (SRAM-based FPGA): the bitstream comes from JTAG
+on every power-up unless an external configuration flash for the FPGA is
+programmed separately (`openFPGALoader -f` writes the *FPGA's own* config flash
+on boards that have one — that is a different device from the SPI flash SV-16
+uses for firmware, and the two must not be confused).
+
+Application firmware is *not* programmed this way; it goes over the serial port
+(`make upload`, see
+[BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md)). That split is the point of
+Rev B: the FPGA configuration defines the machine, the serial port defines the
+program.
+
+---
+
+## 5. Reproducibility
+
+* Every generated artifact lands in `build/` (untracked) with a fixed name.
+* `build/sv16_synth.ys` and `build/sv16_defines.svh` are kept so a build can be
+  audited or replayed by hand: `yosys -s build/sv16_synth.ys`.
+* The ROM and the application image are rebuilt from source by `make bitstream`
+  (the bitstream target depends on `build/rom/monitor.hex`), so no binary blobs
+  can drift from the assembly.
+* Pin constraints, clock divider and timing constraint are all explicit inputs to
+  the flow (`constraints/ecp5_144tqfp.lpf`, `CLKDIV`, `FPGA_FREQ`).
+* Nothing in the flow downloads anything at build time except
+  `scripts/sv16_venv.sh`, which is pinned to specific wheel versions in PyPI.
+
+---
+
+## 6. Using another flow (Lattice Diamond)
+
+The RTL is plain SystemVerilog and the LPF syntax is shared with Diamond, so the
+same sources can be targeted there: add the 25 files of `rtl/` (package first),
+set `sv16_top` as the top, define `SV16_ROM_INIT_FILE` (a quoted path to
+`build/rom/monitor.hex`) and `SV16_CLKDIV 1` as Verilog macros, and use the same
+LPF. Diamond will report its own timing; the 25 MHz configuration is the one
+with margin. Nothing in `scripts/` other than `sv16_venv.sh` depends on the
+open-source toolchain.

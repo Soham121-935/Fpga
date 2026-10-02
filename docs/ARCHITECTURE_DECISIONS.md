@@ -1,6 +1,15 @@
-# SV-16 Rev A — Architecture Decisions Record (ADR)
+# SV-16 — Architecture Decisions Record (ADR)
 
-This file tracks foundational architectural decisions made for the SV-16 Rev A microcontroller.
+This file tracks foundational architectural decisions for the SV-16
+microcontroller. ADR-001..005 are the Rev A foundation; ADR-012..016 are the
+Rev B decisions that turn the CPU into a programmable MCU (boot and program
+storage, field update, Rev B memory map, CPU fixes, interrupt controller).
+
+> Numbering note: ADR-006..011 were never written up; the decisions they were
+> reserved for (peripheral set, pin constraints, verification strategy, bus
+> arbitration sweep) ended up recorded in `PERIPHERALS.md`, `FPGA.md`,
+> `VERIFICATION.md` and `BUS_ARCHITECTURE.md` instead. The RTL references only
+> ADR-012..016, which are all present below.
 
 ---
 
@@ -61,3 +70,696 @@ This file tracks foundational architectural decisions made for the SV-16 Rev A m
   - `bus_req`: Bus access request strobe
   - `bus_ack`: Slave acknowledge (ready) signal
 - **Consequences**: Zero wait-state access for single-cycle on-chip BRAM (`ack = 1`), wait-state support for slower peripheral access or UART FIFOs.
+
+---
+
+## ADR-012: Program storage and boot — hardware loader + SPI NOR + resident monitor
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: Rev A had no non-volatile program store: firmware existed only as a
+  block-RAM init file, and "programming the device" meant rebuilding and
+  re-flashing the FPGA. Treating SV-16 as an MCU requires that a program survive
+  power cycles and that it can be replaced without touching the FPGA
+  configuration.
+- **Decision**:
+  - Applications are stored as CRC-checked images in an external **SPI NOR flash**
+    (see `docs/BOOT_AND_PROGRAMMING.md`, section 4 for the image format).
+  - The **boot loader is hardware**, not a CPU program: `rtl/sv16_boot.sv` is a
+    second bus master that reads flash, verifies magic/header CRC/payload CRC and
+    copies the payload into SRAM before the CPU is released. A CPU program cannot
+    do this, because the program that would do it is the one being replaced — and
+    because a broken image must not be able to prevent recovery.
+  - A **resident monitor** lives in the boot ROM (`0xE000`, 2 K words, compiled
+    into the bitstream) and is entered whenever no valid image is found, when the
+    loader fails, when software requests it, or when the serial RX line is held
+    low through reset.
+- **Consequences**: Programming the FPGA defines the machine; programming the
+  serial port defines the application. A board whose application is broken can
+  always be recovered with a serial cable. Cost: 18 block RAMs (SRAM + ROM) and
+  roughly 1.4 k LUTs for the loader; the boot ROM contents become a synthesis-time
+  macro (`SV16_ROM_INIT_FILE`) that the Makefile regenerates from assembly.
+
+---
+
+## ADR-013: Field reprogramming over UART with a framing protocol
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: The field-update path has to work with nothing but a serial
+  terminal, on a byte-oriented UART with a 4-byte FIFO and no flow control, and
+  it has to be verifiable end to end.
+- **Decision**:
+  - The monitor speaks a small **fixed-width ASCII protocol**:
+    `C<addr4><len4><crc4>` + payload, `R<addr4><len4>`, `E<addr4>`, `V<addr4>`,
+    `B`, `?`. Every command answers (`+OK`, `=crc4`, `.` per byte, `-E<n>`).
+  - The upload is **self-clocking**: the host sends one payload byte and waits for
+    the monitor's `.` before sending the next. That makes the exchange immune to
+    FIFO overrun no matter how fast the host writes, at the cost of throughput
+    (roughly 5 KB/s of payload at 115200 baud).
+  - Data integrity is a **CRC16-CCITT** over the uploaded bytes, checked by the
+    monitor *before* the image is trusted, plus the header and payload CRCs that
+    the loader re-checks at every boot.
+  - **All flash knowledge lives in `rtl/sv16_flash_ctrl.sv`** (command set, page
+    buffering, sector erase, `tPROG`/`tERASE` waits, CRC over a range). Neither
+    the monitor nor an application has to know NOR timing.
+- **Consequences**: A host tool (`scripts/sv16_mon.py`, `make upload`) is a
+  convenience, not a requirement — the protocol is human-typeable. Images are
+  verified twice (monitor + loader). Cost: hex text doubles the wire time versus a
+  binary protocol; there is no resume and no compression. (A/B slots with
+  rollback arrived later, in ADR-019.)
+
+---
+
+## ADR-014: Rev B memory map and peripheral block organization
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: Rev A's map had 8 K words of SRAM, no ROM, four peripherals at
+  hand-picked addresses and spare ports wired "when a peripheral appears".
+  Adding flash, boot, system control and a second GPIO needed a scheme, not more
+  special cases.
+- **Decision**:
+  - SRAM grows to **16 K words** (`0x0000-0x3FFF`), the **boot ROM** occupies
+    `0xE000-0xE7FF`, and all peripherals live in a single **MMIO window**
+    `0xF000-0xF0FF` organized as **16 blocks × 16 registers**, with the block
+    selected by `addr[7:4]` and the register by `addr[3:0]`.
+  - `MMIO_PRESENT` marks which of the 16 blocks have a slave; unmapped addresses
+    (including unimplemented blocks) are acknowledged and read as `0x0000`, so
+    probing the map cannot hang the bus.
+  - The block numbers are fixed by `rtl/sv16_pkg.sv`: 0 system, 1 GPIO A,
+    2 timer, 3 PWM, 4 UART, 5 SPI, 6 flash, 7 GPIO B, 8 watchdog (reserved),
+    9 interrupt controller, 0xA boot, 0xB-0xF reserved.
+- **Consequences**: A new peripheral is a 16-register block plus a `MMIO_PRESENT`
+  bit; the decoder is a shift/mask instead of a tree of comparators, which keeps
+  the top level readable and the decode timing shallow. The interrupt vector table
+  lives at `0x0020` in SRAM (8 words), which keeps it inside the application's own
+  image.
+
+---
+
+## ADR-015: CPU fixes — register selection, two-word LDI, and the held-request bus contract
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: Bringing up the monitor exposed three CPU-side defects: Rev A
+  mis-mapped the `STORE` data field and the `PUSH` register field in the decoder,
+  `LDI` needed an explicit write-back state, and the control unit dropped bus
+  requests when a slave withheld its ack.
+- **Decision**:
+  - Decoder port assignment is fixed (`docs/ISA.md` is authoritative): `STORE`
+    takes its data from `Rs2`, `PUSH` from its explicit register field;
+    `CMP` uses `Rs1`/`Rs2`.
+  - `LDI` (two-word immediate) is routed through `S_WRITEBACK` like any other
+    register write, so one write path exists for all register writes.
+  - The CPU **holds** `bus_addr`/`bus_we`/`bus_wdata`/`bus_req` until `bus_ack`
+    arrives, and does not advance its FSM on a cycle without an ack. Load data is
+    captured only on the ack of the load's own transfer.
+- **Consequences**: Slow peripherals and bus contention become invisible to
+  instruction semantics — an access takes longer instead of returning the wrong
+  value. This is the change that made the loader, the flash controller and the
+  monitor coexist; it is also why the whole regression (113 checks) is the
+  gate for any further bus work.
+
+---
+
+## ADR-016: Interrupt controller with enable/pending/priority and a RAM vector table
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: Rev A wired peripheral interrupt lines directly to the core, with
+  no way to mask, prioritize or observe them, and no handler dispatch mechanism.
+- **Decision**:
+  - A dedicated controller (`0xF090`) provides per-source **enable**, **pending**
+    (with write-1-to-clear), raw **lines**, and the index of the source being
+    served; eight sources are defined (timer, UART RX/TX, SPI, flash, GPIO,
+    watchdog, TRAP) in `sv16_pkg.sv`.
+  - The handler address is fetched from an **8-entry vector table in SRAM at
+    `0x0020`**, one word per source, populated by the application image. The CPU
+    pushes `SR` and `PC` before the vector fetch and `RETI` restores `SR`.
+  - Global gating is two-level: `SYS_CTRL.IRQEN` (system) and `SR.IE` (CPU), so
+    both the system writer and the interrupt-disabled code path can inhibit
+    interrupts.
+- **Consequences**: Handlers can be written in assembly with a plain address
+  table; an unpopulated table is visible (a trap jumps to whatever word is there),
+  so images that use interrupts must fill `0x0020-0x0027`. Priority is fixed by
+  index; there is no nesting control and no interrupt latency specification yet.
+
+---
+
+## ADR-017: Watchdog in the reset path, protected by a key and a lock
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: An MCU that can be reprogrammed in the field but cannot recover
+  from its own firmware hanging is only half a microcontroller: the classic
+  failure mode is a control loop that stops making progress, and the classic
+  answer is a watchdog that restarts the system. Rev B had `SYS_RSTCAUSE.WDT`
+  reserved, an IRQ slot for the watchdog and a spare MMIO block, but no timer
+  behind them. It also had a design question: a watchdog that software can
+  disable (by accident, or by a wild pointer) is worth very little.
+- **Decision**:
+  - A dedicated block (`rtl/sv16_wdt.sv`, MMIO block 8 at `0xF080`) with
+    `(PRESET + 1) x 2^PRESC` clock period, so the same block covers "the control
+    loop stalled" (milliseconds) and "the boot load never finished" (hundreds of
+    milliseconds).
+  - A timeout **restarts the boot sequence** through `sv16_startup` and sets
+    `RSTCAUSE.WDT`. It is not a trap or an interrupt: a hung program cannot be
+    relied on to handle anything.
+  - **Protection**: `CTRL` (which holds ENABLE, LOCK, WINDOW_EN and PRESC) is
+    keyed with `0x5A` in the top byte; `FEED` requires the magic word `0x5A5A`;
+    `PRESET`/`WINDOW`/`MARGIN` are plain 16-bit registers but are frozen by
+    `LOCK`. `LOCK` can only be cleared by the external reset pin. (A 16-bit
+    period and an 8-bit key cannot share one 16-bit register — hence the split
+    rather than a keyed write to every register.)
+  - The block hangs off the **hard reset** (`rst_n`), never the SoC's own soft
+    restart (`cpu_rst_n`), and it **auto-reloads its counter on expiry**. So an
+    application that hangs twice is restarted twice, and each restart gets a
+    full period to reach the code that feeds it.
+  - An **early-warning interrupt** (`IRQ_WDT`, source 6) fires `MARGIN` ticks
+    before expiry so software can leave a breadcrumb in `SYS_SCRATCH0/1`, which
+    survive a restart.
+  - **Windowed feeding** (`WINDOW_EN` + `WINDOW`) rejects feeds that arrive too
+    soon after the previous one, which is the only way to catch a runaway loop
+    that feeds the watchdog non-stop. The first period after `ENABLE` is exempt
+    so that arming the watchdog and feeding it immediately stays legal.
+- **Consequences**: A hung application now recovers by itself — proven end to
+  end by `wdt_reset_tb`, which boots a deliberately hanging image out of flash
+  and watches the hardware restart it twice with no host involved. The watchdog
+  starts disabled, so an application must arm it (three stores); a watchdog that
+  arms itself at reset was rejected because the boot ROM monitor and the loader
+  would then have to feed it too, and the monitor is the recovery path — it must
+  not be able to be interrupted by the thing it is there to recover from. The
+  cost is 1 block of MMIO, ~220 lines of RTL and 281 extra LUTs.
+
+---
+
+## ADR-018: DIV and MOD move to a multi-cycle divider (and the SoC ships at 25 MHz)
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: The SoC shipped at 12.5 MHz because 25 MHz did not close timing
+  (measured Fmax 14.68 MHz). The documented explanation was that the critical
+  path ran "register file → ALU → flags → control-unit next-state" and through
+  `u_sys.illegal_pc`, and the documented fix was to split the branch decision
+  with an extra FSM state. **Both were wrong.** The nextpnr critical-path report
+  and a one-line experiment settled it: replacing the ALU's `a / b` and `a % b`
+  with constants lifted Fmax from 14.68 MHz to 44.31 MHz in a single change.
+  A 16/16 combinational divider is a deep cascade of 16 conditional subtracts
+  (each a 16-bit carry chain), and every arithmetic instruction paid for it
+  because the divider sat inside the same combinational block as the adder.
+- **Decision**:
+  - `sv16_alu` keeps a **single iterative restoring divider** for both DIV and
+    MOD: `div_start` (one-cycle pulse, operands latched) → `div_busy` high for
+    exactly 16 clocks → quotient/remainder available in `result`, with the flags
+    valid in the same cycle `div_busy` falls.
+  - The control unit gets one new state, **`S_DIV_WAIT` (5'd16)**: S_EXECUTE
+    pulses `alu_div_start` for a DIV/MOD and hands over to S_DIV_WAIT, which
+    holds until `alu_div_busy` falls and only then raises `flag_update_en` (early
+    capture would latch a flag computed from an intermediate remainder) before
+    continuing to S_WRITEBACK.
+    *Correction (ADR-022):* the S_EXECUTE exit condition tested `is_ext_alu`, so
+    DIV/MOD fell straight through to S_WRITEBACK and never entered this state —
+    the instruction wrote back a stale ALU result until ADR-022 fixed the branch.
+    The divider hardware and this state description were always correct; what was
+    missing was the transition into it.
+  - The ISA is unchanged: DIV/MOD still exist, with identical results and flags,
+    including the divide-by-zero behaviour of OQ-04 (`V=1`, quotient `0xFFFF`,
+    remainder `0x0000`). What changes is the cycle count: measured **~22 cycles
+    from `S_EXECUTE` to writeback**, not the 18 this ADR first quoted (that figure
+    was arithmetic on the divider's internal counter; ADR-022 measured the
+    instruction and put the FSM into the wait state at all).
+    This is exactly what a real MCU does with a hardware divider used by a rare
+    instruction — an instruction-level optimisation would have shortened it, a
+    machine-level one forbids a 68 ns path.
+  - With the divider out of the way, **the shipped clock becomes the full
+    25 MHz** (the oscillator, no fabric divider at all: `CLKDIV=1`), at a
+    measured Fmax of 46.17 MHz — ~85 % margin. The divided-clock option stays in
+    the build (`make bitstream CLKDIV=2`) as a fallback for a board that cannot
+    run at 25 MHz, and the clock divider RTL is unchanged.
+- **Consequences**: The CPU is twice as fast as the part shipped an hour earlier,
+  the bus and peripherals run at 25 MHz (UART divisor recomputes itself from
+  `CLK_HZ`: 217 clocks/bit at 25 MHz, 0.006 % baud error), the flash controller
+  is unaffected because it polls the device's WIP bit rather than counting
+  clocks, and the SPI master's divider is a register (SCLK = 3.125 MHz at reset).
+  Simulation now matches hardware exactly: the six testbenches have always driven
+  `clk_25m` at 25 MHz and assumed 217 cycles/bit, so the bitstream is finally
+  clocked like the thing that is verified. The cost is 25 RTL lines, one FSM
+  state, and 16 extra cycles for the two rarest instructions; ~1,150 LUTs were
+  freed (7,233 vs 6,147 logic LUTs is more, but the 4,448→4,631 FF and 18 BRAM
+  counts are unchanged and the part is still only 34 % full).
+
+---
+
+## ADR-019: A/B application images with a trial period and hardware rollback
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: ADR-012 gave the SoC a hardware boot loader and ADR-013 a way to
+  reprogram it over UART, but there was exactly one image at flash address 0.
+  A field update is therefore a *destructive* operation: the monitor erases the
+  sector holding the running image, and a power cut, a bad build or a hang in
+  the new firmware leaves the part with nothing bootable. The recovery path is
+  the monitor, which needs a host. The WDT (ADR-017) can restart a hung
+  application, but it restarts it into the same broken image, so a hang is a
+  boot loop, not a recovery. What was missing is the thing every practical MCU
+  has: an update that can be undone by the part itself.
+- **Decision**:
+  - **Two slots, 32 KB apart, inside the first 64 KB of the flash**: slot A at
+    `0x000000`, slot B at `0x008000`. Keeping both inside the 64 KB the
+    monitor's 16-bit update protocol can address is deliberate (a 64 KB stride
+    pushed slot B out of reach, i.e. the *inactive* slot — the one a field
+    update must write — could only be programmed with an external programmer).
+    32 KB per slot is far more than an image can use with 32 KB of RAM.
+  - **The slot record lives in the image header**, in the eight reserved bytes
+    of the format-v1 header, at byte offset `0x18` (header word `0x0C`; the
+    header CRC covers `0x00-0x13`, so writing a record cannot invalidate the
+    image, and it can never collide with payload bytes):
+    - `0x18` = sync `0xA5`, written once and never changed,
+    - `0x19` = state, the only byte that ever changes:
+      `0x1F` PENDING (installed, never booted) → `0x0F` TRIED (booted, awaiting
+      confirmation) → `0x07` GOOD (confirmed, the fallback image) or `0x04` BAD
+      (trial failed / retired).
+  - **Every transition only clears bits** (`0x1F → 0x0F → 0x07 / 0x04`). This is
+    not cosmetic: a page program on real NOR flash can only turn 1s into 0s, and
+    no erase unit is small enough to rewrite one byte in the middle of an image,
+    so any encoding that needed a bit set back would need a sector erase — which
+    would erase the image the record belongs to. The read-back check in the
+    loader (`rec_b1 == l_wr_data`) is what keeps the encoding honest, and the
+    flash *simulation model* implements the same physics (program = AND) so a
+    violation fails `slot_tb` instead of the board.
+  - **The record is written by the loader as one 2-byte page program** (sync +
+    state), so a power cut can leave `{0xA5, 0xFF}` — "record started, state
+    never written" — which the classifier reads as *no record*, or a state byte
+    with unrecognised bits, which it reads as BAD and reports in `BOOT_ERR[7]`.
+    Fail toward rollback: a torn record can never promote an image.
+  - **Pick order** (the class value doubles as the priority, ties settle on
+    slot A): PENDING > TRIAL > GOOD > no-record > BAD. A PENDING image is the
+    new one and wins; a TRIAL image has already had its chance and is retired
+    (BAD) *without being loaded*; GOOD is the confirmed image; an image with no
+    record at all (one flashed by any other tool) boots untried, which is how
+    every existing image and the monitor's own recovery image keep working.
+  - **Trial and rollback**: on the first boot of a PENDING slot the loader
+    writes TRIED *before* releasing the CPU, then streams the image. If the part
+    restarts before the application confirms, the record still says TRIED, so
+    the loader writes BAD and boots the other slot — in the same attempt, with
+    no host. The state is in *flash*, not in the loader: the reset that triggers
+    the rollback is exactly the reset that would clear a flip-flop copy of it
+    (an earlier draft used a `tried` register and could never have worked on
+    hardware; `slot_tb` now pulses `rst_n` to prove the flash version does).
+  - **Confirmation** is one write: `BOOT_CTRL[6]` (write-only pulse) makes the
+    loader program `0x07` over the running slot's record and then retire the
+    *other* slot's record to BAD. With two GOOD records the pick would settle on
+    slot A and a confirmed update would silently revert; retiring the other
+    image keeps exactly one live image, and the retired one is the image that
+    was current before the update.
+  - **Registers are the existing ones** — no new offsets, so no firmware
+    register map moves: `BOOT_CTRL[4]` NOSLOT (active low: 1 = ignore the
+    records and boot `BOOT_SRC`), `[5]` SLOT_CLR, `[6]` SLOT_CNF;
+    `BOOT_STAT[5]` SLOT, `[6]` RETRY, `[7]` TRIAL; `BOOT_ERR[7]` SLOT. A write
+    that carries a write-only pulse bit is a *control* write: it does not touch
+    AUTO or NOSLOT, so an application committing its own trial cannot disarm the
+    boot policy by accident.
+  - **Tooling**: `sv16_fwpack.py --slot N [--slot-state ...]` writes the record
+    into the image (so the image a host flashes *is* the record);
+    `make slot-image SLOT=1` / `make upload-slot SLOT=1` install it into the
+    inactive slot over UART; `make mon-boot` boots it (the loader picks the
+    pending slot); `make commit` (monitor command `K`) commits it. Firmware uses
+    `sv16_boot_confirm()` from `firmware/drivers/sv16_hardware.h`.
+- **Consequences**: A field update is now non-destructive: the previous image
+  is untouched until the new one has proved itself, a hang or a power cut during
+  the trial rolls back by itself on the next restart, and the recovery path is
+  the fallback image rather than the monitor. The demo image
+  (`firmware/examples/motor_test.s`) commits itself at the end of its
+  initialisation, so the shipped example exercises the whole loop. Cost: ~430
+  lines of RTL across `sv16_boot.sv`/`sv16_flash_ctrl.sv`, one slot-record
+  plumbing path (a 2-byte page program that re-uses the existing program
+  sequencer and takes priority over an application page flush), one new flash
+  command *sequence* (not a new command), and `slot_tb` (57 checks) as the
+  regression. Limitations, documented in
+  [BOOT_AND_PROGRAMMING.md](BOOT_AND_PROGRAMMING.md#8-what-is-still-missing-for-production-programming):
+  records are not written while the application runs (a write costs one page
+  program, so the update tool decides when), there is no signed image (ADR-019
+  is integrity, not authenticity), and the rollback depth is one generation.
+
+## ADR-020: The I-format source operand, and a latched ALU result for writeback
+
+- **Status**: **ACCEPTED** (Rev B, bug fix)
+- **Context**: until this ADR, no test in the repository had ever checked what an
+  `ADDI` or `SUBI` instruction *computes*. The program suites exercised branches,
+  loads, stores, the stack and every peripheral, but not immediate arithmetic:
+  the boot ROM, the monitor and the example firmware all reach for `LDI` + `ADD`
+  when they need a constant, so nothing ever executed the instruction with an
+  immediate the decoder could get wrong. Writing the first ISA-level regression
+  program (`firmware/tests/isa_regress.s`) exposed two independent defects, both
+  visible on `ADDI R5, 0x0025` on top of `R5 = 0x0100`:
+
+  1. **The source operand came from the immediate field.** The register-selection
+     block in `sv16_decoder.sv` mapped the I-format read port with the default
+     `instr[8:6]` — which is the *top three bits of the nine-bit immediate* — so
+     `ADDI Rd, imm` read `R{imm[8:6]}` instead of `Rd`. With a small immediate
+     (`imm < 0x40`) that is `R0`, which is why firmware that never used the form
+     with a large immediate did not notice: the arithmetic may have been wrong,
+     but with `imm[8:6] == 0` the read port still resolved to a real register and
+     nothing faulted. The ISA table has always said `Rd <= Rd + sign_ext(imm9)`
+     ([ISA.md](ISA.md#format-i-register-immediate-operations)); the RTL now does
+     that. The I-format has its own entry in the selection expression, keyed on
+     opcode `0x2`/`0x3`.
+  2. **Writeback re-evaluated the ALU.** `reg_wdata` took the combinational
+     `alu_result` in `S_WRITEBACK`, but `alu_src_b_sel` is already deasserted by
+     then, so the ALU re-computed on the *register* second operand: `ADDI Rd, n`
+     committed `Rd + R_{Rs2 field}`. The flags were never affected (they are
+     captured in `S_EXECUTE`) and the ALU's own unit tests pass because they
+     drive the ALU directly, one operation at a time. The result is now latched
+     into `alu_result_r` on `flag_update_en` — the existing writeback pulse — and
+     both writeback mux entries read the latch. That removes the longest
+     combinational path in the core as a side effect: the post-route critical
+     path is no longer the ALU (Fmax 46.17 MHz, ~85 % margin at 25 MHz).
+
+- **Decision**:
+  - The I-format read port selects `instr[11:9]` (the destination, which is also
+    the first source) for opcodes `0x2` and `0x3`; everything else keeps its
+    existing mapping. No ISA change, no encoding change, no assembler change —
+    the documentation was right and the hardware was wrong.
+  - Writeback uses clocked `alu_result_r`, never the live ALU output.
+  - The regression program is checked in as `firmware/tests/isa_regress.s` and
+    run by `simulation/regression/isa_tb.sv` (9 checks) as part of `make sim`.
+- **Consequences**: `ADDI`/`SUBI` are now usable by firmware (the C path in
+  [MCU_READINESS.md](MCU_READINESS.md) benefits: it need not route every constant
+  through `LDI`), and the instruction is covered by a test that fails if either
+  defect returns. The blast radius was checked rather than assumed: every one of
+  the 15 suites passes afterwards, so no shipped behaviour depended on the bug.
+  Two usability notes were added to [ISA.md](ISA.md): that `imm9` is nine-bit
+  **two's complement** (`-5` must be written `0x1FB`, not `0x0FB` — the mistake
+  this work originally made), and that the assembler rejects values outside
+  `0x000..0x1FF`. Limitation: the regression still runs on the four-condition
+  matrix plus arithmetic, not on an exhaustive per-instruction golden model —
+  the executable-definition approach in [VERIFICATION.md](VERIFICATION.md) stays
+  the recommendation for a production library.
+
+## ADR-021: An optional PLL system clock (ECP5 `EHXPLLL`), off by default
+
+- **Status**: **ACCEPTED** (Rev B)
+- **Context**: the SoC has always run from the 25 MHz board oscillator, wired
+  straight into the fabric (`CLKDIV=1`). ADR-018 made that the *default* by
+  giving the design 46 MHz of Fmax headroom, and every document since then has
+  said "an `EHXPLLL` could take it to 40–50 MHz, but nothing needs it yet". That
+  is a real MCU gap: a microcontroller's clock is programmable, and the SoC was
+  buying a hard macro's worth of capability and leaving it unused.
+- **Decision**:
+  - `rtl/sv16_pll.sv` wraps one `EHXPLLL` and is instantiated only when
+    `CLKSRC=pll`; the default build (`osc`) does not instantiate it at all, so
+    the shipped configuration, its timing closure and every existing testbench
+    keep the clock they had. `make bitstream CLKSRC=pll PLLMHZ=37.5` builds the
+    faster one.
+  - **The frequency arithmetic is the one the hardware implements, and it is not
+    the obvious one.** With the feedback taken from CLKOP (internal, via
+    `CLKINTFB`), the CLKOP divider sits *inside* the loop:
+    `fPFD = fREF/CLKI_DIV`, `fOUT = fPFD * CLKFB_DIV`, `fVCO = fOUT * CLKOP_DIV`
+    ∈ 400–800 MHz. So `CLKFB_DIV` — not `CLKOP_DIV` — sets the output frequency,
+    and `CLKOP_DIV` only positions the VCO. The first version of the module
+    assumed `fOUT = fVCO/CLKOP_DIV`, which made nextpnr derive a 16 GHz VCO,
+    clamp the fabric clock to 800 MHz and fail the build; the corrected form is
+    the one LiteX uses (`clk_freq = vco_freq/clkofb_div`) and the one
+    prjtrellis's own `pll_120` example demonstrates (25 MHz × 24/5 with the
+    CLKOP divider in the loop = 120 MHz, VCO 600 MHz).
+  - Consequently the 25 MHz reference reaches multiples of 25 MHz and of
+    12.5 MHz exactly; 37.5 MHz is the useful step for this part because 50 MHz
+    is above the fabric's measured Fmax. The search for the divider pair lives
+    in `scripts/sv16_synth.sh`, which prints the requested and achieved
+    frequency and refuses a configuration whose VCO would be illegal — it never
+    silently builds a different clock.
+  - **Reset is gated on lock, and only when there is a PLL.** `sv16_startup`
+    takes `clk_ready` and holds the whole SoC down until it is high; the
+    parameter `GATE_ON_CLK_READY` (driven by `USE_PLL`) removes the AND gate
+    entirely in the oscillator configuration, so the shipped build keeps its
+    reset net free of fabric logic. The PLL's own `RST` is the raw external
+    reset and is never gated on `locked` — a PLL held in reset by its own lock
+    signal can never start.
+  - The clock source is visible to firmware: `SYS_STAT[8]` PLL_LOCKED and
+    `SYS_STAT[9]` CLK_SRC_PLL (plus `SYS_STAT_PLL_LOCKED` /
+    `SYS_STAT_CLK_SRC_PLL` in `firmware/drivers/sv16_hardware.h`).
+  - **Simulation gets a model, not the macro.** `rtl/sv16_pll.sv` contains a
+    delay-based behavioural oscillator (`HALF_NS` from the divider ratio) behind
+    `` `ifdef VERILATOR ``: the real primitive cannot be simulated here and a
+    clocked model *cannot* produce more edges than its reference supplies (the
+    first attempt at an accumulator model produced 12.5 MHz instead of 37.5 MHz
+    and is still explained in the file so nobody repeats it).
+    `simulation/regression/pll_clock_tb.sv` elaborates the PLL configuration and
+    checks the lock-gated reset, the measured 1.5× clock ratio, the derived
+    UART divisor and a real monitor frame decoded at that divisor.
+- **Consequences**: the part can be built at 37.5 MHz with an exact divider
+  configuration (12.5 MHz PFD, ×3 feedback, /16 VCO divider → VCO 600 MHz),
+  closing timing at 44.87 MHz (PASS, ~20 % margin) and producing a 294,124-byte
+  bitstream (re-measured on the current tree, after ADR-022 and the ADR-024
+  feedback-path fix: **45.45 MHz PASS, 292,752 bytes**; the earlier 41.40 MHz /
+  301,006-byte figure came from the CLKINTFB wiring and was a real netlist
+  difference, not only mapping noise — see ADR-024); the default 25 MHz build is untouched apart from a ~2 MHz Fmax
+  difference that comes from synthesis mapping, not from the logic — measured,
+  not assumed: adding two *constant-driven* status bits to the previous design
+  (no logic) moved Yosys from 7,569 to 8,382 LUT4 and nextpnr from 46.17 to
+  43.73 MHz, so this flow's absolute numbers move by ~10 % whenever the RTL
+  changes at all. The netlist itself is deterministic for a given source tree. Because
+  `rtl/sv16_top.sv` derives `CLK_HZ` (and therefore the UART divisor: 217 at
+  25 MHz, 326 at 37.5 MHz) from whatever was built, the console, the boot ROM
+  monitor and every piece of firmware work at either frequency with no software
+  change — that is the point of the exercise, not the extra 50 % throughput.
+  Limits, stated plainly: the PLL build has **never run on silicon**, and the
+  one thing simulation cannot check is the analog loop and its feedback tap,
+  which ADR-024 has since pinned to the wiring prjtrellis' own `ecppll` generates
+  (validating it needs a board — OQ-19), so the first bring-up step must be a
+  scope/serial check of the actual console rate; the PLL
+  adds a hard macro (1 of 2) and a lock dependency to the reset path, which is
+  why it is not the default; `PLLMHZ` values that the reference cannot reach
+  exactly are rounded with the achieved frequency reported, and there is no
+  runtime clock switching, no power-down/standby mode and no `CLKOS` outputs.
+
+---
+
+## ADR-022: Three instruction-level defects — control encodings, HALT, and the divider wait state
+
+- **Status**: Accepted — implemented, verified, and the source of `control_tb`
+  and `irq_latency_tb`.
+- **Context**: P8 (the interrupt-latency specification, ADR-023) needed the first
+  program in the repository that actually *enables an interrupt*: `EI`, a handler,
+  `RETI`. Writing it turned up three separate defects, none of which any existing
+  suite could see, because no testbenched program had ever used the instructions
+  involved. All three are the same failure mode in different places: the
+  instruction is implemented and documented, but the path from assembly to
+  execution does not carry it.
+- **Findings**:
+  1. **The assembler could not encode `HALT`, `EI`, `DI`, `RETI`.** All four, and
+     `NOP`, assembled to `0x0000`. The decoder has distinguished them by the
+     nine-bit sub-opcode in `instr[8:0]` since Rev A (`0x001`/`0x002`/`0x003`/
+     `0x004`), but `sv16_as.py`'s `S_*` handler wrote `code = 0x0000` for every
+     control mnemonic. Consequence: **interrupts were unusable from firmware** —
+     `EI` was a `NOP`, so `flag_ie` never set and `irq_enter` never fired; `RETI`
+     was a `NOP`, so a handler could not return. It also explains why no shipped
+     firmware (monitor, examples) mentions any of the five: the author hit the
+     wall and worked around it.
+  2. **`HALT` did not halt.** S_HALTED's resume condition was `step_en ||
+     !halt_req`; in normal operation `halt_req` (the debugger/boot hold) is low,
+     so the state was left on the very next clock. The instruction cost two
+     cycles and fell through. The ISA has always said "stop the core until an
+     interrupt", and the boot loader's `halt_req` handover is a different
+     mechanism that must keep working.
+  3. **`DIV`/`MOD` never entered `S_DIV_WAIT`.** The S_EXECUTE exit that is
+     supposed to hand over to the wait state tested `is_ext_alu`, which is true
+     for every extended-ALU op including DIV/MOD, and that branch (`next_state =
+     S_WRITEBACK`) came first — so the wait state was unreachable and the writeback
+     stored whatever had last been latched into `alu_result_r`. Only the ALU-level
+     `div_tb` (which drives `div_start`/`div_busy` directly) and the unit-level
+     `sv16_alu_tb` exercised the divider, so both passed while the *instruction*
+     computed nothing. `DIV`/`MOD` from firmware had never worked.
+- **Decision**:
+  - `scripts/sv16_as.py` gets an explicit `CTRL_SUBOP` table and refuses unknown
+    `S_*` mnemonics instead of silently emitting `NOP` (the same class of
+    silent-masking bug the assembler's immediate and branch range checks already
+    address).
+  - The control unit latches its own halt request (`sw_halt`) when the `HALT`
+    instruction executes or when an unhandled trap finds a zero vector, and
+    S_HALTED now leaves only on a single step, on an enabled interrupt (which
+    runs the normal entry sequence, so `RETI` returns to the instruction after
+    the `HALT`), or when neither hold is active. `halt_req` behaves exactly as
+    before, so the reset-time handover and a debugger's continue are unaffected.
+  - S_EXECUTE checks `ext_is_div` **before** the generic extended-ALU branch and
+    routes DIV/MOD to S_DIV_WAIT, which is what makes `flag_update_en` in that
+    state (and therefore the correct writeback) reachable.
+  - Two new suites pin all of it: `control_tb` (27 checks: assembler encoding,
+    decoder selection including a reserved sub-opcode, `SR.IE` transitions,
+    `HALT` really stopping with a frozen PC, an enabled interrupt waking a halted
+    core into the handler and returning, and a disabled interrupt leaving the core
+    halted with the request still pending) and `irq_latency_tb` (13 checks).
+    `isa_tb` gains `DIV`/`MOD` result checks for the instruction-level divider
+    path, and its harness now waits longer than the divider's quiet period before
+    judging that the program has reached its self-loop.
+- **Consequences**: interrupts, `HALT`-based idle and hardware division are
+  usable from assembly for the first time; three documented-but-dead paths are
+  now exercised by `make test` (473 checks / 18 suites). The measured cost of a
+  division is ~22 cycles from `S_EXECUTE` to writeback, which is what the latency
+  budget in ADR-023 uses. Two independent lesson points, both now covered by
+  tests rather than by review: *(a)* "the RTL implements it" says nothing about
+  whether the *assembler* can emit it, so every instruction group needs a
+  program-level test; *(b)* a unit test that drives a handshake directly proves
+  the block, not the integration — the FSM that is supposed to use the handshake
+  needs its own test.
+
+---
+
+## ADR-023: Interrupt latency budget
+
+- **Status**: Accepted — measured by `irq_latency_tb`; closes OQ-15 and the P8
+  remaining-work item.
+- **Context**: Open question OQ-15 asked what an interrupt costs. The answer was
+  "unknown, and the core is multi-cycle", which is not a number a control
+  application can schedule against, and every suite before this one exercised the
+  interrupt controller indirectly at best.
+- **Decision**:
+  - The budget is **measured, not derived**: `irq_latency_tb` sweeps the moment a
+    peripheral line rises across the instruction stream (24 arrival points over
+    `DIV`/`NOP`/`JMP`) and measures from the line going high to the first handler
+    instruction being fetched.
+  - Measured on the current tree: **controller 1 cycle**, **entry sequence 6
+    cycles**, **request → handler 11 … 31 cycles**, and **16 cycles for a
+    3-word handler plus `RETI`** (entry, handler, return). The spread is the
+    interrupted instruction: the core takes an interrupt only at an instruction
+    boundary (`irq_enter` in S_FETCH), so `DIV` — 22 cycles, not abandoned
+    mid-flight — is the worst case, and a request arriving just as the current
+    instruction ends is the best case.
+  - The suite *enforces* the bounds (minimum ≥ 5, maximum ≤ 34 cycles) instead of
+    only printing them, so this document cannot silently go stale: lengthening
+    the entry path or the divider fails `make test`.
+  - Consequences that firmware can rely on: an interrupt cannot preempt an
+    instruction, `SR`/`PC` are pushed and restored atomically by hardware, a
+    peripheral's line stays latched pending if the core arrives late, and the
+    handler must clear the peripheral's own pending condition (the controller's
+    pending bit is cleared by hardware acknowledge). Nesting is still not
+    supported — `flag_ie` is cleared on entry and restored by `RETI` — and there
+    is no latency guarantee for a request that arrives while another interrupt is
+    being serviced beyond that pending-bit behaviour.
+- **Consequences**: OQ-15 is closed with numbers, `SYS_STAT`/`IRQ_*` behaviour is
+  now test-backed rather than implied, and the remaining interrupt gap is nesting
+  and per-source prioritisation policy (fixed priority today, index 0 wins).
+
+---
+
+## ADR-024: The PLL feedback path — `CLKFB` driven by the `CLKOP` net, not `CLKINTFB`
+
+**Context**: [ADR-021](#adr-021-an-optional-pll-system-clock-ecp5-ehxpll-off-by-default)
+instantiated `EHXPLLL` with `FEEDBK_PATH("CLKOP")` — the configuration bits say
+"the feedback signal is the CLKOP output, returned on the `CLKFB` input" — but
+wired that input from the primitive's *internal feedback* output:
+
+```verilog
+logic clk_fb;
+EHXPLLL #(.FEEDBK_PATH("CLKOP"), ...) u_pll (
+    .CLKFB (clk_fb),
+    .CLKINTFB (clk_fb),   // internal-feedback output driving the feedback input
+    ...
+```
+
+**Decision**: drive `CLKFB` from the same net `CLKOP` drives, and leave
+`CLKINTFB` unconnected:
+
+```verilog
+.CLKFB (clk_out),   // feedback from the CLKOP net
+.CLKINTFB (),       // internal feedback path not used
+```
+
+**Why**:
+- `CLKINTFB` is the *internal* feedback tap (the OP divider output routed inside
+  the primitive). `FEEDBK_PATH("CLKOP")` instead selects the *external* return
+  path, whose signal must arrive on the `CLKFB` input — that is what prjtrellis'
+  own PLL generator (`ecppll`, Project Trellis) emits, and what the Project F and
+  pa3fwm ECP5 clock examples write: `.CLKOP(clkout0), .CLKFB(clkout0), .CLKINTFB()`.
+  LiteX uses the other self-consistent combination (`FEEDBK_PATH("INT_O0")` with
+  `CLKINTFB` driving `CLKFB`). Mixing the two — internal tap wired to a
+  configuration that selects the external path — programs bits that do not
+  describe the netlist.
+- nextpnr cannot see the difference: it derives the output frequency from the
+  `FEEDBK_PATH` *string* alone (both spellings give the same arithmetic), so a
+  wrong tap is invisible in timing reports and would be found on a board, if at
+  all, as a clock that is present but out of phase or slow to lock.
+- Whatever the tap, the trims (`ICP_CURRENT`, `LPF_RESISTOR`,
+  `MFG_ENABLE_FILTEROPAMP`, `MFG_GMCREF_SEL`) must be a real loop-filter
+  configuration: prjtrellis' `ecppll` template values (`12` / `8` / `1` / `2`)
+  are kept, since they are what this toolchain is exercised with. They are
+  unverifiable without a scope — see OQ-19.
+
+**Evidence**: the oscillator build is bit-identical (295,665 bytes, 44.70 MHz —
+the PLL is not instantiated there). The PLL build changed measurably: **301,006
+→ 292,752 bytes** and, with the same 37.5 MHz constraint, **41.40 → 45.45 MHz**
+post-route (37.73 MHz pre-route) — consistent with removing a primitive-output
+→ primitive-input path and taking feedback from the clock net the fabric already
+uses, and the first time the PLL build has had as much timing margin as the
+oscillator build. `pll_clock_tb` re-passes (8 checks: lock-gated reset, measured
+1.5× ratio, derived UART divisor from the built clock, six banner bytes decoded).
+
+**Consequences**: the PLL configuration is now the one the vendor tool flow
+generates for a single-output ECP5 PLL, so a bring-up difference is much more
+likely to be the analog loop than the wiring. `docs/FPGA.md`,
+`docs/SYNTHESIS_AND_DEPLOYMENT.md`, `docs/RESET_AND_CLOCK.md` and `README.md`
+carry the re-measured numbers. The build still cannot prove lock: simulation uses
+a behavioural oscillator, and this remains the one part of the design that needs a
+board (OQ-19). No RTL outside `sv16_pll.sv` changed, no ISA-visible behaviour
+changed, and the default clock source is still the oscillator.
+
+---
+
+## ADR-025: The resource budget is the datasheet's, not the toolchain's
+
+**Context**: while checking this design against the Lattice *ECP5 and ECP5-5G
+Family Data Sheet* — revision **FPGA-DS-02012-3.4** (September 2025), a copy of
+which is in this repository as `ECP5 and ECP5-5G.pdf`; the same table is in
+revision 3.2 — the reported utilisation did not match the part. nextpnr prints denominators of **24,288 LUT4 and 56 sysMEM blocks** for a
+build carrying `--12k`, which are the LFE5U-**25F**'s numbers. The datasheet's
+Table 1.1 gives, for the part in the BOM:
+
+| | LFE5U-12 | LFE5U-25 |
+| :--- | ---: | ---: |
+| LUTs | **12k** | 24k |
+| sysMEM blocks (18 kb) | **32** (576 kb = 72 KB) | 56 (1,008 kb) |
+| Distributed RAM | 97 kb | 194 kb |
+| 18×18 multipliers | 28 | 28 |
+| PLLs / DLLs | 2 / 2 | 2 / 2 |
+| 144 TQFP I/O | **98** | 98 |
+
+The datasheet prints "12k LUTs"; the budget checker uses **12,144**, the exact
+count for this family's slice geometry (an ECP5 PFU is 4 slices × 2 LUT4, the
+25F has 3,036 PFUs = 24,288 LUT4, and the 12F is that halved — 1,518 PFU).
+
+The cause is not a stale copy in the documentation — it is the device model.
+In the prjtrellis database, `ECP5/LFE5U-12F/` and `ECP5/LFE5U-25F/` contain
+**byte-identical** `tilegrid.json`, `iodb.json` and `globals.json`, and
+`devices.json` gives both the same frame geometry (7,562 frames × 592 bits,
+`max_row` 50, `max_col` 72). The only difference is the `idcode`
+(`0x21111043` vs `0x41111043`). The two part numbers are **one die sold in two
+bins**, which is why the fabric is identical and the guaranteed density is not.
+(The same relationship produces the 197-vs-98 I/O confusion: 197 is the BGA
+packages' bond-out, 98 is what the TQFP-144 package actually bonds.)
+
+**Decision**: the datasheet's numbers for the part are the budget, and
+`make bitstream` enforces them. `scripts/sv16_check_budget.py` parses
+nextpnr's utilisation table after place and route and fails the build if the
+design exceeds **12,144 LUT4 / 32 `DP16KD` / 28 `MULT18X18D` / 2 `EHXPLLL` /
+98 I/O**, printing the datasheet percentage for each. `LIMITS=off` turns the gate
+into a report for anyone deliberately targeting a 25F.
+
+**Why**:
+- A design that exceeds the datasheet budget still produces a bitstream — the
+  frames exist and the idcode matches — so nothing in the flow would complain.
+  It would be a design that fits the *die* and not the *part*: it might work on
+  the bench and fail in production, or fail on a batch, which is the worst
+  possible failure mode.
+- Silently trusting a tool's denominator is how this repository ended up
+  claiming "62 % of the LUTs are free" when the real figure is **23 %**. The
+  guard is what stops that claim from drifting again.
+- The check runs on the post-route report, so it sees what was actually placed,
+  not an estimate.
+
+**Measured after the change** (default build): 9,407 / 12,144 LUT4 = **77.5 %**,
+4,772 / 12,144 FF = 39 %, 18 / 32 block RAM = 56 %, 1 / 28 multiplier, 0 / 2 PLL,
+52 / 98 I/O = 53 %. The PLL build: 9,191 LUT4 = 76 %. The design fits the part
+comfortably in absolute terms, but LUT4 and block RAM are the two resources to
+watch, and every "how much is left" statement in the documentation now means
+"left against the datasheet".
+
+**Verified against the part's own datasheet**: Table 1.1 of revision 3.4 gives
+LFE5U-12 as 12k LUTs / 32 sysMEM blocks / 576 kb / 97 kb distributed RAM /
+28 multipliers / 2 PLLs, and §4.3.2 gives **98 single-ended user I/O on the 144
+TQFP** (per bank 10 + 16 + 18 + 15 + 0 + 15 + 12 + 12). That section also lists
+**4 dedicated TAP pins** and 7 miscellaneous dedicated pins, which is a useful
+correction to the JTAG roadmap item: a JTAG debug bridge does *not* have to
+consume user I/O on this package.
+
+**Consequences**: `docs/FPGA.md`, `docs/SYNTHESIS_AND_DEPLOYMENT.md`,
+`docs/PROJECT_STATUS.md`, `README.md` and `REPORT.md` carry the datasheet numbers
+with nextpnr's shown alongside so the discrepancy is never re-learned; the roadmap
+(MCU_READINESS) is budgeted against 2,700 free LUT4 and 14 free block RAM blocks
+rather than against 15,000 LUT4 and 38 blocks; and the remaining question — does
+this exact design configure and run on a real 12F bin — is tracked as OQ-20,
+because the placement was chosen by a tool that models the whole die.
