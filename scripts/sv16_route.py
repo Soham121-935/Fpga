@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import heapq
+import json
 import math
 import re
 import sys
@@ -51,6 +52,7 @@ from pathlib import Path
 
 import numpy as np
 from shapely.geometry import LineString, Point, Polygon, box
+from shapely.ops import unary_union
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sv16_board_drc import (BOARD_FILE, BOARD_H, BOARD_W, CLASS_OF_NET,  # noqa: E402
@@ -553,18 +555,42 @@ def signal_nets(board):
 
 
 # ------------------------------------------------------------------- planes
+def closest_pair(outer, hole, cell_budget=2_000_000):
+    """Index of the closest pair of vertices between two rings.
+
+    The outline grows by every hole's vertices - on a real plane that is tens
+    of thousands of points against hundreds per hole, so the comparison is done
+    in row blocks: the full matrix would be hundreds of megabytes and the
+    out-of-memory killer takes the process down.
+    """
+    outer_xy = np.asarray(outer, dtype=float)
+    hole_xy = np.asarray(hole, dtype=float)
+    step = max(1, int(cell_budget // max(1, len(hole_xy))))
+    best_distance, best_oi, best_hi = float("inf"), 0, 0
+    for start in range(0, len(outer_xy), step):
+        block = outer_xy[start:start + step]
+        delta = block[:, None, :] - hole_xy[None, :, :]
+        distance = (delta * delta).sum(axis=2)
+        flat = int(distance.argmin())
+        row, column = divmod(flat, distance.shape[1])
+        if distance[row, column] < best_distance:
+            best_distance = float(distance[row, column])
+            best_oi, best_hi = start + int(row), int(column)
+    return best_oi, best_hi
+
+
 def fracture(poly):
-    """One hole-free ring for a polygon with holes (KiCad's own keyhole trick)."""
+    """One hole-free ring for a polygon with holes (KiCad's own keyhole trick).
+
+    Each hole is joined to the outline by a zero-width slit.  Finding the
+    closest pair of vertices is done with numpy: the outline grows by every
+    hole's vertices, so a Python double loop over it is quadratic and takes
+    ten minutes on a plane with a few hundred holes.
+    """
     outer = list(poly.exterior.coords)
     for ring in poly.interiors:
         hole = list(ring.coords)
-        best = None
-        for hi, (hx, hy) in enumerate(hole):
-            for oi, (ox, oy) in enumerate(outer):
-                distance = (hx - ox) ** 2 + (hy - oy) ** 2
-                if best is None or distance < best[0]:
-                    best = (distance, oi, hi)
-        _, oi, hi = best
+        oi, hi = closest_pair(outer, hole)
         slit = outer[oi]
         loop = hole[hi:] + hole[1:hi + 1]
         outer = outer[:oi + 1] + [slit] + loop + [slit] + outer[oi:]
@@ -584,14 +610,25 @@ def rings_of(geom):
 
 
 def plane_fill(board, layer, net, verbose=False):
-    """Copper for a plane: the board minus every foreign piece of copper."""
+    """Copper for a plane: the board minus every foreign piece of copper.
+
+    The keep-outs are unioned first and subtracted in one go.  Subtracting them
+    one at a time rebuilds the plane after every hole, which is quadratic and
+    takes tens of minutes on a board with 1,500 pads.
+    """
     area = box(EDGE, EDGE, BOARD_W - EDGE, BOARD_H - EDGE)
+    holes = []
     for item in board.items:
         if item.net == net or not item.on(layer):
             continue
-        area = area.difference(item.geom.buffer(board.clearance(net, item.net) + 0.05,
-                                                quad_segs=8))
-    rings = rings_of(area)
+        holes.append(item.geom.buffer(board.clearance(net, item.net) + 0.05,
+                                      quad_segs=8))
+    if holes:
+        area = area.difference(unary_union(holes))
+    # 0.01 mm is a tenth of the routing grid: it throws away the rounded corners
+    # the clearance buffers add, which cuts the vertex count by several times and
+    # is far below anything the fab can resolve
+    rings = rings_of(area.simplify(0.01))
     if verbose:
         print("  plane %-4s on %-6s: %d ring(s), %d vertices"
               % (net, layer, len(rings), sum(len(r) for r in rings)))
@@ -602,6 +639,39 @@ def build_planes(board, verbose=True):
     return [("GND", GND_PLANE, plane_fill(board, GND_PLANE, "GND", verbose)),
             ("3V3", PWR_PLANE, plane_fill(board, PWR_PLANE, "3V3", verbose)),
             ("GND", "B.Cu", plane_fill(board, "B.Cu", "GND", verbose))]
+
+
+
+# ------------------------------------------------------------------ checkpoint
+CHECKPOINT = ROOT / "hardware" / "sv16_board" / "routing_state.json"
+
+
+def save_state(board, path=CHECKPOINT):
+    """Dump the copper routed so far, so a long run can be resumed."""
+    data = {"tracks": [[list(a), list(b), w, layer, net]
+                       for a, b, w, layer, net in board.new_tracks],
+            "vias": [[x, y, size, drill, net] for x, y, size, drill, net in board.new_vias]}
+    path.write_text(json.dumps(data))
+    return len(data["tracks"])
+
+
+def load_state(board, path=CHECKPOINT):
+    """Put a saved checkpoint back on the board."""
+    if not path.exists():
+        return 0
+    data = json.loads(path.read_text())
+    for a, b, w, layer, net in data["tracks"]:
+        board.add_track(tuple(a), tuple(b), w, layer, net)
+    for x, y, size, drill, net in data["vias"]:
+        board.add_via(x, y, size, drill, net)
+    return len(data["tracks"])
+
+
+def rip_net(board, net):
+    """Take a net's copper back off so it can be routed again."""
+    board.new_tracks = [t for t in board.new_tracks if t[4] != net]
+    board.new_vias = [v for v in board.new_vias if v[4] != net]
+    board.notes = [n for n in board.notes if not n.startswith("unrouted %s " % net)]
 
 
 # --------------------------------------------------------------------- output
@@ -660,6 +730,10 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--board", default=str(BOARD_FILE))
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--resume", action="store_true",
+                        help="reload the copper saved in routing_state.json")
+    parser.add_argument("--repair", type=int, default=2,
+                        help="rip-up-and-reroute rounds for nets that failed")
     args = parser.parse_args()
 
     start = time.time()
@@ -679,18 +753,48 @@ def main() -> int:
 
     routed = failed = 0
     if args.stage in ("spines", "signals", "all"):
-        route_spines(board)
+        if args.resume:
+            n = load_state(board)
+            print("  resumed %d tracks from %s" % (n, CHECKPOINT.name))
+        else:
+            route_spines(board)
+            save_state(board)
     if args.stage in ("signals", "all"):
         for index, net in enumerate(nets, 1):
+            if args.resume:
+                continue
             if route_net(board, net, args.verbose):
                 routed += 1
             else:
                 failed += 1
             if index % 10 == 0 or index == len(nets):
+                save_state(board)
                 print("    %d/%d nets, %d tracks, %d vias, %d unrouted, %.0f s"
                       % (index, len(nets), len(board.new_tracks), len(board.new_vias),
                          len([n for n in board.notes if n.startswith("unrouted")]),
                          time.time() - start), flush=True)
+
+    # Repair: nets that failed on the first pass get another go with the other
+    # nets' copper lifted out of the way.  Two rounds is enough to clear all
+    # but the genuinely boxed-in ones.
+    for round_number in range(1, args.repair + 1):
+        broken = sorted({note.split()[1] for note in board.notes
+                         if note.startswith("unrouted")})
+        if not broken:
+            break
+        print("  repair pass %d: %d net(s)" % (round_number, len(broken)), flush=True)
+        still_broken = []
+        for net in broken:
+            rip_net(board, net)
+            ok = route_net(board, net, args.verbose)
+            if not ok:
+                still_broken.append(net)
+        failed = len(still_broken)
+        routed = len(nets) - failed
+        print("    after repair %d: %d routed, %d failed" % (round_number, routed, failed),
+              flush=True)
+        save_state(board)
+
     print("  routed: %d   failed: %d   tracks: %d   vias: %d"
           % (routed, failed, len(board.new_tracks), len(board.new_vias)))
 
