@@ -83,7 +83,14 @@ FANOUT_R = (0.70, 1.25)
 ESCAPE_VIA = (0.45, 0.25)
 ROUTE_VIA = (0.60, 0.30)
 EDGE = 0.30
-MAX_WINDOW = 60.0                 # mm, the largest search window A* will take
+# The board grew from 100 mm to give the router room, so every distance in it
+# grew with it.  Search windows are sized off that, or a run across the board
+# is longer than the window A* is allowed to look through.
+# The parts keep their original spacing; only the board around them grew.
+# Distances between pads are unchanged, so the search windows stay the
+# size that was proven to close the power rails.
+SCALE = 1.0
+MAX_WINDOW = 60.0 * SCALE         # mm, the largest search window A* will take
 # The fan-out ring and the body outline are measured from where U1 actually
 # sits, not hard-coded: move the chip (or grow the board) and they follow.
 U1_RING_HALF = 13.9       # mm from the chip centre to the fan-out ring
@@ -750,17 +757,17 @@ def _label(node):
 
 
 SIGNAL_ATTEMPTS = [(SIGNAL_LAYERS, 1.0, None, ROUTE_VIA),
-                   (SIGNAL_LAYERS, 1.0, 6.0, ROUTE_VIA),
-                   (SIGNAL_LAYERS, 1.0, 12.0, ROUTE_VIA),
-                   (SIGNAL_LAYERS, 1.0, 12.0, ESCAPE_VIA),
-                   (SIGNAL_LAYERS, 1.0, 20.0, ESCAPE_VIA),
-                   (SIGNAL_LAYERS, 1.0, 20.0, FANOUT_VIA)]
+                   (SIGNAL_LAYERS, 1.0, 6.0 * SCALE, ROUTE_VIA),
+                   (SIGNAL_LAYERS, 1.0, 12.0 * SCALE, ROUTE_VIA),
+                   (SIGNAL_LAYERS, 1.0, 12.0 * SCALE, ESCAPE_VIA),
+                   (SIGNAL_LAYERS, 1.0, 20.0 * SCALE, ESCAPE_VIA),
+                   (SIGNAL_LAYERS, 1.0, 20.0 * SCALE, FANOUT_VIA)]
 
 SPINE_ATTEMPTS = [(layers, scale, margin, via)
                   for via in (ROUTE_VIA, ESCAPE_VIA)
                   for layers in (("In2.Cu",), ("In2.Cu", "B.Cu", "F.Cu"))
                   for scale in (1.0, 0.5)
-                  for margin in (None, 15.0, 30.0)]
+                  for margin in (None, 15.0 * SCALE, 30.0 * SCALE)]
 
 
 def route_net(board, net, verbose=False):
@@ -1143,6 +1150,11 @@ def main() -> int:
                       % (net, len(net_pieces(board, net))), flush=True)
         save_state(board)
     if args.stage in ("signals", "all"):
+        # "unrouted" notes are appended and never withdrawn, so a net that
+        # failed in an earlier run and routed fine in this one was still being
+        # counted - the total only ever climbed.  Drop them so the running
+        # figure means "in more than one piece right now".
+        board.notes = [n for n in board.notes if not n.startswith("unrouted")]
         for index, net in enumerate(nets, 1):
             if net in board.done_nets:
                 routed += 1
@@ -1163,8 +1175,11 @@ def main() -> int:
     # nets' copper lifted out of the way.  Two rounds is enough to clear all
     # but the genuinely boxed-in ones.
     for round_number in range(1, args.repair + 1):
-        broken = sorted({note.split()[1] for note in board.notes
-                         if note.startswith("unrouted")})
+        # Measure, do not remember.  A note survives saves and resumes, and the
+        # net it names may have been routed since, so ask the board which nets
+        # are genuinely in more than one piece at this moment.
+        board.notes = [n for n in board.notes if not n.startswith("unrouted")]
+        broken = [net for net in nets if len(net_pieces(board, net)) > 1]
         if not broken:
             break
         print("  repair pass %d: %d net(s)" % (round_number, len(broken)), flush=True)
