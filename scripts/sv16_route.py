@@ -417,7 +417,7 @@ def fanout_u1(board, verbose=True):
                 # where the gaps between them are narrower than the clearance a
                 # pour has to keep; under the body both power layers are empty,
                 # so every supply pin drops straight into its plane.
-                radius = half + 1.3
+                radius = half + (1.3 if index % 2 == 0 else 2.1)
                 vx, vy = cx - nx * radius, cy - ny * radius
                 if not U1_BODY.contains(Point(vx, vy)):
                     radius = half + FANOUT_R[index % 2]
@@ -670,6 +670,33 @@ SPINE_ATTEMPTS = [(layers, scale, margin, via)
                   for margin in (None, 15.0, 30.0)]
 
 
+def route_net(board, net, verbose=False):
+    """Make one net a single piece of copper."""
+    return join_pieces(board, net, board.width_of(net), SIGNAL_ATTEMPTS, verbose)
+
+
+def route_spines(board, verbose=True):
+    """The rails that are not planes: wide copper, In2.Cu where it fits.
+
+    These are the last copper a board can do without - miss one and the FPGA
+    has no core supply - so a connection that will not go through on the power
+    layer is retried on the signal layers and, failing that, at half width.  A
+    trunk that has to neck down for its last few millimetres is normal practice
+    and still carries an amp or more.  The pours come first, so most of these
+    joins are already made before a track is laid.
+    """
+    for net in ("1V1", "2V5", "USB_VBUS", "VM_IN_RAW", "VM_IN"):
+        if net not in SPINE_WIDTH:
+            continue
+        width = SPINE_WIDTH[net]
+        if verbose:
+            print("  spine %-10s %.2f mm wide, %d island(s)"
+                  % (net, width, len(net_pieces(board, net))), flush=True)
+        join_pieces(board, net, width, SPINE_ATTEMPTS, verbose)
+        if verbose:
+            print("    -> %d island(s) left" % len(net_pieces(board, net)), flush=True)
+
+
 def signal_nets(board):
     out = []
     for net in board.nets:
@@ -767,7 +794,7 @@ def plane_fill(board, layer, net, region=None, verbose=False):
     return rings, area
 
 
-def pour_region(board, net, grow=3.5):
+def pour_region(board, net, grow=2.5):
     """The area a rail may be poured over: around its own pins and vias.
 
     Pouring both rails over the whole FPGA just lets the first one take
