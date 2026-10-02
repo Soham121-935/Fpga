@@ -764,17 +764,12 @@ def build_board() -> str:
     lines.append("")
 
     # Routing.  `sv16_route.py` writes the copper (tracks, vias and the filled
-    # planes) to routing.kicad_pcb.txt; if that file is there it is spliced in
-    # here and the empty zone outlines below are skipped.  Without it the board
-    # is the unrouted base: components, netlist and placement, zones declared
-    # but not filled, which is what `--no-routing` and a fresh clone give you.
-    routing = ROUTING_FILE
-    if routing.exists() and not NO_ROUTING:
-        copper = routing.read_text().rstrip("\n")
-        lines.extend(copper.split("\n"))
-        lines.append("")
-        gnd = NET_ORDER.index("GND") + 1
-        return finish(lines)
+    # planes) to routing.kicad_pcb.txt.  When that file is present it is spliced
+    # in at the end of the board and the empty zone outlines below are skipped,
+    # because the router emits its own filled zones.  Without it the board is
+    # the unrouted base: components, netlist and placement, zones declared but
+    # not filled - which is what `--no-routing` and a fresh clone give you.
+    have_routing = ROUTING_FILE.exists() and not NO_ROUTING
 
     # ground planes.  The stack-up (BOARD.md section 14) is
     # signal / solid GND / solid PWR / signal, so the plane goes on In1.Cu and
@@ -782,7 +777,7 @@ def build_board() -> str:
     # first "Fill All Zones" (B) - the polygons below are the outlines only.
     gnd = NET_ORDER.index("GND") + 1
     zone_id = 0
-    for layer, inset in (("In1.Cu", 0.25), ("B.Cu", 0.5)):
+    for layer, inset in ((("In1.Cu", 0.25), ("B.Cu", 0.5)) if not have_routing else ()):
         zone_id += 1
         x0, y0, x1, y1 = inset, inset, BOARD_W - inset, BOARD_H - inset
         lines.append("  (zone (net %d) (net_name \"GND\") (layer \"%s\") " % (gnd, layer))
@@ -836,6 +831,10 @@ def build_board() -> str:
                 pad["net"] = nets.get(pad["number"])
             lines.append(pad_sexp(pad, "    "))
         lines.append("  )")
+    if have_routing:
+        lines.extend(ROUTING_FILE.read_text().rstrip("\n").split("\n"))
+        lines.append("")
+
     return finish(lines, placed)
 
 
