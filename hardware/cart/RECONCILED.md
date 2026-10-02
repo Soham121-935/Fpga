@@ -85,10 +85,19 @@ Either way the **board file, `PCB_COMPONENTS.md` §2–§3 and `BOARD.md` §4/§
 what is on your bench. That revision is written once, after you answer §4 and tell me whether U1, Y1, U4
 and the connectors are already on order.
 
-## 5. Status after the board file was rebuilt (revision 1.2)
+## 5. Status after the board file was rebuilt (revision 1.2, then 1.3)
+
+> **Revision 1.3 adds the copper.** The board file now carries the rail pours on
+> `In2.Cu` (3V3 whole-layer, 1V1 and 2V5 patches with priorities), 291 escape and
+> stitching vias with their 0.2 mm stub tracks, the MP1584's thermal vias, the DNP
+> attributes for D6 and J7, and a placement repair pass that removes pad
+> collisions. Five bitmaps, `BOM.csv` / `JLCPCB_BOM.csv` / `JLCPCB_CPL.csv`,
+> `FAB_NOTES.md` and `PCB_CONNECTIONS.md` come out of the same run — `make pcb`.
+> Everything below is still true of the parts; what changed is how much of the
+> layout is already done.
 
 Everything below is now **in** `hardware/sv16_board/sv16_board.kicad_pcb` (141 footprints, 596 pads,
-472 on 133 nets, two ground zones, project file with net classes):
+472 on 121 nets, five zones, 291 vias, project file with net classes):
 
 | From the cart | What the board file now has |
 | :--- | :--- |

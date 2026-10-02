@@ -8,7 +8,10 @@
 #   make bitstream   Yosys -> nextpnr-ecp5 -> ecppack   (build/sv16_top.bit)
 #   make prog        program the device over JTAG
 #   make pcb-doc     regenerate PCB_COMPONENTS.pdf (KiCad component specs)
-#   make kicad-board open-and-route starting point: footprints + netlist (hardware/sv16_board/)
+#   make kicad-board open-and-route starting point: footprints + netlist + pours + vias
+#   make pcb         the whole board starter kit: board file, bitmaps, BOM/CPL,
+#                    FAB_NOTES.md and PCB_CONNECTIONS.md (the wiring, written and drawn)
+#   make pcb-check   parse the board back and re-verify it (nets, pads, DRC-lite)
 #   make tutorial-pdf the exact KiCad how-to (KICAD_TUTORIAL.pdf)
 #   make release     verify the four artifacts and hash them (run before programming)
 #   make prog-flash  write the bitstream into the config flash (U2), persistent
@@ -190,6 +193,9 @@ lint:
 	$(PY) scripts/sv16_rtl_lint.py $(RTL_SRCS)
 	$(PY) scripts/sv16_board_pins.py --check
 	$(PY) scripts/sv16_pcb_doc.py --check
+	$(PY) scripts/sv16_board_kicad.py --check
+	$(PY) scripts/sv16_pcb_bom.py --check
+	$(PY) scripts/sv16_pcb_connections.py --check
 
 # ------------------------------------------------------------- board design
 # Regenerate the PCB pin/net table used by BOARD.md from the device pin
@@ -261,6 +267,43 @@ $(BUILD)/$(PROJECT).bit: $(RTL_SRCS) $(ROM_HEX) $(CONSTRAINTS) scripts/sv16_synt
 # No KiCad needed to generate it; open the result in KiCad to route.
 kicad-board:
 	$(PY) scripts/sv16_board_kicad.py
+
+# ------------------------------------------------------------ PCB starter kit
+# Everything a board order needs, regenerated together and from one source of
+# truth (the placement + netlist in scripts/sv16_board_kicad.py):
+#
+#   hardware/sv16_board/sv16_board.kicad_pcb    footprints, nets, rail pours, escape vias
+#   hardware/sv16_board/*.png                   top/bottom/net/power views, connection sheets
+#   hardware/sv16_board/BOM.csv                 grouped BOM with part numbers and the DNP column
+#   hardware/sv16_board/JLCPCB_BOM.csv          the same list, in the fab's BOM columns
+#   hardware/sv16_board/JLCPCB_CPL.csv          pick-and-place: Designator,Val,Package,Mid X,Mid Y,Rotation,Layer
+#   hardware/sv16_board/FAB_NOTES.md            ordering card: stack-up, rules, what to upload
+#   PCB_CONNECTIONS.md                          the wiring, written out part by part and drawn
+pcb: kicad-board pcb-bitmap pcb-bom pcb-connections
+
+pcb-bitmap:
+	$(PY) scripts/sv16_pcb_bitmap.py
+
+pcb-bom:
+	$(PY) scripts/sv16_pcb_bom.py
+
+pcb-connections:
+	$(PY) scripts/sv16_pcb_connections.py
+
+# PCB_CONNECTIONS.md -> PCB_CONNECTIONS.pdf (same printer as the other documents)
+pcb-connections-pdf: pcb-connections
+	$(PY) scripts/sv16_board_pdf.py --src PCB_CONNECTIONS.md --out PCB_CONNECTIONS.pdf \
+	    --title "SV-16 board - PCB connections, written and drawn"
+
+# Re-verify the generated board without rewriting it: the generator parses its
+# own output back (parentheses, counts, nets on existing pads, DRC-lite vias and
+# a pad-to-pad collision scan), then the BOM and the connection document are
+# checked for staleness.  This is what `make lint` runs.
+pcb-check:
+	$(PY) scripts/sv16_board_kicad.py --check
+	$(PY) scripts/sv16_pcb_copper.py
+	$(PY) scripts/sv16_pcb_bom.py --check
+	$(PY) scripts/sv16_pcb_connections.py --check
 
 # ------------------------------------------------------- release for the bench
 # Verify the four artifacts that actually make the board run (bitstream, config

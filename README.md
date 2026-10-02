@@ -80,6 +80,9 @@ SV-16 monitor v1
 | Command | Result |
 | :--- | :--- |
 | `make test` | lint + all eighteen Verilator suites (473 checks) |
+| `make pcb` | the whole board starter kit: KiCad board file, five bitmaps, BOM/CPL, `FAB_NOTES.md`, `PCB_CONNECTIONS.md` |
+| `make pcb-check` | parse the generated board back and re-verify it (nets, pads, DRC-lite, placement) |
+| `make app` | build the example application image |
 | `make bitstream` | `build/sv16_top.bit` for the LFE5U-12F-6TG144C, timing PASS at 25 MHz |
 | `make synth` | Yosys only (fast synthesizability check) |
 | `make prog` | program the FPGA over JTAG |
@@ -101,8 +104,11 @@ UART divisor is derived from the built clock automatically (217 at 25 MHz, 326 a
 ```text
 BOARD.md/.pdf    PCB blueprint: components, specs, power tree, connection diagram
 TEAM_PLAN.md/.pdf 4-person build plan: roles, phases, work packages, gates, budget, risks
-hardware/       KiCad board base (footprints placed + full netlist, ready to route)
+hardware/       KiCad board base (footprints + netlist + rail pours + escape vias, ready to route)
+                + five board bitmaps (top, bottom, net map, power map, connection sheets)
+                + BOM.csv, JLCPCB_BOM.csv, JLCPCB_CPL.csv, FAB_NOTES.md (ordering and assembly)
                 + cart/ (the parts you actually bought, reconciled against footprints)
+PCB_CONNECTIONS.md/.pdf  the wiring: every pad, every net, every connector pinout, drawn
 KICAD_TUTORIAL.md/.pdf  the click-by-click guide to finishing that board in KiCad
 board/           device pin database + generated 144-pin net table (BOARD.md appendix)
 docs/            operator manual, memory map, peripherals, flow, verification, ADRs
@@ -133,6 +139,7 @@ MCU-like vs. FPGA-soft-core comparison.
 
 | Document | Contents |
 | :--- | :--- |
+| [PCB_CONNECTIONS.pdf](PCB_CONNECTIONS.pdf) | **start here if you are the one wiring or routing it**: every pad of every part and what it connects to, connector pinouts, the power tree, the six connection sheets drawn, what the generator already connected, and the twelve checks before routing (source: [PCB_CONNECTIONS.md](PCB_CONNECTIONS.md), rebuild with `make pcb-connections-pdf`) |
 | [KICAD_TUTORIAL.pdf](KICAD_TUTORIAL.pdf) | **start here if you are the one routing the board**: opening the project, updating the footprints, the design rules, filling and splitting the planes, the routing order with exact widths, DRC, gerbers, ordering, assembly and first power-up (source: [KICAD_TUTORIAL.md](KICAD_TUTORIAL.md), rebuild with `make tutorial-pdf`) |
 | [TEAM_PLAN.pdf](TEAM_PLAN.pdf) | how to build this with four people: roles, five phases, gates, 16 work packages, interfaces to freeze, budget, risks (source: [TEAM_PLAN.md](TEAM_PLAN.md), rebuild with `make plan-pdf`) |
 | [BOARD.pdf](BOARD.pdf) | the same blueprint typeset for printing / review (source: [BOARD.md](BOARD.md), rebuild with `make board-pdf`) |

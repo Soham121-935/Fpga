@@ -38,6 +38,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "hardware" / "sv16_board"
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sv16_pcb_copper  # noqa: E402  (the copper plan: pours, vias, stitching)
 BOARD_FILE = OUT / "sv16_board.kicad_pcb"
 
 BOARD_W, BOARD_H = 100.0, 100.0
@@ -300,6 +303,12 @@ CONNECTIONS = [(ref, pad, "3V3" if net == "TP_3V3" else
                         "DONE" if net == "TP_DONE" else
                         "INITN" if net == "TP_INITN" else net)
                for ref, pad, net in CONNECTIONS]
+
+# Nets that no pad ended up on (the test-point aliases, the second USBLC6
+# channel that this design does not use) are dropped rather than declared: an
+# empty net in the file is a phantom in KiCad's Net Inspector.
+_USED = {net for _, _, net in CONNECTIONS}
+NET_ORDER = [net for net in NET_ORDER if net in _USED]
 
 # ------------------------------------------------------------------- footprints
 # Each builder returns (kiwi_library_id, pads).  A pad is a dict; "shape" is
@@ -596,23 +605,23 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     "C38": (37, 11, 0), "R46": (37, 14, 0), "R47": (34, 14, 0),
     "R48": (27, 14, 0), "R49": (30, 17, 0), "C39": (30, 12, 0),
     "C40": (46, 11, 0), "C41": (46, 14, 0),
-    "C24": (34, 17, 0), "C25": (44, 16, 0), "C21": (32, 24, 0), "C22": (38, 26, 0),
-    "C42": (41, 29, 0),
+    "C24": (44, 19, 0), "C25": (44, 16, 0), "C21": (30, 24, 0), "C22": (40, 30, 0),
+    "C42": (43, 33, 0),
     "U6": (26, 22, 0), "L2": (32, 19, 0), "D11": (32, 27, 90), "C33": (22, 19, 0),
     "R38": (21, 24, 0), "R39": (21, 26, 0), "R40": (21, 28, 0),
     "R41": (25, 30, 0), "C31": (28, 30, 0), "FID3": (8, 36, 0),
     "R45": (23, 22, 0), "C35": (23, 20, 0),
     "R43": (32, 37, 0), "C32": (35, 34, 0),
-    "U7": (38, 34, 0), "C30": (41, 37, 0), "TP1": (46, 6, 0), "TP2": (49, 6, 0), "TP3": (52, 6, 0),
+    "U7": (38, 34, 0), "C30": (60, 19, 0), "TP1": (46, 6, 0), "TP2": (41.5, 27, 0), "TP3": (22, 32, 0),
     # FPGA and its decoupling
     "U1": (52, 52, 0),
     "C2": (34, 46, 0), "C3": (34, 49, 0), "C4": (34, 52, 0), "C5": (34, 55, 0),
     "C6": (34, 58, 0), "C7": (37, 61, 90),
-    "C8": (46, 33, 0), "C9": (49, 33, 0), "C10": (52, 33, 0), "C11": (55, 33, 0),
+    "C8": (45, 37.5, 0), "C9": (48, 37.5, 0), "C10": (51, 37.5, 0), "C11": (54, 37.5, 0),
     "C12": (67, 46, 0), "C13": (67, 49, 0), "C14": (67, 52, 0), "C15": (67, 55, 0),
     "C16": (67, 58, 0), "C17": (64, 61, 90), "C18": (61, 61, 90), "C19": (58, 61, 90),
     "C20": (43, 61, 90),
-    "Y1": (48, 32, 0), "C26": (44, 30, 0), "R9": (44, 73, 0), "R10": (47, 73, 0),
+    "Y1": (48, 32, 0), "C26": (52, 34, 0), "R9": (44, 73, 0), "R10": (47, 73, 0),
     "R11": (50, 73, 0), "R12": (53, 73, 0), "R8": (41, 73, 0),
     "U2": (60, 34, 0), "C28": (64, 36, 0), "R13": (56, 30, 0), "R14": (58, 30, 0), "R15": (60, 30, 0),
     "U3": (78, 52, 0), "C29": (78, 57, 0), "R16": (74, 46, 0), "R17": (74, 49, 0), "R18": (74, 55, 0),
@@ -623,19 +632,19 @@ PLACEMENT: dict[str, tuple[float, float, float]] = {
     "R21": (70, 79, 0), "R23": (73, 79, 0), "R22": (66, 76, 0), "R24": (69, 76, 0),
     "J10": (62, 88, 0),
     # configuration, reset and status - left
-    "J7": (7, 52, 90), "J1": (16, 78, 0), "J2": (16, 70, 0),
+    "J7": (93, 50, 0), "J1": (16, 78, 0), "J2": (10, 88, 0),
     "SW1": (10, 62, 0), "SW2": (20, 62, 0), "R1": (6, 66, 0), "C1": (9, 66, 0),
     "R2": (24, 62, 0), "R3": (24, 66, 0), "R4": (24, 70, 0),
     "R5": (30, 70, 0), "R6": (33, 70, 0), "R7": (36, 70, 0),
     "Q1": (10, 70, 0), "R25": (13, 70, 0), "R26": (10, 73, 0), "JP1": (6, 70, 0) if False else (6, 70, 0),
     "Q2": (26, 80, 0), "R32": (23, 80, 0), "D1": (29, 80, 0), "R33": (32, 80, 0),
     "Q4": (6, 80, 0), "R31": (9, 80, 0), "D6": (12, 80, 0), "R34": (15, 80, 0),
-    "D7": (36, 74, 0), "R44": (39, 74, 0), "FID1": (8, 20, 0), "FID2": (92, 20, 0),
-    "FID4": (92, 70, 0),
+    "D7": (36, 74, 0), "R44": (39, 74, 0), "FID1": (8, 20, 0), "FID2": (92, 14, 0),
+    "FID4": (92, 86, 0),
     # LEDs and expansion - bottom
     "D2": (40, 88, 0), "D3": (43, 88, 0), "D4": (46, 88, 0), "D5": (49, 88, 0),
     "R27": (40, 85, 0), "R28": (43, 85, 0), "R29": (46, 85, 0), "R30": (49, 85, 0),
-    "J5": (18, 88, 0), "J3": (52, 94.5, 0), "J4": (24, 94.5, 0),
+    "J5": (18, 86.5, 0), "J3": (52, 86.5, 0), "J4": (24, 86.5, 0),
     "J6": (86, 70, 0), "R19": (82, 73, 0),
     "H1": (4, 4, 0), "H2": (96, 4, 0), "H3": (4, 96, 0), "H4": (96, 96, 0),
     "TP4": (55, 6, 0), "TP5": (46, 74, 0), "TP6": (49, 74, 0),
@@ -656,6 +665,185 @@ def pads_of(builder) -> list:
     """Footprint builders return either a pad list or (library_id, pad list)."""
     result = builder()
     return result[1] if isinstance(result, tuple) else result
+
+
+# ---------------------------------------------------- placement repair pass
+# The PLACEMENT table above is the *intent*: which part goes in which cluster.
+# Hand-typing 141 coordinates leaves a few parts whose pads overlap a neighbour
+# (a short before the board is even routed), so the generator runs a small
+# deterministic relaxation over the movable passives before it emits anything:
+# a part is nudged along the axis of least overlap until it clears its
+# neighbour, and never further than MOVE_LEASH from where the table put it.
+#
+# Everything downstream - the board file, the preview, the bitmaps, the BOM and
+# the CPL - reads effective_placement(), so there is exactly one floorplan.
+# Parts that are placed on the board file but deliberately not fitted
+# (BOARD.md section 3, PCB_COMPONENTS.md section 8).  Marking them in the file
+# keeps the assembly drawing, the BOM and the CPL honest.
+DNP_REFS = {"D6", "J7"}
+DNP_NOTES = {
+    "D6": "INITN indicator - DNP by default",
+    "J7": "spare-I/O header - footprint only, not fitted",
+}
+
+# The copper plan is built once and shared by the board, the bitmaps and the
+# documents (sv16_pcb_copper.build).
+_COPPER = None
+
+
+def copper_plan():
+    global _COPPER
+    if _COPPER is None:
+        placement = effective_placement()
+        placed = [(ref, pads_of(builder), *placement[ref])
+                  for ref, library, builder, value, group in COMPONENTS
+                  if ref in placement]
+        nets_by_ref: dict = {}
+        for ref, pad, net in CONNECTIONS:
+            nets_by_ref.setdefault(ref, {})[pad] = net
+        origins = {ref: (x, y) for ref, (x, y, rot) in placement.items()}
+        _COPPER = sv16_pcb_copper.build(
+            placed, nets_by_ref, origins,
+            lambda net: NET_ORDER.index(net) + 1, BOARD_W, BOARD_H)
+    return _COPPER
+
+
+MOVE_LEASH = 9.0            # mm a part may travel from its table position
+BOX_MARGIN = 0.55           # mm of courtyard around a footprint's pads
+BOX_GAP = 0.30              # mm the boxes must keep apart (= pad clearance + slack)
+
+# Parts that define the floorplan and must not move at all.
+FIXED_REFS = {
+    "U1", "U2", "U3", "U4", "U5", "U6", "U7", "U8", "Y1", "Y2",
+    "J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10",
+    "SW1", "SW2", "JP1", "H1", "H2", "H3", "H4",
+    "FID1", "FID2", "FID3", "FID4",
+}
+
+
+def rotate_point(x: float, y: float, degrees: float):
+    """KiCad's footprint rotation, in file coordinates (y grows downwards)."""
+    import math
+    t = math.radians(degrees)
+    c, s = math.cos(t), math.sin(t)
+    return (x * c + y * s, -x * s + y * c)
+
+
+def pad_extent(pads: list, x: float, y: float, rot: float):
+    """Bounding box of a footprint's pads, in board coordinates."""
+    xs, ys = [], []
+    for pad in pads:
+        for sx in (-0.5, 0.5):
+            for sy in (-0.5, 0.5):
+                dx, dy = rotate_point(pad["x"] + sx * pad["w"], pad["y"] + sy * pad["h"], rot)
+                xs.append(x + dx)
+                ys.append(y + dy)
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _boxes(placement: dict) -> dict:
+    out = {}
+    for ref, library, builder, value, group in COMPONENTS:
+        if ref not in placement:
+            continue
+        x, y, rot = placement[ref]
+        x0, y0, x1, y1 = pad_extent(pads_of(builder), x, y, rot)
+        out[ref] = [x0 - BOX_MARGIN, y0 - BOX_MARGIN, x1 + BOX_MARGIN, y1 + BOX_MARGIN]
+    return out
+
+
+def _overlaps(first, second) -> bool:
+    return (first[0] < second[2] + BOX_GAP and second[0] < first[2] + BOX_GAP
+            and first[1] < second[3] + BOX_GAP and second[1] < first[3] + BOX_GAP)
+
+
+def effective_placement() -> dict:
+    """PLACEMENT with the pad overlaps resolved (deterministic; cached)."""
+    global _EFFECTIVE
+    if _EFFECTIVE is not None:
+        return _EFFECTIVE
+
+    moved = {ref: [x, y, rot] for ref, (x, y, rot) in PLACEMENT.items()}
+    movable = {ref: ref not in FIXED_REFS for ref in PLACEMENT}
+
+    for _pass in range(400):
+        boxes = _boxes({ref: tuple(value) for ref, value in moved.items()})
+        clashed = False
+        for index, first in enumerate(sorted(boxes)):
+            for second in sorted(boxes)[index + 1:]:
+                a, b = boxes[first], boxes[second]
+                if not _overlaps(a, b):
+                    continue
+                move_a, move_b = movable[first], movable[second]
+                if not move_a and not move_b:
+                    continue                  # two anchors: reported, not moved
+                overlap_x = min(a[2], b[2]) - max(a[0], b[0])
+                overlap_y = min(a[3], b[3]) - max(a[1], b[1])
+                share = 0.5 if (move_a and move_b) else 1.0
+                if overlap_x < overlap_y:
+                    step = overlap_x + BOX_GAP / 2 + 0.05
+                    direction = 1.0 if (a[0] + a[2]) > (b[0] + b[2]) else -1.0
+                    delta = (direction * step, 0.0)
+                else:
+                    step = overlap_y + BOX_GAP / 2 + 0.05
+                    direction = 1.0 if (a[1] + a[3]) > (b[1] + b[3]) else -1.0
+                    delta = (0.0, direction * step)
+                # clamp inside the leash around the table position
+                for ref, sign in ((first, 1.0), (second, -1.0)):
+                    if not (movable[ref] if sign > 0 else movable[second]):
+                        continue
+                    if sign > 0 and not move_a:
+                        continue
+                    if sign < 0 and not move_b:
+                        continue
+                    ox, oy, rot = PLACEMENT[ref]
+                    new_x = moved[ref][0] + sign * delta[0] * share
+                    new_y = moved[ref][1] + sign * delta[1] * share
+                    moved[ref][0] = max(ox - MOVE_LEASH, min(ox + MOVE_LEASH, new_x))
+                    moved[ref][1] = max(oy - MOVE_LEASH, min(oy + MOVE_LEASH, new_y))
+                clashed = True
+        if not clashed:
+            break
+
+    _EFFECTIVE = {ref: (round(x, 2), round(y, 2), rot)
+                  for ref, (x, y, rot) in moved.items()}
+    return _EFFECTIVE
+
+
+_EFFECTIVE: dict | None = None
+
+
+def placement_conflicts(placement: dict | None = None) -> list:
+    """Pad-level overlaps that survive the repair pass, worst first."""
+    placement = placement or effective_placement()
+    nets_by_ref: dict = {}
+    for ref, pad, net in CONNECTIONS:
+        nets_by_ref.setdefault(ref, {})[str(pad)] = net
+    entries = []
+    for ref, library, builder, value, group in COMPONENTS:
+        if ref not in placement:
+            continue
+        x, y, rot = placement[ref]
+        for pad in pads_of(builder):
+            number = str(pad["number"])
+            if not number:
+                continue
+            dx, dy = rotate_point(pad["x"], pad["y"], rot)
+            entries.append((ref, number, nets_by_ref.get(ref, {}).get(number),
+                            x + dx, y + dy, pad["w"], pad["h"]))
+    conflicts = []
+    for index, first in enumerate(entries):
+        for second in entries[index + 1:]:
+            if first[0] == second[0] or first[2] is None or second[2] is None \
+                    or first[2] == second[2]:
+                continue
+            gap_x = abs(first[3] - second[3]) - (first[5] + second[5]) / 2
+            gap_y = abs(first[4] - second[4]) - (first[6] + second[6]) / 2
+            if gap_x < 0.2 and gap_y < 0.2:
+                conflicts.append("%s.%s (%s) / %s.%s (%s): %.3f mm"
+                                 % (first[0], first[1], first[2], second[0],
+                                    second[1], second[2], max(gap_x, gap_y)))
+    return sorted(conflicts)
 
 
 def net_number(net: str) -> int:
@@ -696,6 +884,14 @@ def build_board() -> str:
         "    (thickness 1.6)",
         "  )",
         "  (paper \"A3\")",
+        "  (title_block",
+        "    (title \"SV-16 microcontroller - ECP5 LFE5U-12F-6TG144C\")",
+        "    (date \"%s\")" % __import__("datetime").date.today().isoformat(),
+        "    (rev \"1.3\")",
+        "    (company \"SV-16 project\")",
+        "    (comment 1 \"100 x 100 mm, 4 layers: signal / GND / PWR / signal\")",
+        "    (comment 2 \"Generated by scripts/sv16_board_kicad.py - run make kicad-board to refresh\")",
+        "  )",
         "  (layers",
         "    (0 \"F.Cu\" signal)",
         "    (1 \"In1.Cu\" power)",
@@ -741,6 +937,12 @@ def build_board() -> str:
                            (BOARD_W, BOARD_H, 0, BOARD_H), (0, BOARD_H, 0, 0)):
         lines.append("  (gr_line (start %.2f %.2f) (end %.2f %.2f) (layer \"Edge.Cuts\") "
                      "(width 0.1))" % (x1, y1, x2, y2))
+    for ref, note in sorted(DNP_NOTES.items()):
+        if ref in effective_placement():
+            x, y, rot = effective_placement()[ref]
+            lines.append("  (gr_text \"DNP - %s\" (at %.2f %.2f) (layer \"F.SilkS\") "
+                         "(effects (font (size 1.0 1.0) (thickness 0.15))))"
+                         % (ref, x, y + 2.4))
     for text, x, y, size in LABELS:
         lines.append("  (gr_text \"%s\" (at %.2f %.2f) (layer \"F.SilkS\") "
                      "(effects (font (size %.1f %.1f) (thickness 0.2))))" % (text, x, y, size, size))
@@ -767,6 +969,46 @@ def build_board() -> str:
         lines.append("      )")
         lines.append("    )")
         lines.append("  )")
+
+    # the rail pours on In2.Cu, from sv16_pcb_copper.py.  KiCad resolves the
+    # overlaps by priority, so the polygons may intersect and DRC stays clean.
+    for net, priority, polygons in sv16_pcb_copper.POURS:
+        zone_id += 1
+        lines.append("  (zone (net %d) (net_name \"%s\") (layer \"In2.Cu\") "
+                     % (net_number(net), net))
+        lines.append("    (uuid 5f16b0b%d-0000-4000-8000-00000000000%d) (hatch edge 0.5)"
+                     % (zone_id, zone_id))
+        if priority:
+            lines.append("    (priority %d)" % priority)
+        lines.append("    (connect_pads (clearance 0.3))")
+        lines.append("    (min_thickness 0.25) (filled_areas_thickness no)")
+        lines.append("    (fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5))")
+        lines.append("    (polygon")
+        lines.append("      (pts")
+        for polygon in polygons:
+            for index in range(0, len(polygon), 4):
+                chunk = polygon[index:index + 4]
+                lines.append("        " + " ".join("(xy %.2f %.2f)" % (x, y) for x, y in chunk))
+        lines.append("      )")
+        lines.append("    )")
+        lines.append("  )")
+    lines.append("")
+
+    # escape vias, stubs and stitching, from the same module.  These are the
+    # "via first at the pad" part of the fan-out; every one of them was checked
+    # against every other pad before it was written.
+    copper = copper_plan()
+    for via in copper.vias:
+        lines.append("  (via (at %.3f %.3f) (size %.2f) (drill %.2f) (layers \"F.Cu\" \"B.Cu\") "
+                     "(net %d) (uuid 5f16b0c0-0000-4000-8000-%012d))"
+                     % (via["x"], via["y"], via["dia"], via["drill"],
+                        net_number(via["net"]), len(lines)))
+    for index, segment in enumerate(copper.segments):
+        lines.append("  (segment (start %.3f %.3f) (end %.3f %.3f) (width %.2f) "
+                     "(layer \"%s\") (net %d) (uuid 5f16b0d0-0000-4000-8000-%012d))"
+                     % (segment["start"][0], segment["start"][1], segment["end"][0],
+                        segment["end"][1], segment["width"], segment["layer"],
+                        net_number(segment["net"]), index))
     lines.append("")
 
     # connections grouped by reference
@@ -774,15 +1016,20 @@ def build_board() -> str:
     for ref, pad, net in CONNECTIONS:
         by_ref.setdefault(ref, {})[pad] = net
 
+    placement = effective_placement()
     placed = set()
     for ref, library, builder, value, group in COMPONENTS:
-        if ref not in PLACEMENT:
+        if ref not in placement:
             continue
         placed.add(ref)
-        x, y, rot = PLACEMENT[ref]
+        x, y, rot = placement[ref]
         pads = pads_of(builder)
         attr = "through_hole" if any(pad["kind"] in ("thru_hole", "np_thru_hole")
                                      for pad in pads) else "smd"
+        if ref in DNP_REFS:
+            # KiCad 7's "do not populate" and BOM/CPL exclusions, so the fab and
+            # the pick-and-place file agree with BOARD.md section 3
+            attr += " dnp exclude_from_pos_files exclude_from_bom"
         lines.append("  (footprint \"%s\" (layer \"F.Cu\") (at %.2f %.2f %d) (attr %s)"
                      % (library, x, y, int(rot), attr))
         lines.append("    (fp_text reference \"%s\" (at 0 -1.6) (layer \"F.SilkS\") "
@@ -869,6 +1116,32 @@ def check(text: str) -> int:
         elif pad not in pads_by_ref[ref]:
             print("  FAIL: %s has no pad %s (net %s)" % (ref, pad, net))
             problems += 1
+
+    # the copper the generator planned must still be verifiable from the file
+    vias = re.findall(r'^  \(via \(at ([\d.]+) ([\d.]+)\) \(size ([\d.]+)\) \(drill ([\d.]+)\)',
+                      text, re.M)
+    segments = re.findall(r'^  \(segment ', text, re.M)
+    inner_zones = re.findall(r'\(zone \(net \d+\) \(net_name "(3V3|2V5|1V1)"\) \(layer "In2.Cu"\)', text)
+    print("  vias:       %d" % len(vias))
+    print("  stubs:      %d segments" % len(segments))
+    if not inner_zones:
+        print("  note: no rail pours on In2.Cu")
+    copper = copper_plan()
+    if len(vias) != len(copper.vias) or len(segments) != len(copper.segments):
+        print("  FAIL: the copper in the file does not match the plan "
+              "(%d/%d vias, %d/%d stubs)"
+              % (len(vias), len(copper.vias), len(segments), len(copper.segments)))
+        problems += 1
+    placed = [(ref, pads_of(builder), *effective_placement()[ref])
+              for ref, library, builder, value, group in COMPONENTS
+              if ref in effective_placement()]
+    nets_by_ref: dict = {}
+    for ref, pad, net in CONNECTIONS:
+        nets_by_ref.setdefault(ref, {})[pad] = net
+    problems += sv16_pcb_copper.verify(copper, placed, nets_by_ref)
+    for conflict in placement_conflicts():
+        print("  FAIL: placement conflict %s" % conflict)
+        problems += 1
 
     # summary of nets with the fewest connections - a quick sanity look
     counts: dict[str, int] = {}
@@ -968,13 +1241,12 @@ def draw_preview() -> None:
     draw = ImageDraw.Draw(image)
     draw.rectangle([0, 0, size - 1, size - 1], outline="#4b5563", width=2)
 
-    by_ref = {ref: (x, y, rot) for ref, x, y, rot in
-              ((ref,) + PLACEMENT[ref] for ref in PLACEMENT)}
+    placement = effective_placement()
     pads: dict[str, list[tuple[float, float, str]]] = {}
     for ref, library, builder, value, group in COMPONENTS:
-        if ref not in PLACEMENT:
+        if ref not in placement:
             continue
-        x, y, rot = PLACEMENT[ref]
+        x, y, rot = placement[ref]
         nets = {pad: net for r, pad, net in CONNECTIONS if r == ref}
         entries = []
         for pad in pads_of(builder):
@@ -993,9 +1265,9 @@ def draw_preview() -> None:
                "jtag": "#eab308", "expansion": "#f472b6", "leds": "#84cc16",
                "passives": "#9ca3af", "test": "#e5e7eb", "mech": "#374151"}
     for ref, library, builder, value, group in COMPONENTS:
-        if ref not in PLACEMENT:
+        if ref not in placement:
             continue
-        cx, cy = PLACEMENT[ref][0] * scale, PLACEMENT[ref][1] * scale
+        cx, cy = placement[ref][0] * scale, placement[ref][1] * scale
         half = 40 if group == "fpga" else 12
         draw.rectangle([cx - half, cy - half, cx + half, cy + half],
                        outline=colours.get(group, "#9ca3af"), width=2)
@@ -1017,6 +1289,20 @@ def main() -> int:
                                                 text.count("\n"), len(text) / 1024.0))
         write_project()
         draw_preview()
+        copper = copper_plan()
+        print("  copper plan: %d vias, %d stub tracks, %d zones"
+              % (len(copper.vias), len(copper.segments),
+                 2 + len(sv16_pcb_copper.POURS)))
+        for note in copper.notes:
+            print("  note: %s" % note)
+        moved = [ref for ref in PLACEMENT
+                 if (PLACEMENT[ref][0], PLACEMENT[ref][1]) !=
+                 effective_placement()[ref][:2]]
+        if moved:
+            print("  placement repair moved %d part(s): %s"
+                  % (len(moved), " ".join(sorted(moved))))
+        for conflict in placement_conflicts():
+            print("  PLACEMENT CONFLICT: %s" % conflict)
     else:
         text = BOARD_FILE.read_text()
         print("checking %s" % BOARD_FILE.relative_to(ROOT))

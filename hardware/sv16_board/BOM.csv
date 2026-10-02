@@ -1,0 +1,60 @@
+Quantity,Value,Footprint,References,Part number,DNP,Notes
+1,7-12 V,BarrelJack_CUI_PJ-102AH_Horizontal,J9,,,
+1,100uF 25V tant,CP_EIA-7343-31_Kemet-D,C21,"100 uF 25 V tantalum, D case",,1V1 bulk; mind the polarity bar
+1,22uF 63V,CP_Elec_6.3x5.4,C22,22 uF 63 V electrolytic,,D6.3 x L5.4 mm
+1,220uF 16V,CP_Elec_8x10.5,C24,220 uF hybrid electrolytic,,D8 x L10.5 mm; hybrid polymer is better for ripple
+1,470uF 25V,CP_Elec_8x10.5,C23,470 uF 25 V (35 V preferred),,the cart part is 16 V - on a 12 V rail that is only 1.33x derating
+30,100nF,C_0603_1608Metric,C1 C2 C3 C4 C5 C6 C7 C8 C9 C10 C11 C12 C13 C14 C15 C16 C17 C18 C19 C20 C26 C27 C28 C29 C33 C34 C35 C36 C37 C38,,,
+1,470nF,C_0603_1608Metric,C31,,,
+4,10uF,C_0805_2012Metric,C25 C30 C39 C42,10 uF,,TO BUY - 3V3 bulk near the FPGA banks
+1,470nF,C_0805_2012Metric,C32,,,
+2,22uF,C_1206_3216Metric,C40 C41,22 uF X5R 25 V,,TO BUY - 3V3 output ceramic
+1,12 MHz (CH340G clock),Crystal_HC49-4H_Vertical,Y2,12 MHz crystal,,"CH340G clock; CL 12-20 pF, choose C36/C37 to match"
+3,SS34,D_SMA,D8 D9 D11,SS34,,SMA; input ORing
+4,,Fiducial_1mm_Mask2mm,FID1 FID2 FID3 FID4,,,
+5,LED green,LED_0603_1608Metric,D1 D2 D3 D4 D5,,,
+1,LED red,LED_0603_1608Metric,D6,,yes,
+1,LED red,LED_0603_1608Metric,D7,,,
+1,LFE5U-12F-6TG144C,LQFP-144_20x20mm_P0.5mm,U1,LFE5U-12F-6TG144C,,no substitute; order a spare (BOARD.md 3.4)
+1,600R @100MHz,L_0603_1608Metric,FB1,600 ohm @ 100 MHz ferrite,,"0603, >= 500 mA"
+2,10 uH,L_Sunlord_MWSA0518_5.4x5.2mm,L1 L2,CD54 10 uH >= 1.5 A,,AP62300 3V3 inductor; the cart has 2 x 33 uH as spares
+4,,MountingHole_3.2mm_M3,H1 H2 H3 H4,,,
+1,25 MHz ACTIVE XO (4-pin),Oscillator_SMD_Abracon_ASE-4Pin_3.2x2.5mm,Y1,YIC OSC25M-3.3I/S3-25T,,"ACTIVE 25 MHz 3.3 V XO, 4-pin - a 2-pin crystal will not clock the FPGA"
+1,DTR ENABLE,PinHeader_1x02_P2.54mm_Vertical,JP1,,,
+1,CONSOLE,PinHeader_1x04_P2.54mm_Vertical,J10,,,
+1,MOTOR,PinHeader_1x06_P2.54mm_Vertical,J6,,,
+1,EXP-C,PinHeader_1x10_P2.54mm_Vertical,J5,,,
+1,JTAG,PinHeader_1x10_P2.54mm_Vertical,J1,,,
+1,JTAG-1.27,PinHeader_2x05_P1.27mm_Vertical,J2,,,
+1,EXP-A,PinHeader_2x10_P2.54mm_Vertical,J3,,,
+1,EXP-B,PinHeader_2x10_P2.54mm_Vertical,J4,,,
+1,SPARE (not fitted),PinHeader_2x25_P2.54mm_Vertical,J7,,yes,
+1,12.4k,R_0402_1005Metric,R38,,,
+14,,R_0603_1608Metric,R1 R5 R6 R7 R8 R13 R14 R15 R16 R17 R18 R25 R26 R32,,,
+3,0R,R_0603_1608Metric,R21 R23 R44,,,
+2,0R (or not fitted),R_0603_1608Metric,R22 R24,,,
+4,100k,R_0603_1608Metric,R40 R41 R43 R48,,,
+2,10k,R_0603_1608Metric,R19 R45,,,
+7,,R_0805_2012Metric,R2 R3 R4 R27 R28 R29 R30,,,
+2,5.1k,R_0805_2012Metric,R36 R37,,,
+7,,R_1206_3216Metric,R9 R10 R11 R12 R31 R33 R34,,,
+1,10k,R_1206_3216Metric,R47,10 kohm 1 %,,TO BUY - AP62300 feedback bottom leg
+3,33k,R_1206_3216Metric,R39 R46 R49,,,
+1,CH340G,SOIC-16_3.9x9.9mm_P1.27mm,U4,CH340G,,SOP-16; needs Y2 12 MHz + C36/C37 (the C variant does not)
+1,MP1584EN,SOIC-8-1EP_3.9x4.9mm_P1.27mm_EP2.41x3.3mm,U6,MP1584EN-LF-Z,,SOIC-8E; solder the exposed pad (thermal vias are placed)
+2,W25Q64JVSSIQ,SOIC-8_5.23x5.23mm_P1.27mm,U2 U3,W25Q64JVSSIQ,,bitstream flash
+1,2N7002,SOT-23,Q1,2N7002,,"SOT-23, PROGRAMN pull-down from DTR"
+1,BC807,SOT-23,Q4,MMBT3906 (cart) / BC807,,INITN indicator
+1,BC817,SOT-23,Q2,MMBT3904 (cart) / BC817,,DONE indicator
+1,LP5907MFX-2.5,SOT-23-5,U7,LP5907MFX-2.5,,SOT-23-5; needs a low-ESR 10 uF on OUT (C42)
+1,AP62300TWU-7,SOT-23-6,U5,AP62300TWU-7,,TSOT-26; EN is a 6 V pin - use the R48/R49 divider
+1,USBLC6-2SC6,SOT-23-6,U8,USBLC6-2SC6,,"SOT-23-6, place at the connector"
+1,RECONFIG,SW_PUSH_6mm,SW2,,,
+1,RESET,SW_PUSH_6mm,SW1,,,
+1,1V1,TestPoint_Pad_D1.0mm,TP3,,,
+1,2V5,TestPoint_Pad_D1.0mm,TP2,,,
+1,3V3,TestPoint_Pad_D1.0mm,TP1,,,
+1,DONE,TestPoint_Pad_D1.0mm,TP5,,,
+1,GND,TestPoint_Pad_D1.0mm,TP4,,,
+1,INITN,TestPoint_Pad_D1.0mm,TP6,,,
+1,USB-C,USB_C_Receptacle_HRO_TYPE-C-31-M-12,J8,,,

@@ -6,9 +6,22 @@ before. Everything below is specific to **this** board: the numbers, the net nam
 references and the order of operations are all the SV-16's, not generic advice.
 
 **What you start with.** `hardware/sv16_board/sv16_board.kicad_pcb` — a 4-layer, 100 × 100 mm board
-with 141 footprints placed, the complete netlist (472 pads on 133 nets), five net classes, two ground
-zones defined, and **no routed copper**. Plus `sv16_board.kicad_pro`, the project file that carries
-the design rules.
+with 141 footprints placed, the complete netlist (472 pads on 121 nets), five net classes, **five
+zones** (solid GND on `In1.Cu`, a GND pour on `B.Cu`, and the 3V3 / 1V1 / 2V5 pours on `In2.Cu`),
+**291 vias and 163 stub tracks** (the escape vias on every pad that can legally drop into its own
+pour, plus GND stitching round the edge), and **no routed signal copper**. Plus
+`sv16_board.kicad_pro`, the project file that carries the design rules.
+
+**Companion files, all generated from the same data** (`make pcb` rebuilds the lot):
+
+| File | Use it for |
+| :--- | :--- |
+| `hardware/sv16_board/pcb_top_view.png`, `pcb_bottom_view.png` | the board as it will look, before you open KiCad |
+| `hardware/sv16_board/pcb_net_map.png` | the ratsnest by function — the routing plan on one page |
+| `hardware/sv16_board/pcb_power_map.png` | the power tree and the `In2.Cu` pour map |
+| `hardware/sv16_board/pcb_connection_sheets.png` | the six connection sheets, drawn |
+| `hardware/sv16_board/BOM.csv`, `JLCPCB_BOM.csv`, `JLCPCB_CPL.csv`, `FAB_NOTES.md` | ordering and assembly |
+| `PCB_CONNECTIONS.md` | the wiring part by part (§3) and the checks before routing (§9) |
 
 **What "done" means.** Every net routed or deliberately left unrouted, DRC clean apart from
 cosmetic silkscreen warnings, and a gerber set you can upload. Budget two days: one for placement
@@ -38,9 +51,10 @@ is realistic for someone who knows KiCad, and tight for someone who doesn't.
 | :--- | :--- | :--- |
 | Board outline | `Edge.Cuts` tab | a closed 100 × 100 mm square, 4 mounting holes, 4 fiducials |
 | Footprint count | status bar / `Inspect → Net Inspector` | 141 footprints |
-| Nets | `Inspect → Net Inspector` | 133 nets; the list starts `GND`, `VM_IN_RAW`, `VM_IN`, `3V3`, `2V5`, `1V1` … |
+| Nets | `Inspect → Net Inspector` | 121 nets; the list starts `GND`, `VM_IN_RAW`, `VM_IN`, `3V3`, `2V5`, `1V1` … |
 | Ratsnest | `View → Show Ratsnest` (or the toolbar) | a spider's web — that is normal, nothing is routed yet |
-| Zones | `View → Show Zone Fills` | two GND zones (In1.Cu and B.Cu) with no fill yet |
+| Zones | `View → Show Zone Fills` | five zones: GND on `In1.Cu` and `B.Cu`, 3V3/2V5/1V1 on `In2.Cu` — unfilled until you press **B** |
+| Copper | `View → Show Ratsnest` + the layer tabs | 291 vias and 163 short stubs on `F.Cu`; no routed signals yet |
 
 ---
 
@@ -105,6 +119,15 @@ Check these, in this order (all of them come from `BOARD.md` §11):
 Tools you will use: **M** move, **R** rotate (45° steps with the mouse, 90° with a click), **F**
 flip to the other side, **E** properties (to type an exact X/Y), **Ctrl+M** move exactly.
 
+**The placement is already checked for collisions.** The generator runs a repair
+pass over every part: a deterministic relaxation that nudges a part until no pad
+of one net comes within 0.2 mm of a pad of another, no more than 9 mm from where
+the floorplan table put it (`effective_placement()` in
+`scripts/sv16_board_kicad.py`). It moved 97 parts on the first run — the
+hand-typed table had overlapping pads, which is a short before the board is even
+routed. If you move a part, run `python3 scripts/sv16_board_kicad.py --check`:
+it re-scans every pad pair and prints any conflict it finds.
+
 Two placement rules that are not obvious:
 
 * Put **C38** (100 nF, the AP62300 bootstrap) *right next to* U5's BST and SW pins. Together with
@@ -143,10 +166,12 @@ with 0.2 mm traces needs every bit of the 0.2 mm clearance.
 
 ---
 
-## 5. Fill the ground planes
+## 5. Fill the zones
 
-The board ships with two GND zones defined but unfilled: a solid plane on **In1.Cu** and a pour on
-**B.Cu**.
+The board ships with **five zones defined but unfilled**: a solid GND plane on
+**In1.Cu**, a GND pour on **B.Cu**, and the three rail pours on **In2.Cu** (3V3
+across the board at priority 0, with 1V1 and 2V5 carved out of it where their
+regulators, bulk capacitors and decoupling sit).
 
 1. Press **B** (*Edit → Fill All Zones*). The zones fill around every pad and track.
 2. Look at In1.Cu; the plane should cover the whole board. Then check for **isolated islands** —
@@ -162,24 +187,36 @@ that zone's clearance to 0.2 mm in its properties (**E** with the zone selected 
 
 ---
 
-## 6. Split `In2.Cu` into the three power pours
+## 6. Check the `In2.Cu` pours (they are already drawn)
 
-`In2.Cu` is deliberately empty: the rails are pours, not traces. Do the big one first.
+`In2.Cu` carries three zones, drawn by `scripts/sv16_pcb_copper.py` and verified
+against every pad on the board:
 
-1. Select the **In2.Cu** layer tab.
-2. **Ctrl+Shift+Z** (*Place → Add Zone*) — or the "Add filled zones" toolbar icon.
-3. Draw a polygon covering roughly the top-left quadrant, where U5 and the FPGA's VCC pins are.
-   Double-click to close it.
-4. With the new zone selected press **E** and set: **Net = `3V3`**, clearance **0.3 mm**,
-   thermal reliefs on, minimum width 0.25 mm, priority 0.
-5. Repeat for **`1V1`** (under the FPGA centre — U1's VCC pins are 20, 29, 38, 66, 83, 130) and
-   **`2V5`** (small strip along the top edge of the FPGA — pins 17, 53, 96, 132).
-6. **B** again to fill. The zones must not overlap: if they do, DRC says *copper zone overlap* —
-   pull the boundaries apart, or give one of them a lower priority number so it is cut back.
+| Zone | Priority | Covers |
+| :--- | :-: | :--- |
+| `3V3` | 0 | the whole board |
+| `2V5` | 2 | the LP5907 group, plus the band above U1 where C8–C11 sit |
+| `1V1` | 3 | the MP1584 group, L2, C21, D11, the feedback divider, plus the strip down the left of U1 that feeds C2–C7 |
 
-Why pours and not traces: a 1.1 V rail at ~400 mA through a 0.8 mm trace from one corner of a
-100 mm board drops tens of millivolts and adds inductance right where the FPGA wants none. The
-pour makes the drop negligible and decouples the rail for free.
+They **may** overlap — KiCad fills the highest priority first and cuts the lower
+one back, so there is no "copper zone overlap" error to chase. What you should do
+instead:
+
+1. Press **B** and look at `In2.Cu` with the three nets set to different colours
+   (Appearance panel): every GND pad should have a via into `In1.Cu`, every rail
+   pad should sit inside its own pour.
+2. Seven pads are deliberately **not** connected to the pours by a via, because
+   they sit over the *wrong* rail's copper — U1 pins 17, 20, 38, 66, 83, 96, 130
+   and 132. Route each with a 0.25 mm track to its own patch. The list is printed
+   by `python3 scripts/sv16_pcb_copper.py --report` and in
+   `PCB_CONNECTIONS.md` §7.
+3. If you move U5, U6, U7 or their capacitors, move the pour boundary with them —
+   or edit the polygons in `sv16_pcb_copper.py` and re-run `make pcb`.
+
+Why pours and not traces: a 1.1 V rail at ~400 mA through a 0.8 mm trace from one
+corner of a 100 mm board drops tens of millivolts and adds inductance right where
+the FPGA wants none. The pour makes the drop negligible and decouples the rail
+for free.
 
 ---
 
@@ -210,6 +247,14 @@ straight out, then a **0.45 / 0.2 mm via** into the layer that suits the net —
 power to `In2.Cu`, ground straight into the `In1.Cu` plane. Do it pin-by-pin; there is no trick,
 and doing it first means the inner layers stay free for the pours.
 
+**The GND and supply pins are already done.** The generator placed a 0.45/0.2 mm
+via with a 0.2 mm stub on every surface-mount pad that sits over its own rail's
+pour — all 14 GND pads of U1 straight into the `In1.Cu` plane, the nine 3V3 pads
+into the `In2.Cu` 3V3 pour, and the 1V1/2V5 pads that are over their own patches.
+That is 291 vias of the fan-out already on the board; what is left for you is the
+**signal** comb (the 52 constrained I/O plus the spare I/O pins), which goes to
+`B.Cu` through 0.45/0.2 mm vias.
+
 Keep the three clock/config pins (54 `CCLK`, 133 `clk_25m`, 57 `PROGRAMN`) short and away from the
 switchers.
 
@@ -231,9 +276,10 @@ connector. Let the ratsnest guide you; it knows every connection. Net names are 
 
 ## 8. Second pass
 
-* **Stitching vias**: along the board edge and either side of the USB pair, drop GND vias about
-  every 5 mm (route a short GND track, press **V**, then continue). This ties the top pour, the
-  inner plane and the bottom pour into one ground — which is the entire point of a 4-layer board.
+* **Stitching vias**: 128 are already placed in two rings round the board edge (2.5 mm and 7.0 mm
+  in, 5 mm apart, every one checked for clearance). Add more either side of the USB pair after you
+  route it — a short GND track, press **V**, continue. This ties the top pour, the inner plane and
+  the bottom pour into one ground, which is the entire point of a 4-layer board.
 * **Thermals**: check that U5, U6 and U7 have copper to spread heat, and that the ground pads are
   connected with four spokes, not one.
 * **Silkscreen**: after routing, move reference designators off pads and tracks. No reference text
@@ -249,7 +295,7 @@ ticked). Expect these and deal with them as follows:
 
 | Message | What it means | Fix |
 | :--- | :--- | :--- |
-| *Unconnected items* | the scoreboard for this step | route it, or accept it deliberately (see below) |
+| *Unconnected items* | the scoreboard for this step | route it, or accept it deliberately (see below). Seven of them (U1's 1V1/2V5 pins) are listed in §6 — they are the pads that must be routed to their pour by hand |
 | *Clearance violation* | two different nets too close | use the router's shove to open a corridor; do not shrink the rule below 0.2 mm |
 | *Track has unconnected end* | a stub you started and abandoned | delete it or finish it |
 | *Isolated copper* | a plane island with no connection | add a stitching via, or delete the island |
@@ -289,6 +335,10 @@ spinner, a short, or a dead board.
 Then, still in the plot dialog, **Generate Drill Files**: Excellon, **mm**, *PTH and NPTH in one
 file*, decimal format, no mirroring, and generate. You should end up with 9–10 `.gbr` files, two
 `.drl` files or one merged, and a `.gbrjob`.
+
+`hardware/sv16_board/FAB_NOTES.md` has the same settings as a card, with the
+counts filled in from the board file (they cannot drift), plus the BOM and CPL
+columns your fab's assembly service wants.
 
 **Verify before uploading.** Open the files in **Gerber Viewer** (KiCad's, `File → Open Gerber
 Files…`) and click through the layers: four copper layers, each with the right features; the
@@ -384,7 +434,19 @@ From `PCB_COMPONENTS.md` §10 and `hardware/cart/RECONCILED.md` §5:
 * **An active 25 MHz 3.3 V XO** for Y1 — a 2-pin HC49/US crystal cannot clock the FPGA.
 * Your call: the 470 µF input bulk in the cart is a **16 V** part on a 12 V rail (1.33× derating).
 
-Everything else on the board is in the cart.
+Everything else on the board is in the cart. `PCB_CONNECTIONS.md` §11 keeps the
+same list, and the `DNP` column of `hardware/sv16_board/BOM.csv` says which parts
+are deliberately not fitted (D6, J7).
+
+## Appendix D — the generator commands
+
+| Command | Does |
+| :--- | :--- |
+| `make pcb` | board file + bitmaps + BOM/CPL + `FAB_NOTES.md` + this project's `PCB_CONNECTIONS.md` |
+| `make pcb-check` | parse the board back: counts, nets on existing pads, DRC-lite on 291 vias and 163 stubs, pad-to-pad collision scan |
+| `python3 scripts/sv16_pcb_copper.py --report` | what the copper plan connected, and the pads the router still owes |
+| `python3 scripts/sv16_pcb_bitmap.py --scale 40` | bigger bitmaps (40 px/mm instead of 24) |
+| `make pcb-connections-pdf` | `PCB_CONNECTIONS.pdf` for printing |
 
 ---
 
