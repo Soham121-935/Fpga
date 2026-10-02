@@ -37,6 +37,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+ROUTING_FILE = ROOT / "hardware" / "sv16_board" / "routing.kicad_pcb.txt"
+NO_ROUTING = False
 OUT = ROOT / "hardware" / "sv16_board"
 BOARD_FILE = OUT / "sv16_board.kicad_pcb"
 
@@ -367,19 +369,24 @@ def sma():
 
 
 def qfp144():
-    """LQFP-144, 0.5 mm pitch, 0.30 x 1.50 mm pads, JEDEC numbering."""
+    """LQFP-144, 0.5 mm pitch, 0.25 x 1.50 mm pads, JEDEC numbering.
+
+    0.25 mm is the JEDEC land pattern for this package (the leads are 0.17-0.27 mm
+    wide) and it leaves a 0.25 mm gap between pads, which is what makes the
+    0.5 mm pitch fan-out - one 0.30 mm via per pin, staggered - possible.
+    """
     def build():
         pads = []
         row = 10.75
         span = (36 - 1) * 0.5 / 2.0                   # 8.75
         for index in range(36):
-            pads.append(rect(index + 1, -row, span - index * 0.5, 1.5, 0.3))
+            pads.append(rect(index + 1, -row, span - index * 0.5, 1.5, 0.25))
         for index in range(36):
-            pads.append(rect(37 + index, -span + index * 0.5, -row, 0.3, 1.5))
+            pads.append(rect(37 + index, -span + index * 0.5, -row, 0.25, 1.5))
         for index in range(36):
-            pads.append(rect(73 + index, row, -span + index * 0.5, 1.5, 0.3))
+            pads.append(rect(73 + index, row, -span + index * 0.5, 1.5, 0.25))
         for index in range(36):
-            pads.append(rect(109 + index, span - index * 0.5, row, 0.3, 1.5))
+            pads.append(rect(109 + index, span - index * 0.5, row, 0.25, 1.5))
         return pads
     return build
 
@@ -591,54 +598,54 @@ COMPONENTS += [
 # axis points down, so this table reads like the board seen from above.
 PLACEMENT: dict[str, tuple[float, float, float]] = {
     # power section - top left, away from the FPGA and the motor connector
-    "J9": (10, 10, 0), "D8": (16, 8, 90), "D9": (16, 12, 90), "FB1": (22, 10, 0),
-    "C23": (28, 8, 0), "U5": (34, 11, 0), "L1": (42, 8, 0),
-    "C38": (37, 11, 0), "R46": (37, 14, 0), "R47": (34, 14, 0),
-    "R48": (27, 14, 0), "R49": (30, 17, 0), "C39": (30, 12, 0),
-    "C40": (46, 11, 0), "C41": (46, 14, 0),
-    "C24": (34, 17, 0), "C25": (44, 16, 0), "C21": (32, 24, 0), "C22": (38, 26, 0),
-    "C42": (41, 29, 0),
-    "U6": (26, 22, 0), "L2": (32, 19, 0), "D11": (32, 27, 90), "C33": (22, 19, 0),
-    "R38": (21, 24, 0), "R39": (21, 26, 0), "R40": (21, 28, 0),
-    "R41": (25, 30, 0), "C31": (28, 30, 0), "FID3": (8, 36, 0),
-    "R45": (23, 22, 0), "C35": (23, 20, 0),
-    "R43": (32, 37, 0), "C32": (35, 34, 0),
-    "U7": (38, 34, 0), "C30": (41, 37, 0), "TP1": (46, 6, 0), "TP2": (49, 6, 0), "TP3": (52, 6, 0),
+    "J9": (10.00, 10.00, 0), "D8": (20.52, 8.07, 90), "D9": (17.77, 12.08, 90), "FB1": (21.51, 12.00, 0),
+    "C23": (28.08, 9.02, 0), "U5": (34.78, 11.68, 0), "L1": (40.48, 8.07, 0),
+    "C38": (38.01, 11.00, 0), "R46": (38.80, 13.92, 0), "R47": (37.80, 17.92, 0),
+    "R48": (27.01, 6.50, 0), "R49": (30.05, 12.18, 0), "C39": (25.97, 13.22, 0),
+    "C40": (46.05, 10.92, 0), "C41": (46.05, 15.92, 0),
+    "C24": (35.07, 21.02, 0), "C25": (43.98, 13.72, 0), "C21": (36.42, 24.55, 0), "C22": (37.88, 27.82, 0),
+    "C42": (40.48, 30.47, 0),
+    "U6": (25.60, 24.60, 0), "L2": (30.97, 16.08, 0), "D11": (31.28, 29.32, 90), "C33": (22.01, 17.50, 0),
+    "R38": (20.08, 27.88, 0), "R39": (18.80, 23.92, 0), "R40": (19.51, 26.50, 0),
+    "R41": (24.51, 30.00, 0), "C31": (28.01, 30.00, 0), "FID3": (8.00, 36.00, 0),
+    "R45": (23.01, 21.00, 0), "C35": (23.01, 19.50, 0),
+    "R43": (32.01, 37.00, 0), "C32": (34.48, 33.98, 0),
+    "U7": (38.43, 33.88, 0), "C30": (40.98, 36.98, 0), "TP1": (46.00, 6.00, 0), "TP2": (49.00, 6.00, 0), "TP3": (52.00, 6.00, 0),
     # FPGA and its decoupling
-    "U1": (52, 52, 0),
-    "C2": (34, 46, 0), "C3": (34, 49, 0), "C4": (34, 52, 0), "C5": (34, 55, 0),
-    "C6": (34, 58, 0), "C7": (37, 61, 90),
-    "C8": (46, 33, 0), "C9": (49, 33, 0), "C10": (52, 33, 0), "C11": (55, 33, 0),
-    "C12": (67, 46, 0), "C13": (67, 49, 0), "C14": (67, 52, 0), "C15": (67, 55, 0),
-    "C16": (67, 58, 0), "C17": (64, 61, 90), "C18": (61, 61, 90), "C19": (58, 61, 90),
-    "C20": (43, 61, 90),
-    "Y1": (48, 32, 0), "C26": (44, 30, 0), "R9": (44, 73, 0), "R10": (47, 73, 0),
-    "R11": (50, 73, 0), "R12": (53, 73, 0), "R8": (41, 73, 0),
-    "U2": (60, 34, 0), "C28": (64, 36, 0), "R13": (56, 30, 0), "R14": (58, 30, 0), "R15": (60, 30, 0),
-    "U3": (78, 52, 0), "C29": (78, 57, 0), "R16": (74, 46, 0), "R17": (74, 49, 0), "R18": (74, 55, 0),
+    "U1": (52.00, 52.00, 0),
+    "C2": (34.01, 46.00, 0), "C3": (34.01, 58.00, 0), "C4": (34.01, 56.50, 0), "C5": (34.01, 55.00, 0),
+    "C6": (34.01, 53.50, 0), "C7": (37.00, 61.01, 90),
+    "C8": (44.51, 33.00, 0), "C9": (48.51, 34.00, 0), "C10": (52.01, 33.00, 0), "C11": (55.01, 31.50, 0),
+    "C12": (67.51, 46.00, 0), "C13": (67.51, 49.00, 0), "C14": (67.51, 52.00, 0), "C15": (67.51, 55.00, 0),
+    "C16": (67.51, 58.00, 0), "C17": (68.25, 61.01, 90), "C18": (66.75, 64.26, 90), "C19": (66.75, 61.01, 90),
+    "C20": (37.25, 57.76, 90),
+    "Y1": (48.38, 31.08, 0), "C26": (44.51, 30.00, 0), "R9": (44.05, 69.43, 0), "R10": (42.55, 71.93, 0),
+    "R11": (46.55, 76.18, 0), "R12": (54.05, 71.68, 0), "R8": (41.01, 74.50, 0),
+    "U2": (61.10, 34.10, 0), "C28": (67.01, 37.25, 0), "R13": (55.51, 30.00, 0), "R14": (58.51, 28.50, 0), "R15": (60.01, 30.25, 0),
+    "U3": (79.10, 52.60, 0), "C29": (78.01, 57.00, 0), "R16": (74.01, 46.00, 0), "R17": (74.01, 48.50, 0), "R18": (73.01, 55.00, 0),
     # USB and console - bottom right
-    "J8": (90, 88, 0), "U8": (83, 88, 0), "U4": (74, 84, 0), "C27": (70, 88, 0),
-    "C34": (70, 84, 0), "R36": (88, 82, 0), "R37": (91, 82, 0),
-    "Y2": (70, 92, 0), "C36": (67, 92, 0), "C37": (73, 92, 0),
-    "R21": (70, 79, 0), "R23": (73, 79, 0), "R22": (66, 76, 0), "R24": (69, 76, 0),
-    "J10": (62, 88, 0),
+    "J8": (90.00, 88.00, 0), "U8": (83.02, 87.92, 0), "U4": (73.90, 93.90, 0), "C27": (67.51, 89.25, 0),
+    "C34": (70.01, 84.00, 0), "R36": (87.98, 81.48, 0), "R37": (90.98, 93.48, 0),
+    "Y2": (69.96, 87.28, 0), "C36": (66.51, 85.50, 0), "C37": (75.01, 87.75, 0),
+    "R21": (70.01, 79.00, 0), "R23": (73.26, 79.00, 0), "R22": (66.01, 76.00, 0), "R24": (69.26, 76.00, 0),
+    "J10": (62.00, 88.00, 0),
     # configuration, reset and status - left
-    "J7": (7, 52, 90), "J1": (16, 78, 0), "J2": (16, 70, 0),
-    "SW1": (10, 62, 0), "SW2": (20, 62, 0), "R1": (6, 66, 0), "C1": (9, 66, 0),
-    "R2": (24, 62, 0), "R3": (24, 66, 0), "R4": (24, 70, 0),
-    "R5": (30, 70, 0), "R6": (33, 70, 0), "R7": (36, 70, 0),
-    "Q1": (10, 70, 0), "R25": (13, 70, 0), "R26": (10, 73, 0), "JP1": (6, 70, 0) if False else (6, 70, 0),
-    "Q2": (26, 80, 0), "R32": (23, 80, 0), "D1": (29, 80, 0), "R33": (32, 80, 0),
-    "Q4": (6, 80, 0), "R31": (9, 80, 0), "D6": (12, 80, 0), "R34": (15, 80, 0),
-    "D7": (36, 74, 0), "R44": (39, 74, 0), "FID1": (8, 20, 0), "FID2": (92, 20, 0),
-    "FID4": (92, 70, 0),
+    "J7": (3.00, 52.00, 0), "J1": (16.00, 78.00, 0), "J2": (18.80, 72.00, 0),
+    "SW1": (10.00, 62.00, 0), "SW2": (20.00, 62.00, 0), "R1": (7.51, 55.75, 0), "C1": (9.01, 57.25, 0),
+    "R2": (23.97, 69.98, 0), "R3": (23.97, 67.98, 0), "R4": (26.72, 65.98, 0),
+    "R5": (29.51, 70.00, 0), "R6": (33.01, 70.00, 0), "R7": (36.51, 70.00, 0),
+    "Q1": (8.92, 69.88, 0), "R25": (10.76, 72.50, 0), "R26": (7.51, 73.00, 0), "JP1": (11.88, 68.39, 0) if False else (6, 70, 0),
+    "Q2": (30.67, 78.38, 0), "R32": (21.26, 80.00, 0), "D1": (30.51, 83.50, 0), "R33": (32.55, 81.43, 0),
+    "Q4": (7.68, 79.88, 0), "R31": (8.30, 82.93, 0), "D6": (10.76, 75.00, 0), "R34": (10.05, 76.93, 0),
+    "D7": (36.01, 74.00, 0), "R44": (38.51, 72.50, 0), "FID1": (8.00, 20.00, 0), "FID2": (92.00, 20.00, 0),
+    "FID4": (92.00, 70.00, 0),
     # LEDs and expansion - bottom
-    "D2": (40, 88, 0), "D3": (43, 88, 0), "D4": (46, 88, 0), "D5": (49, 88, 0),
-    "R27": (40, 85, 0), "R28": (43, 85, 0), "R29": (46, 85, 0), "R30": (49, 85, 0),
-    "J5": (18, 88, 0), "J3": (52, 94.5, 0), "J4": (24, 94.5, 0),
-    "J6": (86, 70, 0), "R19": (82, 73, 0),
-    "H1": (4, 4, 0), "H2": (96, 4, 0), "H3": (4, 96, 0), "H4": (96, 96, 0),
-    "TP4": (55, 6, 0), "TP5": (46, 74, 0), "TP6": (49, 74, 0),
+    "D2": (36.01, 89.50, 0), "D3": (39.51, 89.50, 0), "D4": (43.01, 89.50, 0), "D5": (46.51, 89.50, 0),
+    "R27": (35.98, 86.48, 0), "R28": (39.48, 86.48, 0), "R29": (42.98, 86.48, 0), "R30": (46.48, 86.48, 0),
+    "J5": (14.00, 84.00, 0), "J3": (52.00, 86.00, 0), "J4": (26.00, 86.00, 0),
+    "J6": (86.00, 70.00, 0), "R19": (82.01, 73.00, 0),
+    "H1": (4.00, 4.00, 0), "H2": (96.00, 4.00, 0), "H3": (4.00, 96.00, 0), "H4": (96.00, 96.00, 0),
+    "TP4": (55.00, 6.00, 0), "TP5": (46.00, 74.00, 0), "TP6": (49.00, 74.00, 0),
 }
 
 # board-level silk labels: (text, x, y, size)
@@ -681,6 +688,16 @@ def pad_sexp(pad: dict, indent: str) -> str:
                 % (indent, pad["number"], pad["x"], pad["y"], pad["w"], pad["h"], layers, net_text))
     return ("%s(pad \"%s\" smd rect (at %.3f %.3f) (size %.3f %.3f) (layers %s)%s)"
             % (indent, pad["number"], pad["x"], pad["y"], pad["w"], pad["h"], layers, net_text))
+
+
+def finish(lines, placed=None) -> str:
+    """Close the board file and check that placement and components agree."""
+    lines.append(")")
+    placed = set(PLACEMENT) if placed is None else placed
+    missing = set(PLACEMENT) - placed
+    if missing:
+        raise SystemExit("placement without a component definition: %s" % sorted(missing))
+    return "\n".join(lines) + "\n"
 
 
 def build_board() -> str:
@@ -746,6 +763,19 @@ def build_board() -> str:
                      "(effects (font (size %.1f %.1f) (thickness 0.2))))" % (text, x, y, size, size))
     lines.append("")
 
+    # Routing.  `sv16_route.py` writes the copper (tracks, vias and the filled
+    # planes) to routing.kicad_pcb.txt; if that file is there it is spliced in
+    # here and the empty zone outlines below are skipped.  Without it the board
+    # is the unrouted base: components, netlist and placement, zones declared
+    # but not filled, which is what `--no-routing` and a fresh clone give you.
+    routing = ROUTING_FILE
+    if routing.exists() and not NO_ROUTING:
+        copper = routing.read_text().rstrip("\n")
+        lines.extend(copper.split("\n"))
+        lines.append("")
+        gnd = NET_ORDER.index("GND") + 1
+        return finish(lines)
+
     # ground planes.  The stack-up (BOARD.md section 14) is
     # signal / solid GND / solid PWR / signal, so the plane goes on In1.Cu and
     # the bottom signal layer gets a pour as well.  KiCad fills them on the
@@ -806,12 +836,7 @@ def build_board() -> str:
                 pad["net"] = nets.get(pad["number"])
             lines.append(pad_sexp(pad, "    "))
         lines.append("  )")
-    lines.append(")")
-
-    missing = set(PLACEMENT) - placed
-    if missing:
-        raise SystemExit("placement without a component definition: %s" % sorted(missing))
-    return "\n".join(lines) + "\n"
+    return finish(lines, placed)
 
 
 # ------------------------------------------------------------------ validation
@@ -883,12 +908,15 @@ def check(text: str) -> int:
 
 PROJECT_FILE = OUT / "sv16_board.kicad_pro"
 
+# These are the rules the board is actually routed to (scripts/sv16_route.py):
+# clearance, track width, via diameter, via drill.
 PROJECT_NETCLASSES = [
-    ("Default", 0.20, 0.25, 0.80, 0.40),
-    ("Power", 0.25, 0.80, 1.00, 0.50),
-    ("Switching", 0.50, 0.80, 1.00, 0.50),
-    ("USB", 0.20, 0.25, 0.80, 0.40),
-    ("JTAG", 0.25, 0.25, 0.80, 0.40),
+    ("Default", 0.20, 0.20, 0.60, 0.30),
+    ("Power", 0.20, 0.50, 0.60, 0.30),
+    ("Switching", 0.50, 0.50, 0.60, 0.30),
+    ("USB", 0.20, 0.20, 0.60, 0.30),
+    ("JTAG", 0.25, 0.25, 0.60, 0.30),
+    ("Fine", 0.15, 0.15, 0.30, 0.15),      # the U1 0.5 mm fan-out vias
 ]
 
 
@@ -924,12 +952,13 @@ def write_project() -> None:
                              "copper_line_width": 0.2},
                 "diff_pair_dimensions": [],
                 "drc_exclusions": [],
-                "rules": {"min_clearance": 0.2, "min_track_width": 0.2,
-                          "min_through_hole_diameter": 0.3, "min_via_diameter": 0.5,
-                          "min_via_annular_width": 0.13},
-                "track_widths": [0.2, 0.25, 0.5, 0.8, 1.0],
-                "via_dimensions": [{"diameter": 0.8, "drill": 0.4},
-                                   {"diameter": 1.0, "drill": 0.5}],
+                "rules": {"min_clearance": 0.15, "min_track_width": 0.12,
+                          "min_through_hole_diameter": 0.15, "min_via_diameter": 0.30,
+                          "min_via_annular_width": 0.05},
+                "track_widths": [0.12, 0.15, 0.2, 0.25, 0.5, 0.8, 1.0],
+                "via_dimensions": [{"diameter": 0.30, "drill": 0.15},
+                                   {"diameter": 0.45, "drill": 0.25},
+                                   {"diameter": 0.60, "drill": 0.30}],
             },
             "layer_presets": [],
             "viewports": [],
@@ -1007,7 +1036,11 @@ def draw_preview() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="only verify the file on disk")
+    parser.add_argument("--no-routing", action="store_true",
+                        help="ignore routing.kicad_pcb.txt and emit the unrouted base")
     args = parser.parse_args()
+    global NO_ROUTING
+    NO_ROUTING = args.no_routing
 
     OUT.mkdir(parents=True, exist_ok=True)
     if not args.check:

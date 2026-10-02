@@ -1,3 +1,6 @@
 __pycache__/
 build/
 *.pyc
+
+# local Python virtualenv for the geometry tooling (scripts/README-routing.md)
+.venv/
