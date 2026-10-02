@@ -234,9 +234,11 @@ def lib_symbol(name: str, part: Part) -> str:
     lines = ['    (symbol %s (pin_names (offset 0.254) hide) (in_bom yes)'
              ' (on_board yes)' % q(name)]
     half = part.body_h / 2.0
-    lines.append('      (property "Reference" "U" (at 0 %.2f 0)'
+    prefix = re.match(r"^[A-Za-z]+", part.ref)
+    lines.append('      (property "Reference" %s (at 0 %.2f 0)'
                  ' (effects (font (size %.2f %.2f))))'
-                 % (half + 1.27, LABEL_SIZE, LABEL_SIZE))
+                 % (q(prefix.group(0) if prefix else "U"), half + 1.27,
+                    LABEL_SIZE, LABEL_SIZE))
     lines.append('      (property "Value" %s (at 0 %.2f 0)'
                  ' (effects (font (size %.2f %.2f))))'
                  % (q(part.value or short), -half - 1.27, LABEL_SIZE, LABEL_SIZE))
@@ -300,7 +302,7 @@ def _pins_with_geometry(part: Part):
             for number, _net, point, side in pin_geometry(part)]
 
 
-def emit(parts, names) -> str:
+def emit(parts, names, libs) -> str:
     taken: dict = {}
     lines: list[str] = []
     root = uid("root")
@@ -324,8 +326,8 @@ def emit(parts, names) -> str:
 
     # ---- library ---------------------------------------------------------
     lines.append("  (lib_symbols")
-    for part in parts:
-        lines.append(lib_symbol(names[part.ref], part))
+    for name, part in libs:
+        lines.append(lib_symbol(name, part))
     lines.append("  )")
     lines.append("")
 
@@ -498,6 +500,21 @@ def verify(text: str, parts) -> list[str]:
     if not any(isinstance(entry, list) and entry and entry[0] == "lib_symbols"
                for entry in root[1:]):
         problems.append("no lib_symbols block")
+    else:
+        block = next(entry for entry in root[1:]
+                     if isinstance(entry, list) and entry and entry[0] == "lib_symbols")
+        defined = [child[1] for child in block[1:]
+                   if isinstance(child, list) and child and child[0] == "symbol"]
+        repeated = {name for name in defined if defined.count(name) > 1}
+        if repeated:
+            problems.append("lib_symbols defines %d names more than once (e.g. %s)"
+                            % (len(repeated), sorted(repeated)[0]))
+        missing = {entry[1][1] for entry in root[1:]
+                   if isinstance(entry, list) and entry and entry[0] == "symbol"
+                   and isinstance(entry[1], list) and entry[1][0] == "lib_id"} - set(defined)
+        if missing:
+            problems.append("%d symbol instances use an undefined lib_id (e.g. %s)"
+                            % (len(missing), sorted(missing)[0]))
     # KiCad's reader has no comment syntax in a schematic: a line starting with
     # ';;' or '#' is a parse error that shows up as "error, blank page"
     for number, line in enumerate(text.splitlines(), start=1):
@@ -647,7 +664,17 @@ def build() -> tuple[str, list[Part]]:
     layout(parts)
     taken: dict = {}
     names = {part.ref: symbol_name(part, taken) for part in parts}
-    return emit(parts, names), parts
+    # one definition per distinct symbol: two parts that share a footprint and
+    # pin set share the drawing, and lib_symbols may not define a name twice
+    libs: list[tuple[str, Part]] = []
+    seen_names = set()
+    for part in parts:
+        name = names[part.ref]
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+        libs.append((name, part))
+    return emit(parts, names, libs), parts
 
 
 def main() -> int:
