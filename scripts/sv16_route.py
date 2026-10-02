@@ -120,6 +120,7 @@ class Board:
         self.nets = sorted(self.pads_by_net)
         self.new_tracks, self.new_vias = [], []
         self.notes = []
+        self.done_nets = set()
 
     # ---- helpers -----------------------------------------------------------
     def class_of(self, net):
@@ -304,18 +305,49 @@ def cell_of(win, x, y):
 
 
 def cells_touching(win, geom, radius=1):
+    """Free cells within `radius` cells of a piece of copper.
+
+    Only cells the window marks as free are returned.  A path that starts or
+    ends on a blocked cell is a short, and A* does not check the cells it is
+    given - it only checks the ones it expands into.
+    """
     x0, y0, x1, y1 = geom.bounds
     i0 = max(0, int((x0 - win.x0) / CELL) - radius)
     i1 = min(win.nx - 1, int((x1 - win.x0) / CELL) + radius)
     j0 = max(0, int((y0 - win.y0) / CELL) - radius)
     j1 = min(win.ny - 1, int((y1 - win.y0) / CELL) + radius)
-    return [(ix, iy) for ix in range(i0, i1 + 1) for iy in range(j0, j1 + 1)]
+    return [(ix, iy) for ix in range(i0, i1 + 1) for iy in range(j0, j1 + 1)
+            if win.data[iy, ix] == 0]
+
+
+def entry_cells(window, node, layers, max_radius=6):
+    """Where a path can touch a node, widening the search until it finds room.
+
+    Around a 0.5 mm-pitch pad every cell at radius 1 can belong to a neighbour's
+    clearance, so the search has to be able to reach past them.
+    """
+    for radius in range(1, max_radius + 1):
+        cells = []
+        for layer in layers:
+            if layer in node["layers"]:
+                cells += [(layer, ix, iy)
+                          for ix, iy in cells_touching(window[layer], node["geom"], radius)]
+        if cells:
+            return cells
+    return []
 
 
 def emit(board, path, windows, width, net, via_size, via_drill, snap_first=None,
          snap_last=None):
     """Cell path -> tracks and vias."""
     points = [(name,) + windows[name].center(ix, iy) for name, ix, iy in path]
+    if len(points) == 1 and snap_first and snap_last:
+        # both ends reach the same free cell, so there is nothing to walk: join
+        # the two snap points through it instead of returning nothing
+        name = points[0][0]
+        centre = (name,) + windows[name].center(path[0][1], path[0][2])
+        points = [(name, snap_first[0], snap_first[1]), centre,
+                  (name, snap_last[0], snap_last[1])]
     if snap_first:
         points[0] = (points[0][0], snap_first[0], snap_first[1])
     if snap_last:
@@ -468,78 +500,182 @@ def connect(board, net, target, width, to_node, via_size, via_drill,
     bounds = window_for([near["xy"], to_node["xy"]], margin)
     windows = free_for(board, net, width, bounds, layers)
     vmask = via_mask(board, net, via_size, bounds)
-    starts, goals = [], []
+    starts = []
     for node in target:
-        for layer in layers:
-            if layer in node["layers"]:
-                starts += [(layer, ix, iy)
-                           for ix, iy in cells_touching(windows[layer], node["geom"], 1)]
-    for layer in layers:
-        if layer in to_node["layers"]:
-            goals += [(layer, ix, iy)
-                      for ix, iy in cells_touching(windows[layer], to_node["geom"], 1)]
+        starts += entry_cells(windows, node, layers)
+    goals = entry_cells(windows, to_node, layers)
     if not starts or not goals:
-        return False, "no start or goal cell"
+        return False, "no free cell next to the pad"
     via_ok = (vmask.data == 0) if len(layers) > 1 else None
     path = astar(windows, via_ok, starts, goals)
     if path is None:
         return False, "no path in a %.0f mm window" % margin
     emit(board, path, windows, width, net, via_size, via_drill,
-         snap_first=near["xy"], snap_last=to_node["xy"])
+         snap_first=snap_point(near, near["xy"]),
+         snap_last=snap_point(to_node, to_node["xy"]))
     return True, ""
 
 
 def route_net(board, net, verbose=False):
-    """Join every entry point of a net to the copper already routed for it."""
-    nodes = entry_points(board, net)
-    if len(nodes) < 2:
-        return True
-    width = board.width_of(net)
-    joined = [nodes[0]]
-    ok = True
-    remaining = nodes[1:]
-    while remaining:
-        # always grow from the closest unconnected point: short paths, and the
-        # maze router never has to cross the whole board
-        best = min(((min(math.hypot(n["xy"][0] - r["xy"][0], n["xy"][1] - r["xy"][1])
-                         for n in joined), index) for index, r in enumerate(remaining)))
-        node = remaining.pop(best[1])
-        good, why = False, ""
-        for margin in (None, 6.0, 12.0, 20.0):
-            good, why = connect(board, net, joined, width, node,
-                                ROUTE_VIA[0], ROUTE_VIA[1], margin=margin)
-            if good:
-                break
-        if not good:
-            where = ("%s.%s" % (node["item"].ref, node["item"].pad)) if node["item"] else "via"
-            board.notes.append("unrouted %s -> %s (%s)" % (net, where, why))
-            ok = False
-        joined.append(node)
-        if verbose:
-            print("      %s -> %s: %s" % (net, node["xy"], "ok" if good else why))
-    return ok
+    """Make one net a single piece of copper."""
+    return join_pieces(board, net, board.width_of(net), SIGNAL_ATTEMPTS, verbose)
 
 
 def route_spines(board, verbose=True):
-    """The rails that are not planes: wide copper on In2, shortest first."""
-    spines = sorted(SPINE_WIDTH.items(), key=lambda kv: kv[1])
+    """The rails that are not planes: wide copper, In2.Cu where it fits.
+
+    These are the last copper a board can do without - miss one and the FPGA
+    has no core supply - so a connection that will not go through on the power
+    layer is retried on the signal layers and, failing that, at half width.  A
+    trunk that has to neck down for its last few millimetres is normal practice
+    and still carries an amp or more.
+    """
     for net in ("2V5", "1V1", "USB_VBUS", "VM_IN_RAW", "VM_IN"):
         if net not in SPINE_WIDTH:
             continue
-        nodes = [n for n in entry_points(board, net)
-                 if n["kind"] == "via" or "In2.Cu" in n["layers"]]
-        if len(nodes) < 2:
-            continue
         width = SPINE_WIDTH[net]
-        joined = [nodes[0]]
-        for node in nodes[1:]:
-            good, why = connect(board, net, joined, width, node,
-                                ROUTE_VIA[0], ROUTE_VIA[1], layers=("In2.Cu",), margin=20.0)
-            if not good:
-                board.notes.append("spine %s -> %s unrouted (%s)" % (net, node["xy"], why))
-            joined.append(node)
         if verbose:
-            print("  spine %-10s %.2f mm wide, %d nodes" % (net, width, len(nodes)))
+            print("  spine %-10s %.2f mm wide, %d island(s)"
+                  % (net, width, len(net_pieces(board, net))), flush=True)
+        join_pieces(board, net, width, SPINE_ATTEMPTS, verbose)
+        if verbose:
+            print("    -> %d island(s) left" % len(net_pieces(board, net)), flush=True)
+
+
+def net_pieces(board, net):
+    """The islands of copper a net is currently in, the way DRC sees them.
+
+    Two pieces are one island when they touch on a layer they share - the same
+    test scripts/sv16_board_drc.py uses to decide a net is unconnected.  Routing
+    islands together rather than pads together matters: a U1 pin already joined
+    to the net by its fan-out stub is one island with the net, and asking for a
+    second connection to it just fails on copper that is not in the way.
+    """
+    parts = []
+    for item in board.pads_by_net.get(net, []):
+        parts.append({"geom": item.geom, "layers": set(item.layers),
+                      "xy": Board.center(item), "kind": "pad", "item": item})
+    for item in board.items:
+        if item.net != net or item.kind not in ("track", "via", "zone"):
+            continue
+        parts.append({"geom": item.geom, "layers": set(item.layers),
+                      "xy": Board.center(item), "kind": item.kind, "item": item})
+    parent = list(range(len(parts)))
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for i in range(len(parts)):
+        for j in range(i + 1, len(parts)):
+            if not (parts[i]["layers"] & parts[j]["layers"]):
+                continue
+            if parts[i]["geom"].distance(parts[j]["geom"]) <= 0.0001:
+                root_i, root_j = find(i), find(j)
+                if root_i != root_j:
+                    parent[root_j] = root_i
+    groups = {}
+    for index, part in enumerate(parts):
+        groups.setdefault(find(index), []).append(part)
+    return list(groups.values())
+
+
+def snap_point(node, xy):
+    """A point on the node's copper near `xy`.
+
+    The centroid of a poured polygon can sit in one of its clearance voids, and
+    a track ended there touches nothing - the two islands stay separate however
+    many tracks are laid.  Always end on copper.
+    """
+    geom = node["geom"]
+    point = Point(xy)
+    if geom.contains(point):
+        return xy
+    from shapely.ops import nearest_points
+    on_copper, _ = nearest_points(geom, point)
+    return (on_copper.x, on_copper.y)
+
+
+def closest_nodes(one, other):
+    """The closest pair of nodes between two islands, and how far apart."""
+    best = None
+    for a in one:
+        for b in other:
+            distance = (a["xy"][0] - b["xy"][0]) ** 2 + (a["xy"][1] - b["xy"][1]) ** 2
+            if best is None or distance < best[0]:
+                best = (distance, a, b)
+    return best
+
+
+def join_pieces(board, net, width, attempts, verbose=False):
+    """Keep joining the two closest islands until the net is one piece.
+
+    `attempts` is a list of (layers, width scale, margin, via) to try in order,
+    cheapest first; every connection starts again from the easiest one.  A pair
+    that cannot be joined is set aside rather than giving up on the net: one
+    boxed-in pin should not stop the other six from being connected, and a pour
+    later may well reach the pin that a track could not.
+    """
+    failed_pairs = set()
+    ok = True
+    budget = 4 + 4 * len(net_pieces(board, net))
+    while budget > 0:
+        budget -= 1
+        pieces = net_pieces(board, net)
+        if len(pieces) <= 1:
+            return ok
+        best = None
+        for i in range(len(pieces)):
+            for j in range(i + 1, len(pieces)):
+                distance, node_a, node_b = closest_nodes(pieces[i], pieces[j])
+                signature = (round(node_a["xy"][0], 2), round(node_a["xy"][1], 2),
+                             round(node_b["xy"][0], 2), round(node_b["xy"][1], 2))
+                if signature in failed_pairs:
+                    continue
+                if best is None or distance < best[0]:
+                    best = (distance, i, pieces[i], node_b, signature)
+        if best is None:
+            return ok
+        _, _, target, to_node, signature = best
+        good, why = False, "no attempt made"
+        for layers, scale, margin, via in attempts:
+            good, why = connect(board, net, target, width * scale, to_node,
+                                via[0], via[1], layers=layers, margin=margin)
+            if good:
+                break
+        if verbose:
+            print("      %s: %.1f mm %s" % (net, math.sqrt(best[0]) if best else 0.0,
+                                             "ok" if good else why), flush=True)
+        if not good:
+            failed_pairs.add(signature)
+            ok = False
+            board.notes.append("unrouted %s -> %s (%s)" % (net, _label(to_node), why))
+            if verbose:
+                print("      %s: %s" % (net, why), flush=True)
+            # three blocked pairs is plenty of trying: a net that needs more
+            # track joins than that is better served by a bigger pour
+            if len(failed_pairs) >= 3:
+                return ok
+
+
+def _label(node):
+    item = node.get("item")
+    if node["kind"] == "pad" and item is not None:
+        return "%s.%s" % (item.ref, item.pad)
+    return "%s at %.2f, %.2f" % (node["kind"], node["xy"][0], node["xy"][1])
+
+
+SIGNAL_ATTEMPTS = [(SIGNAL_LAYERS, 1.0, margin, via)
+                   for via in (ROUTE_VIA, ESCAPE_VIA, FANOUT_VIA)
+                   for margin in (None, 6.0, 12.0, 20.0)]
+
+SPINE_ATTEMPTS = [(layers, scale, margin, via)
+                  for via in (ROUTE_VIA, ESCAPE_VIA)
+                  for layers in (("In2.Cu",), ("In2.Cu", "B.Cu", "F.Cu"))
+                  for scale in (1.0, 0.5)
+                  for margin in (None, 15.0, 30.0)]
 
 
 def signal_nets(board):
@@ -609,14 +745,17 @@ def rings_of(geom):
     return out
 
 
-def plane_fill(board, layer, net, verbose=False):
-    """Copper for a plane: the board minus every foreign piece of copper.
+def plane_fill(board, layer, net, region=None, verbose=False):
+    """Copper for a plane or a pour: `region` minus every foreign piece of copper.
 
     The keep-outs are unioned first and subtracted in one go.  Subtracting them
     one at a time rebuilds the plane after every hole, which is quadratic and
     takes tens of minutes on a board with 1,500 pads.
+
+    Returns (rings, geometry): the rings are the keyholed outlines written to
+    the board, the geometry is what other copper has to keep clear of.
     """
-    area = box(EDGE, EDGE, BOARD_W - EDGE, BOARD_H - EDGE)
+    area = region or box(EDGE, EDGE, BOARD_W - EDGE, BOARD_H - EDGE)
     holes = []
     for item in board.items:
         if item.net == net or not item.on(layer):
@@ -628,18 +767,87 @@ def plane_fill(board, layer, net, verbose=False):
     # 0.01 mm is a tenth of the routing grid: it throws away the rounded corners
     # the clearance buffers add, which cuts the vertex count by several times and
     # is far below anything the fab can resolve
-    rings = rings_of(area.simplify(0.01))
+    area = area.simplify(0.01)
+    rings = rings_of(area)
     if verbose:
-        print("  plane %-4s on %-6s: %d ring(s), %d vertices"
-              % (net, layer, len(rings), sum(len(r) for r in rings)))
-    return rings
+        print("  fill %-4s on %-6s: %d ring(s), %d vertices"
+              % (net, layer, len(rings), sum(len(r) for r in rings)), flush=True)
+    return rings, area
+
+
+def pour_region(board, net, grow=3.5):
+    """The area a rail may be poured over: around its own pins and vias.
+
+    Pouring both rails over the whole FPGA just lets the first one take
+    everything - the region follows the net's own copper instead, so 1V1 flows
+    around the VCC pins and 2V5 around the VCCAUX pins, and each is poured over
+    the ground it actually needs.
+    """
+    blobs = []
+    for item in board.pads_by_net.get(net, []):
+        blobs.append(item.geom.buffer(grow, quad_segs=4))
+    for item in board.items:
+        if item.net == net and item.kind in ("via", "track"):
+            blobs.append(item.geom.buffer(grow, quad_segs=4))
+    if not blobs:
+        return None
+    region = unary_union(blobs)
+    x0, y0, x1, y1 = region.bounds
+    return region.intersection(box(EDGE, EDGE, BOARD_W - EDGE, BOARD_H - EDGE))
+
+
+def touches_net(board, net, polygon, layer):
+    """Does this piece of copper actually reach a pin of its own net?
+
+    A pour breaks into fragments around the via fence, and the fragments that
+    land on nothing are dead copper - they connect no pin, they are extra
+    islands for the router to chase, and a fab would rather they were not there.
+    """
+    for item in board.pads_by_net.get(net, []):
+        if layer in item.layers and polygon.distance(item.geom) <= 0.0001:
+            return True
+    for item in board.items:
+        if item.net != net or item.kind not in ("via", "track", "zone"):
+            continue
+        if layer in item.layers and polygon.distance(item.geom) <= 0.0001:
+            return True
+    return False
+
+
+def build_pours(board, verbose=True):
+    """Pour the rails that are not planes, on the power layer.
+
+    The pours go down before the tracks: a pour reaches pins a track cannot,
+    and the tracks that follow then only have to join the islands it leaves.
+    """
+    out = []
+    for net in ("1V1", "2V5", "VM_IN", "VM_IN_RAW", "USB_VBUS"):
+        region = pour_region(board, net)
+        if region is None:
+            continue
+        rings, area = plane_fill(board, PWR_PLANE, net, region=region, verbose=verbose)
+        kept, dropped = [], 0
+        for polygon in getattr(area, "geoms", [area]):
+            if polygon.is_empty or polygon.area < 0.05:
+                continue
+            if not touches_net(board, net, polygon, PWR_PLANE):
+                dropped += 1          # dead copper: it reaches no pin
+                continue
+            board.items.append(Item("zone", polygon, net, (PWR_PLANE,)))
+            kept.append(polygon)
+        if verbose and dropped:
+            print("    %s: dropped %d dead fragment(s)" % (net, dropped), flush=True)
+        out.append((net, PWR_PLANE, rings_of(unary_union(kept)) if kept else []))
+    return out
 
 
 def build_planes(board, verbose=True):
-    return [("GND", GND_PLANE, plane_fill(board, GND_PLANE, "GND", verbose)),
-            ("3V3", PWR_PLANE, plane_fill(board, PWR_PLANE, "3V3", verbose)),
-            ("GND", "B.Cu", plane_fill(board, "B.Cu", "GND", verbose))]
-
+    """The planes: solid GND on In1 and the bottom, 3V3 filling the rest of In2."""
+    out = []
+    for net, layer in (("GND", GND_PLANE), ("3V3", PWR_PLANE), ("GND", "B.Cu")):
+        rings, _ = plane_fill(board, layer, net, verbose=verbose)
+        out.append((net, layer, rings))
+    return out
 
 
 # ------------------------------------------------------------------ checkpoint
@@ -650,7 +858,8 @@ def save_state(board, path=CHECKPOINT):
     """Dump the copper routed so far, so a long run can be resumed."""
     data = {"tracks": [[list(a), list(b), w, layer, net]
                        for a, b, w, layer, net in board.new_tracks],
-            "vias": [[x, y, size, drill, net] for x, y, size, drill, net in board.new_vias]}
+            "vias": [[x, y, size, drill, net] for x, y, size, drill, net in board.new_vias],
+            "done": sorted(set(board.done_nets))}
     path.write_text(json.dumps(data))
     return len(data["tracks"])
 
@@ -664,6 +873,7 @@ def load_state(board, path=CHECKPOINT):
         board.add_track(tuple(a), tuple(b), w, layer, net)
     for x, y, size, drill, net in data["vias"]:
         board.add_via(x, y, size, drill, net)
+    board.done_nets = set(data.get("done", []))
     return len(data["tracks"])
 
 
@@ -742,7 +952,11 @@ def main() -> int:
           % (Path(args.board).name, len(board.nets),
              sum(len(v) for v in board.pads_by_net.values())))
 
-    if args.stage in ("fanout", "all", "spines", "signals", "planes"):
+    if args.resume:
+        # the checkpoint already carries the fan-out and the escapes
+        loaded = load_state(board)
+        print("  resumed %d tracks from %s" % (loaded, CHECKPOINT.name), flush=True)
+    elif args.stage in ("fanout", "all", "spines", "signals", "planes"):
         fanout_u1(board)
         escape_plane_pads(board)
 
@@ -752,19 +966,24 @@ def main() -> int:
              net_span(entry_points(board, nets[-1]))))
 
     routed = failed = 0
-    if args.stage in ("spines", "signals", "all"):
-        if args.resume:
-            n = load_state(board)
-            print("  resumed %d tracks from %s" % (n, CHECKPOINT.name))
-        else:
-            route_spines(board)
-            save_state(board)
+    pours = []
+    if args.stage in ("spines", "signals", "planes", "all"):
+        pours = build_pours(board, verbose=not args.resume)
+    if args.stage in ("spines", "signals", "all") and not args.resume:
+        route_spines(board)
+        for net in ("1V1", "2V5", "VM_IN", "VM_IN_RAW", "USB_VBUS"):
+            if len(net_pieces(board, net)) > 1:
+                print("    %s still in %d piece(s) after pouring"
+                      % (net, len(net_pieces(board, net))), flush=True)
+        save_state(board)
     if args.stage in ("signals", "all"):
         for index, net in enumerate(nets, 1):
-            if args.resume:
+            if net in board.done_nets:
+                routed += 1
                 continue
             if route_net(board, net, args.verbose):
                 routed += 1
+                board.done_nets.add(net)
             else:
                 failed += 1
             if index % 10 == 0 or index == len(nets):
@@ -787,7 +1006,9 @@ def main() -> int:
         for net in broken:
             rip_net(board, net)
             ok = route_net(board, net, args.verbose)
-            if not ok:
+            if ok:
+                board.done_nets.add(net)
+            else:
                 still_broken.append(net)
         failed = len(still_broken)
         routed = len(nets) - failed
@@ -798,7 +1019,7 @@ def main() -> int:
     print("  routed: %d   failed: %d   tracks: %d   vias: %d"
           % (routed, failed, len(board.new_tracks), len(board.new_vias)))
 
-    zones = build_planes(board) if args.stage in ("planes", "all") else []
+    zones = pours + (build_planes(board) if args.stage in ("planes", "all") else [])
     if board.notes:
         print("  notes (%d):" % len(board.notes))
         for note in board.notes[:20]:
