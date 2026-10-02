@@ -342,7 +342,7 @@ def emit(parts, names) -> str:
         x1 = min(PAGE_W - MARGIN + 8.0, x1)
         lines.append("  (polyline (pts (xy %.2f %.2f) (xy %.2f %.2f) (xy %.2f %.2f)"
                      " (xy %.2f %.2f) (xy %.2f %.2f))" % (x0, y0, x1, y0, x1, y1, x0, y1, x0, y0))
-        lines.append("    (stroke (width 0.254) (type default)) (fill (type none))")
+        lines.append("    (stroke (width 0.254) (type default))")
         lines.append("    (uuid %s)" % q(uid("frame/" + band)))
         lines.append("  )")
         lines.append('  (text %s (at %.2f %.2f 0)' % (q(BAND_TITLE[band]), x0 + 2.0, y0 - 1.5))
@@ -373,27 +373,26 @@ def emit(parts, names) -> str:
             else:
                 noconnects.append((px, py, part.ref, number))
 
-    lines.append("  ;; ---- no-connects: %d unused pins ----" % len(noconnects))
     for (px, py, ref, number) in noconnects:
         lines.append("  (no_connect (at %.2f %.2f) (uuid %s))"
                      % (px, py, q(uid("nc/%s/%s" % (ref, number)))))
     lines.append("")
-    lines.append("  ;; ---- wire stubs: %d ----" % len(wires))
     for (x0, y0, x1, y1, ref, number) in wires:
         lines.append("  (wire (pts (xy %.2f %.2f) (xy %.2f %.2f))"
                      % (x0, y0, x1, y1))
-        lines.append("    (stroke (width 0) (type default)) (uuid %s)"
+        lines.append("    (stroke (width 0) (type solid)) (uuid %s)"
                      % q(uid("wire/%s/%s" % (ref, number))))
         lines.append("  )")
     lines.append("")
-    lines.append("  ;; ---- net labels: %d ----" % len(labels))
     for (net, (lx, ly), side, ref, number) in labels:
         if side < 0:
-            lines.append('  (label %s (at %.2f %.2f 180)' % (q(net), lx, ly))
+            lines.append('  (label %s (at %.2f %.2f 180) (fields_autoplaced)'
+                         % (q(net), lx, ly))
             lines.append("    (effects (font (size %.2f %.2f)) (justify right bottom))"
                          % (LABEL_SIZE, LABEL_SIZE))
         else:
-            lines.append('  (label %s (at %.2f %.2f 0)' % (q(net), lx, ly))
+            lines.append('  (label %s (at %.2f %.2f 0) (fields_autoplaced)'
+                         % (q(net), lx, ly))
             lines.append("    (effects (font (size %.2f %.2f)) (justify left bottom))"
                          % (LABEL_SIZE, LABEL_SIZE))
         lines.append("    (uuid %s)" % q(uid("label/%s/%s" % (ref, number))))
@@ -401,7 +400,6 @@ def emit(parts, names) -> str:
     lines.append("")
 
     # ---- the parts -------------------------------------------------------
-    lines.append("  ;; ---- parts: %d ----" % len(parts))
     for part in parts:
         lines.append("  (symbol (lib_id %s) (at %.2f %.2f 0) (unit 1)"
                      % (q(names[part.ref]), part.x, part.y))
@@ -460,6 +458,16 @@ def parse_sexpr(text: str):
     return stack[0]
 
 
+#: every element a schematic may contain at the top level.  Anything else is a
+#: stray token - and a stray token is exactly how a file that "looks fine" makes
+#: KiCad show an error and then a blank page, so it is a hard failure here.
+TOP_LEVEL = {
+    "version", "generator", "uuid", "paper", "title_block", "lib_symbols",
+    "polyline", "text", "no_connect", "wire", "label", "symbol",
+    "sheet_instances",
+}
+
+
 def verify(text: str, parts) -> list[str]:
     """Read the schematic back and check it against the netlist it came from."""
     problems = []
@@ -467,9 +475,44 @@ def verify(text: str, parts) -> list[str]:
         tree = parse_sexpr(text)
     except ValueError as error:
         return ["the file does not parse: %s" % error]
+    if len(tree) != 1 or not isinstance(tree[0], list):
+        return ["the file is not one balanced (kicad_sch ...) expression"]
     root = tree[0]
     if not root or root[0] != "kicad_sch":
         return ["the file does not start with (kicad_sch ...)"]
+
+    # structural: nothing but known elements, and every one of them a list
+    for index, entry in enumerate(root[1:], start=1):
+        if not isinstance(entry, list):
+            problems.append("top level entry %d is a bare token %r, not an element"
+                            % (index, entry))
+        elif entry[0] not in TOP_LEVEL:
+            problems.append("top level entry %d is %r, which is not a schematic element"
+                            % (index, entry[0]))
+    for entry in root[1:]:
+        if isinstance(entry, list) and entry and entry[0] == "symbol" and \
+                isinstance(entry[1], list) and entry[1][0] == "lib_id":
+            continue
+        if isinstance(entry, list) and entry and entry[0] == "symbol":
+            problems.append("a symbol instance has no lib_id straight after it")
+    if not any(isinstance(entry, list) and entry and entry[0] == "lib_symbols"
+               for entry in root[1:]):
+        problems.append("no lib_symbols block")
+    # KiCad's reader has no comment syntax in a schematic: a line starting with
+    # ';;' or '#' is a parse error that shows up as "error, blank page"
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith(";;") or stripped.startswith("//") \
+                or stripped.startswith("#"):
+            problems.append("line %d is a comment, which KiCad cannot read: %r"
+                            % (number, stripped[:40]))
+
+    # no duplicate uuids anywhere
+    uuids = re.findall(r'\(uuid "([0-9a-f-]{36})"\)', text)
+    duplicates = {value for value in uuids if uuids.count(value) > 1}
+    if duplicates:
+        problems.append("%d duplicate uuids (e.g. %s)"
+                        % (len(duplicates), sorted(duplicates)[0]))
 
     def walk(node, name):
         for child in node:
@@ -625,6 +668,9 @@ def main() -> int:
     if args.check:
         if not SCH.exists() or SCH.read_text() != text:
             print("FAIL: %s is stale - run make schematic" % SCH.name)
+            return 1
+        if problems:
+            print("FAIL: %s is current but not well formed" % SCH.name)
             return 1
         print("%s is current (%d parts, %d pins, %d nets)"
               % (SCH.name, len(parts), pins, len(set(nets.values()))))
