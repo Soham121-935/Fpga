@@ -84,8 +84,34 @@ ESCAPE_VIA = (0.45, 0.25)
 ROUTE_VIA = (0.60, 0.30)
 EDGE = 0.30
 MAX_WINDOW = 60.0                 # mm, the largest search window A* will take
-U1_RING = Polygon([(38.1, 38.1), (65.9, 38.1), (65.9, 65.9), (38.1, 65.9)])
-U1_BODY = box(42.4, 42.4, 61.6, 61.6)     # the TQFP body: empty on In1 and In2
+# The fan-out ring and the body outline are measured from where U1 actually
+# sits, not hard-coded: move the chip (or grow the board) and they follow.
+U1_RING_HALF = 13.9       # mm from the chip centre to the fan-out ring
+U1_BODY_HALF = 9.6        # mm from the chip centre to the edge of the body
+
+
+def u1_centre(board):
+    """Where U1 sits, from its pads."""
+    xs, ys = [], []
+    for _, item in board.u1_pads:
+        x, y = Board.center(item)
+        xs.append(x)
+        ys.append(y)
+    return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+
+
+def u1_ring(board):
+    """The band the fan-out vias live in."""
+    cx, cy = u1_centre(board)
+    return box(cx - U1_RING_HALF, cy - U1_RING_HALF,
+               cx + U1_RING_HALF, cy + U1_RING_HALF)
+
+
+def u1_body(board):
+    """Under the TQFP body: empty on both inner layers."""
+    cx, cy = u1_centre(board)
+    return box(cx - U1_BODY_HALF, cy - U1_BODY_HALF,
+               cx + U1_BODY_HALF, cy + U1_BODY_HALF)
 
 
 # ----------------------------------------------------------------- board model
@@ -393,8 +419,8 @@ def clash(board, geom, radius, net, exclude=None):
     return False
 
 
-def in_ring(x, y):
-    return U1_RING.contains(Point(x, y))
+def in_ring(board, x, y):
+    return u1_ring(board).contains(Point(x, y))
 
 
 # ------------------------------------------------------------------ fan-out
@@ -430,7 +456,7 @@ def fanout_u1(board, verbose=True):
                 # so every supply pin drops straight into its plane.
                 radius = half + (1.3 if index % 2 == 0 else 2.1)
                 vx, vy = cx - nx * radius, cy - ny * radius
-                if not U1_BODY.contains(Point(vx, vy)):
+                if not u1_body(board).contains(Point(vx, vy)):
                     radius = half + FANOUT_R[index % 2]
                     vx, vy = cx + nx * radius, cy + ny * radius
             else:
@@ -464,7 +490,7 @@ def escape_plane_pads(board, verbose=True):
                     vy = cy + along[1] * distance * sign
                     if not (EDGE < vx < BOARD_W - EDGE and EDGE < vy < BOARD_H - EDGE):
                         continue
-                    if in_ring(vx, vy):
+                    if in_ring(board, vx, vy):
                         continue
                     if clash(board, Point(vx, vy), ESCAPE_VIA[0] / 2.0, net):
                         continue
@@ -552,11 +578,39 @@ def connect(board, net, target, width, to_node, via_size, via_drill,
         if path is None:
             why = "no path in a %.0f mm window" % pad_margin
             continue
+        # Snap to the copper from the end of the path, not from the node's
+        # centre.  A* only guarantees the cells it walked are clear; dragging
+        # the end of a 2 mm trunk back to a pad centre can sweep it across
+        # copper the search never looked at.
+        head = windows[path[0][0]].center(path[0][1], path[0][2])
+        tail = windows[path[-1][0]].center(path[-1][1], path[-1][2])
+        first = snap_point(near, head)
+        last = snap_point(to_node, tail)
+        if not (clear_run(board, net, head, first, width, path[0][0])
+                and clear_run(board, net, tail, last, width, path[-1][0])):
+            why = "the last millimetre is blocked"
+            continue
         emit(board, path, windows, width, net, via_size, via_drill,
-             snap_first=snap_point(near, near["xy"]),
-             snap_last=snap_point(to_node, to_node["xy"]))
+             snap_first=first, snap_last=last)
         return True, ""
     return False, why
+
+
+def clear_run(board, net, a, b, width, layer, tolerance=0.005):
+    """Is the straight run from `a` to `b` legal?
+
+    Used for the two snapped ends of a route, which are the only copper the
+    grid search has not already accounted for.
+    """
+    if abs(a[0] - b[0]) < 1e-9 and abs(a[1] - b[1]) < 1e-9:
+        return True
+    run = LineString([a, b]).buffer(width / 2.0, cap_style=1, quad_segs=8)
+    for item in board.items:
+        if item.net == net or not item.on(layer):
+            continue
+        if run.distance(item.geom) < board.clearance(net, item.net) - tolerance:
+            return False
+    return True
 
 
 def snap_point(node, xy):

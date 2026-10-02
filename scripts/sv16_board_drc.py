@@ -44,8 +44,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BOARD_FILE = ROOT / "hardware" / "sv16_board" / "sv16_board.kicad_pcb"
 
-BOARD_W = 100.0
-BOARD_H = 100.0
+BOARD_W = 122.0
+BOARD_H = 122.0
 PAD_EDGE = 0.30             # a pad's copper to the board edge
 LARGE_BODY_AREA = 20.0      # mm^2: only bodies this big must not overlap
 COPPER_EDGE = 0.25          # a track, via or plane to the board edge
