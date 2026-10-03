@@ -704,7 +704,7 @@ def build(B, comps, nets, bynet, prefer=(), seed=0):
         return all(y1 + 2.54 < a or y0 - 2.54 > b
                    for a, b in taken_rows[(side, col)])
 
-    hang_count = [0]
+    net_slot = defaultdict(int)
 
     def hang(parent, child, parent_pad, child_pad):
         """Set `child` just outside `parent`, level with the pin it joins."""
@@ -733,15 +733,20 @@ def build(B, comps, nets, bynet, prefer=(), seed=0):
         # A net of only two pins ends here, so sitting on its row costs
         # nothing and keeps the run straight.  A net of three or more has to
         # carry on past this part, so stand the part clear of the row.
-        shared = len(bynet.get(nets.get((parent, parent_pad), ""), ()))
+        net_key = nets.get((parent, parent_pad), "")
+        shared = len(bynet.get(net_key, ()))
         if shared >= 3:
             # Phase the offsets off the round number, so each retry lays the
             # tapping parts out a little differently.  Which net ends up
             # boxed in depends on the arrangement, not on the router.
-            phase = hang_count[0]
-            off = TAP_OFFSET * (1 + phase // 2)
-            sign = -1 if phase % 2 else 1
-            hang_count[0] += 1
+            # Slot the parts of one net onto different rows: above the run,
+            # below it, then further out.  A global counter gave whichever
+            # part happened to be placed first the good row and left the
+            # rest stacked ever further away.
+            slot = net_slot[net_key]
+            net_slot[net_key] += 1
+            off = TAP_OFFSET * (1 + (slot % 6) // 2)
+            sign = -1 if slot % 2 else 1
             tries = [(s, sign * off) for s in range(10)]
             tries += [(s, -sign * off) for s in range(10)]
             for _dy in (0.0, sign * 2 * off, -sign * 2 * off):
