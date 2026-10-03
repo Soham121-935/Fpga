@@ -69,6 +69,15 @@ def through_box(a, b, box, inset=0.2):
     return False
 
 bad = []
+
+# KiCad reads these as booleans, so "(hide)" with no value makes the loader
+# choke on the closing paren: "Expecting yes or no. Got ')'".  Bare flags
+# like (fields_autoplaced) are meant to have no value and are fine.
+for name in ("in_bom", "on_board", "dnp", "exclude_from_sim", "hide", "bold",
+             "italic", "mirror", "visible", "unlocked", "locked"):
+    for m in re.finditer(r"\(%s\)" % name, txt):
+        line = txt[:m.start()].count("\n") + 1
+        problems.append("line %d: (%s) needs yes or no" % (line, name))
 problems = []
 sheet_uuid = txt.split('(uuid "', 1)[1].split('")', 1)[0]
 for pts in wires:

@@ -274,7 +274,7 @@ def power_symbol_lines(name, net):
             '      (symbol "%s_0_1"' % short] + graphic + [
             '      )',
             '      (symbol "%s_1_1"' % short,
-            '        (pin power_in line (at 0 0 0) (length 0) (hide)',
+            '        (pin power_in line (at 0 0 0) (length 0) (hide yes)',
             '          (name "%s" (effects (font (size 1.27 1.27))))' % esc(net),
             '          (number "1" (effects (font (size 1.27 1.27))))',
             '        )',

@@ -1763,7 +1763,7 @@
         )
       )
       (symbol "PWR_GND_1_1"
-        (pin power_in line (at 0 0 0) (length 0) (hide)
+        (pin power_in line (at 0 0 0) (length 0) (hide yes)
           (name "GND" (effects (font (size 1.27 1.27))))
           (number "1" (effects (font (size 1.27 1.27))))
         )
@@ -1788,7 +1788,7 @@
         )
       )
       (symbol "PWR_3V3_1_1"
-        (pin power_in line (at 0 0 0) (length 0) (hide)
+        (pin power_in line (at 0 0 0) (length 0) (hide yes)
           (name "3V3" (effects (font (size 1.27 1.27))))
           (number "1" (effects (font (size 1.27 1.27))))
         )
@@ -1813,7 +1813,7 @@
         )
       )
       (symbol "PWR_1V1_1_1"
-        (pin power_in line (at 0 0 0) (length 0) (hide)
+        (pin power_in line (at 0 0 0) (length 0) (hide yes)
           (name "1V1" (effects (font (size 1.27 1.27))))
           (number "1" (effects (font (size 1.27 1.27))))
         )
@@ -1838,7 +1838,7 @@
         )
       )
       (symbol "PWR_2V5_1_1"
-        (pin power_in line (at 0 0 0) (length 0) (hide)
+        (pin power_in line (at 0 0 0) (length 0) (hide yes)
           (name "2V5" (effects (font (size 1.27 1.27))))
           (number "1" (effects (font (size 1.27 1.27))))
         )
@@ -1863,7 +1863,7 @@
         )
       )
       (symbol "PWR_VM_IN_1_1"
-        (pin power_in line (at 0 0 0) (length 0) (hide)
+        (pin power_in line (at 0 0 0) (length 0) (hide yes)
           (name "VM_IN" (effects (font (size 1.27 1.27))))
           (number "1" (effects (font (size 1.27 1.27))))
         )
@@ -1888,7 +1888,7 @@
         )
       )
       (symbol "PWR_USB_VBUS_1_1"
-        (pin power_in line (at 0 0 0) (length 0) (hide)
+        (pin power_in line (at 0 0 0) (length 0) (hide yes)
           (name "USB_VBUS" (effects (font (size 1.27 1.27))))
           (number "1" (effects (font (size 1.27 1.27))))
         )
@@ -1913,7 +1913,7 @@
         )
       )
       (symbol "PWR_5V_USB_1_1"
-        (pin power_in line (at 0 0 0) (length 0) (hide)
+        (pin power_in line (at 0 0 0) (length 0) (hide yes)
           (name "5V_USB" (effects (font (size 1.27 1.27))))
           (number "1" (effects (font (size 1.27 1.27))))
         )
@@ -1938,7 +1938,7 @@
         )
       )
       (symbol "PWR_VM_IN_RAW_1_1"
-        (pin power_in line (at 0 0 0) (length 0) (hide)
+        (pin power_in line (at 0 0 0) (length 0) (hide yes)
           (name "VM_IN_RAW" (effects (font (size 1.27 1.27))))
           (number "1" (effects (font (size 1.27 1.27))))
         )
@@ -1963,7 +1963,7 @@
         )
       )
       (symbol "PWR_J9_VIN_1_1"
-        (pin power_in line (at 0 0 0) (length 0) (hide)
+        (pin power_in line (at 0 0 0) (length 0) (hide yes)
           (name "J9_VIN" (effects (font (size 1.27 1.27))))
           (number "1" (effects (font (size 1.27 1.27))))
         )
