@@ -1214,21 +1214,21 @@ def emit(parts, wires, labels, branches, used, comps, bynet):
                     pts.insert(k + 1, point)
                     break
 
-    # A point needs a dot when three or more directions meet there: a wire
-    # running through counts as two, a wire ending counts as one.  Without the
-    # dot KiCad reads the meeting as a bare crossing.
-    ends, through = Counter(), Counter()
-    for pts in wires:
-        ends[pts[0]] += 1
-        ends[pts[-1]] += 1
-        for point in pts[1:-1]:
-            through[point] += 1
-    arrivals = Counter()
-    for point in set(ends) | set(through):
-        arrivals[point] = ends[point] + 2 * through[point]
+    # KiCad reads a wire as exactly two points -- (pts (xy ..) (xy ..)).  A
+    # routed path with six corners has to go out as five separate wires, or
+    # the loader stops after the second point and then demands a ')'.
+    segments = [(a, b) for pts in wires for a, b in zip(pts, pts[1:]) if a != b]
 
-    for index, pts in enumerate(wires):
-        coords = " ".join("(xy %s %s)" % (f(x), f(y)) for x, y in pts)
+    # Every corner is an endpoint now, so "three or more wires meet here" is
+    # the same test the old "three or more directions" made: a wire running
+    # through used to count two and now contributes two endpoints.
+    arrivals = Counter()
+    for a, b in segments:
+        arrivals[a] += 1
+        arrivals[b] += 1
+
+    for index, (a, b) in enumerate(segments):
+        coords = "(xy %s %s) (xy %s %s)" % (f(a[0]), f(a[1]), f(b[0]), f(b[1]))
         out += ['  (wire (pts %s)' % coords,
                 '    (stroke (width 0) (type default) (color 0 0 0 0))',
                 '    (uuid "%s")' % uu("wire/%d" % index),

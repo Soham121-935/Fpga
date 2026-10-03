@@ -73,6 +73,13 @@ bad = []
 # KiCad reads these as booleans, so "(hide)" with no value makes the loader
 # choke on the closing paren: "Expecting yes or no. Got ')'".  Bare flags
 # like (fields_autoplaced) are meant to have no value and are fine.
+# A wire is exactly (pts (xy ..) (xy ..)).  A routed path has to be split
+# into separate wires, because the loader stops after the second point.
+for m in re.finditer(r"^  \(wire \(pts (.*?)\)\)", txt, re.M):
+    if m.group(1).count("(xy") != 2:
+        problems.append("line %d: wire has %d points, KiCad wants 2"
+                        % (txt[:m.start()].count("\n") + 1, m.group(1).count("(xy")))
+
 for name in ("in_bom", "on_board", "dnp", "exclude_from_sim", "hide", "bold",
              "italic", "mirror", "visible", "unlocked", "locked"):
     for m in re.finditer(r"\(%s\)" % name, txt):
