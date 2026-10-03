@@ -442,7 +442,7 @@ def clean(path, grid):
 
 
 # -------------------------------------------------------------------- layout
-def build(B, comps, nets, bynet):
+def build(B, comps, nets, bynet, prefer=()):
     power = set(POWER_NETS)
     u1_ref = "U1"
 
@@ -506,6 +506,7 @@ def build(B, comps, nets, bynet):
 
     parts = {}
     wires, labels, junctions = [], [], []
+    prefer = set(prefer)
     stats = {"power": 0, "wired": 0, "labelled": 0, "failed": []}
 
     # Every placed symbol's footprint, so the next one can be put somewhere it
@@ -856,27 +857,45 @@ def build(B, comps, nets, bynet):
             (bx0 - m, (by0 + by1) / 2), (bx0 - m, (by0 + by1) / 2)]
 
     def detour(tree, cell, net):
-        """Round the outside of the sheet, for nets with no way through."""
-        goal_xy = grid.point_of(*cell)
-        for wx, wy in ring:
-            w = grid.cell_of(wx, wy)
-            if not (0 <= w[0] < grid.nx and 0 <= w[1] < grid.ny):
-                continue
-            if grid.blocked[w[0]][w[1]]:
-                continue
-            first = grid.route(tree, w)
-            if first is None:
-                continue
-            grid.take(first, net + " (detour)")
-            second = grid.route([w], cell)
-            if second is None:
-                grid.untake(first)
-                continue
-            return first + second[1:]
+        """Round the outside, for nets with no way through the middle.
+
+        Out to the margin at the height we start from, along the margin to
+        the height we are aiming at, then back in.  Three legs, each of them
+        mostly across empty sheet.
+        """
+        edge = 3
+        lanes = (lambda c: (edge, c[1]),
+                 lambda c: (grid.nx - edge - 1, c[1]),
+                 lambda c: (c[0], edge),
+                 lambda c: (c[0], grid.ny - edge - 1))
+        for lane in lanes:
+            legs = []
+            src = tree
+            for way in (lane(tree[0]), lane(cell), cell):
+                seg = grid.route(src, way)
+                if seg is None:
+                    break
+                grid.take(seg, net + " (detour)")
+                legs.append(seg)
+                src = [way]
+            if DEBUG and len(legs) < 3:
+                print("        detour %s: lane reached %d/3 legs (way %s)"
+                      % (net, len(legs), grid.point_of(*lane(cell))),
+                      file=sys.stderr)
+            if len(legs) == 3:
+                out = legs[0] + legs[1][1:] + legs[2][1:]
+                return out
+            for seg in legs:
+                grid.untake(seg)
         return None
 
     # Widest nets first: they have the least freedom about where they go.
-    for net, pins in sorted(bynet.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+    # Nets that failed last time get first claim on the sheet this time -
+    # early nets get the pick of the space, so the awkward ones do better
+    # at the front of the queue than at the back of it.
+    for net, pins in sorted(bynet.items(),
+                            key=lambda kv: (0 if kv[0] in prefer else 1,
+                                            -len(kv[1]), kv[0])):
         if net in power:
             for ref, pad in pins:
                 px, py = parts[ref].pin_xy(pad)
@@ -1179,6 +1198,16 @@ def main() -> int:
 
     B, comps, nets, bynet = load()
     parts, wires, labels, junctions, bynet2, power, stats = build(B, comps, nets, bynet)
+    # A net that could not be drawn gets first go at the empty sheet on a
+    # second pass.  It costs one extra run and usually recovers most of them.
+    for _round in range(3):
+        if not stats["failed"]:
+            break
+        retry = [name for name, _n, _u1 in stats["failed"]]
+        again = build(B, comps, nets, bynet, prefer=retry)
+        if len(again[6]["failed"]) >= len(stats["failed"]):
+            break
+        parts, wires, labels, junctions, bynet2, power, stats = again
     text = emit(parts, wires, labels, set(parts), comps, bynet)
 
     path = Path(args.out)
