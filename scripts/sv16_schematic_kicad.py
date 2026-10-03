@@ -73,6 +73,7 @@ POWER_NETS = ("GND", "3V3", "1V1", "2V5", "VM_IN", "VM_IN_RAW",
 NS = uuid.UUID("6f0d5b3e-9c1a-4a52-9e6f-2f2b6a1d4c77")
 
 import os
+import random
 DEBUG = bool(os.environ.get("SV16_DEBUG"))
 
 
@@ -442,7 +443,7 @@ def clean(path, grid):
 
 
 # -------------------------------------------------------------------- layout
-def build(B, comps, nets, bynet, prefer=()):
+def build(B, comps, nets, bynet, prefer=(), seed=0):
     power = set(POWER_NETS)
     u1_ref = "U1"
 
@@ -505,7 +506,12 @@ def build(B, comps, nets, bynet, prefer=()):
             load[side] += max(len(periph[ref]), len(comps[ref]["pads"]))
 
     parts = {}
-    wires, labels, junctions = [], [], []
+    wires, labels, junctions, branches = [], [], [], []
+    prefer = list(prefer)
+    if seed:
+        # Try the awkward nets in a different order each round; which of them
+        # gets the last good channel changes who is left out.
+        random.Random(seed).shuffle(prefer)
     prefer = set(prefer)
     stats = {"power": 0, "wired": 0, "labelled": 0, "failed": []}
 
@@ -946,6 +952,7 @@ def build(B, comps, nets, bynet, prefer=()):
             grid.blocked[i][j] = 0
         tree, routed = [cells[0]], []
         pending = list(cells[1:])
+        first_leg = True
         while pending:
             # Nearest first.  A net that feeds several parts is drawn as a
             # chain - FPGA, then the resistor beside it, then the connector -
@@ -1025,6 +1032,12 @@ def build(B, comps, nets, bynet, prefer=()):
                               file=sys.stderr)
                 routed = None
                 break
+            if not first_leg:
+                # Where this branch leaves the copper already down.  The tree
+                # grows from the middle of an existing run, so that point has
+                # to be made a corner of that run and given a junction dot.
+                branches.append(grid.point_of(*path[0]))
+            first_leg = False
             grid.take(path, net)
             tree = tree + path
             routed.append(clean(path, grid))
@@ -1043,11 +1056,11 @@ def build(B, comps, nets, bynet, prefer=()):
             wires.extend(routed)
             stats["wired"] += len(points)
 
-    return parts, wires, labels, junctions, bynet, power, stats
+    return parts, wires, labels, branches, bynet, power, stats
 
 
 # -------------------------------------------------------------------- output
-def emit(parts, wires, labels, used, comps, bynet):
+def emit(parts, wires, labels, branches, used, comps, bynet):
     names, defs = {}, []
     for ref in sorted(parts, key=ref_key):
         part = parts[ref]
@@ -1105,14 +1118,34 @@ def emit(parts, wires, labels, used, comps, bynet):
                        % (esc(str(number)), uu("pin/%s/%s" % (ref, number))))
         out.append('  )')
 
-    # A point where three or more wire ends arrive is a junction and needs its
-    # dot, or KiCad reads the crossing as unconnected.  Counting is easier and
-    # safer than trying to work it out per route.
+    # Make every branching point a corner of the run it branches off, or the
+    # branch lands in the middle of a segment where nothing marks the join.
     from collections import Counter
-    arrivals = Counter()
+    for point in set(branches):
+        px, py = point
+        for pts in wires:
+            for k in range(len(pts) - 1):
+                (ax, ay), (bx, by) = pts[k], pts[k + 1]
+                if point in (pts[k], pts[k + 1]):
+                    break
+                span_x = (min(ax, bx) - 1e-6) <= px <= (max(ax, bx) + 1e-6)
+                span_y = (min(ay, by) - 1e-6) <= py <= (max(ay, by) + 1e-6)
+                if span_x and span_y:
+                    pts.insert(k + 1, point)
+                    break
+
+    # A point needs a dot when three or more directions meet there: a wire
+    # running through counts as two, a wire ending counts as one.  Without the
+    # dot KiCad reads the meeting as a bare crossing.
+    ends, through = Counter(), Counter()
     for pts in wires:
-        for point in pts:
-            arrivals[point] += 1
+        ends[pts[0]] += 1
+        ends[pts[-1]] += 1
+        for point in pts[1:-1]:
+            through[point] += 1
+    arrivals = Counter()
+    for point in set(ends) | set(through):
+        arrivals[point] = ends[point] + 2 * through[point]
 
     for index, pts in enumerate(wires):
         coords = " ".join("(xy %s %s)" % (f(x), f(y)) for x, y in pts)
@@ -1197,18 +1230,19 @@ def main() -> int:
     args = ap.parse_args()
 
     B, comps, nets, bynet = load()
-    parts, wires, labels, junctions, bynet2, power, stats = build(B, comps, nets, bynet)
+    parts, wires, labels, branches, bynet2, power, stats = build(B, comps, nets, bynet)
     # A net that could not be drawn gets first go at the empty sheet on a
     # second pass.  It costs one extra run and usually recovers most of them.
-    for _round in range(3):
+    for _round in range(12):
         if not stats["failed"]:
             break
         retry = [name for name, _n, _u1 in stats["failed"]]
-        again = build(B, comps, nets, bynet, prefer=retry)
+        again = build(B, comps, nets, bynet, prefer=retry,
+                      seed=_round + 1)
         if len(again[6]["failed"]) >= len(stats["failed"]):
             break
-        parts, wires, labels, junctions, bynet2, power, stats = again
-    text = emit(parts, wires, labels, set(parts), comps, bynet)
+        parts, wires, labels, branches, bynet2, power, stats = again
+    text = emit(parts, wires, labels, branches, set(parts), comps, bynet)
 
     path = Path(args.out)
     path.write_text(text)
