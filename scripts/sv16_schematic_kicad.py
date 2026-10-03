@@ -58,6 +58,7 @@ BOTTOM_BAND = 160.0
 KEEPOUT = 1             # cells of clear space kept around every symbol
 CROSS_COST = 6          # penalty for crossing another net
 PERIPH_GAP = 260.0       # FPGA body to connector body
+TAP_OFFSET = 3 * PITCH    # how far a tapping part stands off its net's run
 CHILD_GAP = 30.0         # part to the part it hangs off
 BLOCK_PITCH_X = 132.0
 BLOCK_PITCH_Y = 76.0
@@ -703,6 +704,8 @@ def build(B, comps, nets, bynet, prefer=(), seed=0):
         return all(y1 + 2.54 < a or y0 - 2.54 > b
                    for a, b in taken_rows[(side, col)])
 
+    hang_count = [0]
+
     def hang(parent, child, parent_pad, child_pad):
         """Set `child` just outside `parent`, level with the pin it joins."""
         side = side_of_pin.get((parent, parent_pad), "L")
@@ -722,9 +725,31 @@ def build(B, comps, nets, bynet, prefer=(), seed=0):
                 y -= PIN_PITCH
         c_reach = part.body_w / 2 + PIN_LEN
         col = tier[parent] + 1
-        tries = [(s, 0.0) for s in range(10)]
-        for _dy in (PIN_PITCH, -PIN_PITCH, 2 * PIN_PITCH, -2 * PIN_PITCH):
-            tries += [(s, _dy) for s in range(10)]
+        # Stand the part clear of the run it is tapping, not on it.  Several
+        # parts on one net all hang off the same row, and a part sitting
+        # squarely on that row with its pin on the near face leaves the wire
+        # nowhere to go but through its body.  Offsetting them above and below
+        # the run lets it pass and gives each part a short stub.
+        # A net of only two pins ends here, so sitting on its row costs
+        # nothing and keeps the run straight.  A net of three or more has to
+        # carry on past this part, so stand the part clear of the row.
+        shared = len(bynet.get(nets.get((parent, parent_pad), ""), ()))
+        if shared >= 3:
+            # Phase the offsets off the round number, so each retry lays the
+            # tapping parts out a little differently.  Which net ends up
+            # boxed in depends on the arrangement, not on the router.
+            phase = hang_count[0]
+            off = TAP_OFFSET * (1 + phase // 2)
+            sign = -1 if phase % 2 else 1
+            hang_count[0] += 1
+            tries = [(s, sign * off) for s in range(10)]
+            tries += [(s, -sign * off) for s in range(10)]
+            for _dy in (0.0, sign * 2 * off, -sign * 2 * off):
+                tries += [(s, _dy) for s in range(10)]
+        else:
+            tries = [(s, 0.0) for s in range(10)]
+            for _dy in (PIN_PITCH, -PIN_PITCH, 2 * PIN_PITCH, -2 * PIN_PITCH):
+                tries += [(s, _dy) for s in range(10)]
         for step, dy in tries:
             gap = CHILD_GAP * (step + 1)
             pin_x = p_pin_x - gap if side == "L" else p_pin_x + gap
@@ -1239,6 +1264,10 @@ def main() -> int:
         retry = [name for name, _n, _u1 in stats["failed"]]
         again = build(B, comps, nets, bynet, prefer=retry,
                       seed=_round + 1)
+        if DEBUG:
+            print("   round %d: %d -> %d unroutable"
+                  % (_round, len(stats["failed"]), len(again[6]["failed"])),
+                  file=sys.stderr)
         if len(again[6]["failed"]) >= len(stats["failed"]):
             break
         parts, wires, labels, branches, bynet2, power, stats = again
