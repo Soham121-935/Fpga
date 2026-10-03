@@ -41,19 +41,24 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 OUT = ROOT / "hardware" / "sv16_board" / "sv16_board.kicad_sch"
 
-PITCH = 2.54          # pin to pin, and the wiring grid
+PITCH = 2.54          # the wiring grid
+PIN_PITCH = 2 * PITCH  # pin to pin.  Two cells, not one: with pins a single
+                       # cell apart, the wires leaving two neighbouring pins
+                       # form a two-cell-thick band that nothing can get
+                       # through, which is what sealed so many pins in.
 PIN_LEN = 2.54
 STUB = 5.08           # short wire from a pin to whatever it meets
-GROUP_GAP = 2 * PITCH
+GROUP_GAP = 2 * PIN_PITCH
 # Clear bands above and below the FPGA.  Several nets - TCK, TMS, TDI, TDO,
 # PROGRAMN, INITN - have pins on both sides of it, and the only way round the
 # body is over the top or under the bottom.  Keep them generous or those nets
 # cannot be drawn at all.
 TOP_BAND = 160.0
 BOTTOM_BAND = 160.0
-KEEPOUT = 3             # cells of clear space kept around every symbol
+KEEPOUT = 1             # cells of clear space kept around every symbol
 CROSS_COST = 6          # penalty for crossing another net
-PERIPH_GAP = 150.0       # FPGA body to connector body
+PERIPH_GAP = 260.0       # FPGA body to connector body
+CHILD_GAP = 30.0         # part to the part it hangs off
 BLOCK_PITCH_X = 132.0
 BLOCK_PITCH_Y = 76.0
 
@@ -150,7 +155,11 @@ class Part:
 
     def extent(self):
         ys = [y for _, y in self.left + self.right]
-        half = max(len(self.left), len(self.right), 1) * PITCH / 2
+        # Tall enough for the pins it actually has.  Counting one pin as
+        # though it needed a whole slot made every resistor seven and a half
+        # millimetres tall, which is more than the gap between two rows and
+        # turned a column of them into a wall.
+        half = max(len(self.left) - 1, len(self.right) - 1, 0) * PIN_PITCH / 2
         return (self.body_w / 2 + PIN_LEN,
                 max(max(abs(y) for y in ys) if ys else 0, half) + 1.27)
 
@@ -268,6 +277,7 @@ class Grid:
         self.blocked = [bytearray(self.ny) for _ in range(self.nx)]
         self.used = [bytearray(self.ny) for _ in range(self.nx)]
         self.own = [bytearray(self.ny) for _ in range(self.nx)]
+        self.owner = {}
 
     def cell_of(self, x, y):
         return int(round(x / self.cell)), int(round(y / self.cell))
@@ -397,9 +407,11 @@ class Grid:
                 heapq.heappush(queue, (cost + step, si, sj, ni, nj))
         return None
 
-    def take(self, path):
+    def take(self, path, who=""):
         for i, j in path:
             self.used[i][j] = 1
+            if DEBUG:
+                self.owner[(i, j)] = who
 
 
 def clean(path, grid):
@@ -444,16 +456,52 @@ def build(B, comps, nets, bynet):
     majors = [r for r in periph if len(periph[r]) >= 2]
     ordered = sorted(majors, key=lambda r: (-len(periph[r]), comps[r]["order"]))
 
+    # Peripherals that talk to each other have to end up on the same side of
+    # the FPGA.  Two JTAG headers carrying the same four signals, split across
+    # the chip, would need those four nets to cross the entire symbol.
+    buddies = defaultdict(set)
+    for net, pins in bynet.items():
+        if net in power:
+            continue
+        refs = sorted({r for r, _ in pins} & set(majors))
+        for a in refs:
+            for b in refs:
+                if a != b:
+                    buddies[a].add(b)
+    groups, seen = [], set()
+    for ref in ordered:
+        if ref in seen:
+            continue
+        bundle, queue = [], [ref]
+        seen.add(ref)
+        while queue:
+            r = queue.pop(0)
+            bundle.append(r)
+            for other in sorted(buddies.get(r, ())):
+                if other not in seen:
+                    seen.add(other)
+                    queue.append(other)
+        groups.append(bundle)
+
     sides = {"L": [], "R": []}
     load = {"L": 0, "R": 0}
-    for ref in ordered:
+    for bundle in groups:
         side = "L" if load["L"] <= load["R"] else "R"
-        sides[side].append(ref)
-        load[side] += max(len(periph[ref]), len(comps[ref]["pads"]))
+        for ref in bundle:
+            sides[side].append(ref)
+            load[side] += max(len(periph[ref]), len(comps[ref]["pads"]))
 
     parts = {}
     wires, labels, junctions = [], [], []
     stats = {"power": 0, "wired": 0, "labelled": 0, "failed": []}
+
+    # Every placed symbol's footprint, so the next one can be put somewhere it
+    # does not land on top of another.
+    boxes = []
+
+    def free_box(x0, x1, y0, y1, pad=2.54):
+        return all(x1 + pad < a or x0 - pad > b or y1 + pad < c or y0 - pad > d
+                   for a, b, c, d in boxes)
 
     # ---- the FPGA ------------------------------------------------------
     u1 = Part(u1_ref, comps[u1_ref], body_w=15.24)
@@ -469,8 +517,8 @@ def build(B, comps, nets, bynet):
             entries = []
             for net in group:                     # in U1 order = periph order
                 entries.append((u1_pad_of[net], net, y))
-                y -= PITCH
-            y = start - rows * PITCH - GROUP_GAP
+                y -= PIN_PITCH
+            y = start - rows * PIN_PITCH - GROUP_GAP
             plan[side].append((ref, entries))
         cursor[side] = y
 
@@ -486,7 +534,7 @@ def build(B, comps, nets, bynet):
     for pad in sorted(leftovers, key=lambda pad: nets[(u1_ref, pad)]):
         side = "L" if cursor["L"] > cursor["R"] else "R"
         plan[side].append((None, [(pad, nets[(u1_ref, pad)], cursor[side])]))
-        cursor[side] -= PITCH
+        cursor[side] -= PIN_PITCH
 
     # Supply pins go underneath everything else.
     for pad in comps[u1_ref]["pads"]:
@@ -494,7 +542,7 @@ def build(B, comps, nets, bynet):
         if net in power:
             side = "L" if cursor["L"] > cursor["R"] else "R"
             plan[side].append((None, [(pad, net, cursor[side])]))
-            cursor[side] -= PITCH
+            cursor[side] -= PIN_PITCH
     for side, column in (("L", u1.left), ("R", u1.right)):
         for _, entries in plan[side]:
             for pad, net, y in entries:
@@ -505,6 +553,9 @@ def build(B, comps, nets, bynet):
         print("   U1: %d left + %d right pins, half-height %.0f mm"
               % (len(u1.left), len(u1.right), u1_half), file=sys.stderr)
     u1.y = TOP_BAND + u1_half
+    u1.x = 520.0
+    _hw, _hh = u1.extent()
+    boxes.append((u1.x - _hw, u1.x + _hw, u1.y - _hh, u1.y + _hh))
     parts[u1_ref] = u1
 
     # ---- the peripherals, pin for pin opposite the FPGA ----------------
@@ -516,28 +567,48 @@ def build(B, comps, nets, bynet):
             facing = "R" if side == "L" else "L"     # the side turned to U1
             outer = "L" if side == "L" else "R"
             net_of_pad = {p: nets.get((ref, p)) for p in part.pads}
+            # The plan hands over absolute sheet rows.  Shift them so the
+            # symbol is centred on its own pins; otherwise the body is drawn
+            # up at the FPGA's origin while the pins sit far below it, and the
+            # rectangle grows tall enough to swallow its neighbours.
+            ys = [y for _pad, _net, y in entries] or [0.0]
+            centre = (min(ys) + max(ys)) / 2.0
             used = set()
             for pad, net, y in entries:
                 for p in part.pads:
                     if net_of_pad.get(p) == net and p not in used:
-                        getattr(part, "right" if facing == "R" else "left").append((p, y))
+                        getattr(part, "right" if facing == "R" else "left").append((p, y - centre))
                         used.add(p)
                         break
-            rest_y = -(len(entries) - 1) * PITCH / 2 if entries else 0
-            for pad in part.pads:
-                if pad in used:
-                    continue
+            rest = [pad for pad in part.pads if pad not in used]
+            rest_y = (len(rest) - 1) * PIN_PITCH / 2
+            for pad in rest:
                 getattr(part, "right" if outer == "R" else "left").append((pad, rest_y))
-                rest_y -= PITCH
-            # Far enough out to leave a real channel between the FPGA body and
-            # the connectors.  At 30 mm the gap was 12 mm - four grid cells -
-            # and every net that had to travel past a connector to reach the
-            # blocks below queued up in it until it was full.
-            gap = PERIPH_GAP if side == "L" else -PERIPH_GAP
-            facing_x = u1.x + gap
+                rest_y -= PIN_PITCH
+            # Stand it opposite its own FPGA pins, at PERIPH_GAP.  If another
+            # part already owns that patch of sheet - two parts can share a
+            # pin row when one of them only has a single FPGA net - step
+            # further out, and only then give up a little height.
+            gap = -PERIPH_GAP if side == "L" else PERIPH_GAP
             reach = part.body_w / 2 + PIN_LEN
-            part.x = facing_x - reach if facing == "R" else facing_x + reach
-            part.y = u1.y
+            outward = -1 if side == "L" else 1
+            # Keeping the row matters more than keeping the column: a part on
+            # its pin's row still gets a straight run to the FPGA however far
+            # out it has to stand, whereas a part pushed off its row does not.
+            tries = [(s, 0.0) for s in range(12)]
+            for _dy in (PIN_PITCH, -PIN_PITCH, 2 * PIN_PITCH, -2 * PIN_PITCH):
+                tries += [(s, _dy) for s in range(12)]
+            for step, dy in tries:
+                facing_x = u1.x + gap + step * CHILD_GAP * outward
+                part.x = (facing_x - reach if facing == "R"
+                          else facing_x + reach)
+                part.y = u1.y + centre + dy
+                hw, hh = part.extent()
+                if free_box(part.x - hw, part.x + hw,
+                            part.y - hh, part.y + hh):
+                    break
+            hw, hh = part.extent()
+            boxes.append((part.x - hw, part.x + hw, part.y - hh, part.y + hh))
             parts[ref] = part
 
     if DEBUG and os.environ.get("SV16_DEBUG_PARTS"):
@@ -573,11 +644,13 @@ def build(B, comps, nets, bynet):
                 print("      pad %-3s net %-10s y=%8.2f   U1 pin y=%s"
                       % (pad, n, pr.y + y,
                          "%.2f" % uy if uy else "-"), file=sys.stderr)
-    # ---- everything else, in rows below --------------------------------
-    # Walk the netlist breadth first so parts sharing a net are placed side by
-    # side.  Placement decides whether a net can be drawn at all: partners far
-    # apart mean long detours around everything between them.
-    remaining = set(comps) - set(parts)
+    # ---- everything else, hung next to whatever it talks to -------------
+    # A net between neighbours is a short straight run.  A net between two
+    # parts on opposite sides of the sheet is a journey, and no amount of
+    # routing cleverness makes a journey readable.  So each remaining part is
+    # placed just outside the part it shares a net with, at the height of the
+    # pin it shares it with, and the pin that does the talking is turned to
+    # face its neighbour.
     neighbours = defaultdict(set)
     for net, pins in bynet.items():
         if net in power:
@@ -587,26 +660,112 @@ def build(B, comps, nets, bynet):
             for b in refs:
                 if a != b:
                     neighbours[a].add(b)
-    block, seen = [], set()
-    for seed in sorted(remaining, key=lambda r: comps[r]["order"]):
+
+    side_of_pin = {}         # (ref, pad) -> which side of the FPGA it sits on
+    tier = {}
+    for _side in ("L", "R"):
+        for ref, _entries in plan[_side]:
+            if ref:
+                tier[ref] = 1
+                for _pad in comps[ref]["pads"]:
+                    side_of_pin[(ref, _pad)] = _side
+    # Every FPGA pin is an anchor too, including the ones that reached no
+    # connector; parts hanging off a reset line have nowhere else to go.
+    for _pad, _y in u1.left:
+        side_of_pin[(u1_ref, _pad)] = "L"
+        tier.setdefault(u1_ref, 0)
+    for _pad, _y in u1.right:
+        side_of_pin[(u1_ref, _pad)] = "R"
+        tier.setdefault(u1_ref, 0)
+    taken_rows = defaultdict(list)
+
+    def free_slot(side, col, y0, y1):
+        return all(y1 + 2.54 < a or y0 - 2.54 > b
+                   for a, b in taken_rows[(side, col)])
+
+    def hang(parent, child, parent_pad, child_pad):
+        """Set `child` just outside `parent`, level with the pin it joins."""
+        side = side_of_pin.get((parent, parent_pad), "L")
+        pp = parts[parent]
+        p_reach = pp.body_w / 2 + PIN_LEN
+        p_pin_x = pp.x - p_reach if side == "L" else pp.x + p_reach
+        p_pin_y = pp.y + dict(pp.left + pp.right)[parent_pad]
+        inner = part_side["R" if side == "L" else "L"]   # the face turned back
+        outer = part_side[side]
+        part = Part(child, comps[child], body_w=8.89)
+        y = 0.0
+        for pad in part.pads:
+            if pad == child_pad and not getattr(part, inner):
+                getattr(part, inner).append((pad, 0.0))
+            else:
+                getattr(part, outer).append((pad, y))
+                y -= PIN_PITCH
+        c_reach = part.body_w / 2 + PIN_LEN
+        col = tier[parent] + 1
+        tries = [(s, 0.0) for s in range(10)]
+        for _dy in (PIN_PITCH, -PIN_PITCH, 2 * PIN_PITCH, -2 * PIN_PITCH):
+            tries += [(s, _dy) for s in range(10)]
+        for step, dy in tries:
+            gap = CHILD_GAP * (step + 1)
+            pin_x = p_pin_x - gap if side == "L" else p_pin_x + gap
+            part.x = pin_x - c_reach if inner == "right" else pin_x + c_reach
+            part.y = p_pin_y + dy
+            hw, hh = part.extent()
+            if free_box(part.x - hw, part.x + hw, part.y - hh, part.y + hh):
+                break
+        hw, hh = part.extent()
+        boxes.append((part.x - hw, part.x + hw, part.y - hh, part.y + hh))
+        parts[child] = part
+        for _pad in part.pads:
+            side_of_pin[(child, _pad)] = side
+        tier[child] = col
+
+    part_side = {"L": "left", "R": "right"}
+    pending = sorted(set(comps) - set(parts), key=lambda r: comps[r]["order"])
+    while True:
+        done = []
+        for ref in pending:
+            best = None
+            for pad in comps[ref]["pads"]:
+                net = nets.get((ref, pad))
+                if not net or net in power:
+                    continue
+                for other, opad in bynet[net]:
+                    if other != ref and (other, opad) in side_of_pin:
+                        if best is None or tier.get(other, 9) < tier.get(best[0], 9):
+                            best = (other, opad, pad)
+            if best is None:
+                continue
+            hang(best[0], ref, best[1], best[2])
+            done.append(ref)
+        if not done:
+            break
+        pending = [r for r in pending if r not in set(done)]
+
+    # Whatever is left has no signal net to anything already placed -
+    # decoupling caps, test points, mounting holes, and parts whose only
+    # partners are equally unplaced.  They go in a farm below, still in
+    # netlist order so the few nets between them stay short.
+    farm, seen = [], set()
+    for seed in pending:
         if seed in seen:
             continue
         queue, seen = [seed], seen | {seed}
         while queue:
             ref = queue.pop(0)
-            block.append(ref)
+            farm.append(ref)
             for other in sorted(neighbours.get(ref, ())):
-                if other in remaining and other not in seen:
+                if other in set(pending) and other not in seen:
                     seen.add(other)
                     queue.append(other)
     row_y = u1.y + u1_half + BOTTOM_BAND
     col_x = MARGIN + 40.0
     per_row = 9
-    for index, ref in enumerate(block):
+    for index, ref in enumerate(farm):
         part = Part(ref, comps[ref], body_w=8.89)
         half = max(len(part.pads) // 2, 1)
         for i, pad in enumerate(part.pads):
-            y = (half - 1 - (i // 2)) * PITCH if len(part.pads) > 2 else 0.0
+            y = (half - 1 - (i // 2)) * PIN_PITCH if len(part.pads) > 2 else 0.0
             (part.left if i % 2 == 0 else part.right).append((pad, y))
         part.x = col_x + (index % per_row) * BLOCK_PITCH_X
         part.y = row_y + (index // per_row) * BLOCK_PITCH_Y
@@ -640,6 +799,35 @@ def build(B, comps, nets, bynet):
                     grid.blocked[i][j] = 1
             approach[(ref, pad)] = cells
 
+    if DEBUG:
+        miss = [(r, pd) for net, pins in bynet.items() if net not in power
+                for r, pd in pins if (r, pd) not in approach]
+        print("   approach: %d entries, %d net pins with NO corridor: %s"
+              % (len(approach), len(miss), miss[:6]), file=sys.stderr)
+
+    if DEBUG:
+        for _side in ("L", "R"):
+            for _ref, _entries in plan[_side]:
+                if not _ref or _ref not in parts:
+                    continue
+                _pr = parts[_ref]
+                _n = _entries[0][1] if _entries else None
+                _up = u1_pad_of.get(_n) if _n else None
+                _us = u1.side_of(_up) if _up else "?"
+                _hw, _hh = _pr.extent()
+                print("   plan[%s] %-5s x=%7.1f y=%7.1f box=(%.0f..%.0f, "
+                      "%.0f..%.0f) | U1.%s on %s"
+                      % (_side, _ref, _pr.x, _pr.y, _pr.x - _hw, _pr.x + _hw,
+                         _pr.y - _hh, _pr.y + _hh, _up, _us), file=sys.stderr)
+    if DEBUG:
+        from collections import Counter as _C
+        print("   placement: %d hung in clusters, %d in the farm"
+              % (len(tier) - 1, len(farm)), file=sys.stderr)
+        print("   cluster tier histogram: %s"
+              % sorted(_C(tier.values()).items()), file=sys.stderr)
+        if farm:
+            print("   farm: %s" % farm[:24], file=sys.stderr)
+
     def straight(a, b):
         return (abs(a[1] - b[1]) < 1e-6 and abs(a[0] - b[0]) > 1e-6)
 
@@ -657,18 +845,31 @@ def build(B, comps, nets, bynet):
 
         points = [parts[ref].pin_xy(pad) for ref, pad in pins]
         if len(points) == 2 and straight(*points):
-            wires.append(list(points))
             a, b = grid.cell_of(*points[0]), grid.cell_of(*points[1])
-            # Mark the whole run, not just the ends: a later route has to be
-            # able to see this wire to avoid running along it.
-            for i in range(min(a[0], b[0]), max(a[0], b[0]) + 1):
-                for j in range(min(a[1], b[1]), max(a[1], b[1]) + 1):
-                    grid.used[i][j] = 1
+            # Only take the straight run if it is actually clear.  Two pins
+            # can share a row with a whole symbol sitting between them, and
+            # drawing through it would both look wrong and silently short
+            # anything the wire crossed on the way.
+            mine = set(a for _r, _p in pins
+                       for a in [grid.cell_of(*parts[_r].pin_xy(_p))])
             for ref, pad in pins:
-                for i, j in approach.get((ref, pad), ()):
+                mine.update(approach.get((ref, pad), ()))
+            run = [(i, j) for i in range(min(a[0], b[0]), max(a[0], b[0]) + 1)
+                   for j in range(min(a[1], b[1]), max(a[1], b[1]) + 1)]
+            if all(not grid.blocked[i][j] or (i, j) in mine for i, j in run):
+                wires.append(list(points))
+                # Mark the whole run, not just the ends: a later route has to
+                # be able to see this wire to avoid running along it.
+                for i, j in run:
                     grid.used[i][j] = 1
-            stats["wired"] += 2
-            continue
+                    if DEBUG:
+                        grid.owner[(i, j)] = net + " (straight)"
+                for i, j in mine:
+                    grid.used[i][j] = 1
+                    if DEBUG:
+                        grid.owner[(i, j)] = net + " (corridor)"
+                stats["wired"] += 2
+                continue
 
         cells = [grid.cell_of(x, y) for x, y in points]
         grid.own = [bytearray(grid.ny) for _ in range(grid.nx)]
@@ -679,8 +880,21 @@ def build(B, comps, nets, bynet):
         for i, j in reopened:
             grid.blocked[i][j] = 0
         tree, routed = [cells[0]], []
-        for cell in cells[1:]:
-            path = grid.route(tree, cell)
+        pending = list(cells[1:])
+        while pending:
+            # Nearest first.  A net that feeds several parts is drawn as a
+            # chain - FPGA, then the resistor beside it, then the connector -
+            # rather than as spokes from the FPGA that have to get past parts
+            # already belonging to the same net.
+            pending.sort(key=lambda c: min(abs(c[0] - tc[0]) + abs(c[1] - tc[1])
+                                           for tc in tree))
+            cell = pending[0]
+            path = None
+            for cand in pending:
+                path = grid.route(tree, cand)
+                if path is not None:
+                    cell = cand
+                    break
             if path is None:
                 if DEBUG:
                     gi, gj = cell
@@ -702,9 +916,32 @@ def build(B, comps, nets, bynet):
                                 flood.add(step)
                                 dq.append(step)
                     seen2 = grid.explore(tree, cell)
-                    print("        router explored %d states" % seen2,
+                    gx, gy = grid.point_of(*cell)
+                    spoke = ["%s.%s@%s" % (r, pd,
+                             "U1" if r == "U1" else
+                             ("MAJ" if abs(parts[r].x - u1.x) > 60 else "BLK"))
+                             for r, pd in pins]
+                    print("        %-12s %-5s fail#%d/%d goal=(%d,%d) "
+                          "states=%d  %s"
+                          % (net, "", cells.index(cell), len(cells) - 1,
+                             int(gx), int(gy), seen2, " ".join(spoke)),
                           file=sys.stderr)
                     # walk out of the start pin and report the first wall
+                    print("        pins=%s" % (pins,), file=sys.stderr)
+                    for r, pd in pins:
+                        i0, j0 = grid.cell_of(*parts[r].pin_xy(pd))
+                        sd = -1 if parts[r].side_of(pd) == "L" else 1
+                        corr = [(i0 + sd * k, j0) for k in range(1, KEEPOUT + 1)]
+                        print("        %s.%-4s cell=(%d,%d) side=%s corr=%s %s"
+                              % (r, pd, i0, j0, "x", corr,
+                                 [grid.owner.get(c, "-") for c in corr]),
+                              file=sys.stderr)
+                        print("        %s.%-4s cell=(%d,%d) side=%s corr=%s %s"
+                              % (r, pd, i0, j0, parts[r].side_of(pd), corr,
+                                 [("blk" if grid.blocked[i][j] else
+                                   "own" if grid.own[i][j] else
+                                   "used" if grid.used[i][j] else "free")
+                                  for i, j in corr]), file=sys.stderr)
                     ci, cj = cells[0]
                     step = -1 if parts[pins[0][0]].side_of(pins[0][1]) == "L" else 1
                     for k in range(0, KEEPOUT + 4):
@@ -717,9 +954,10 @@ def build(B, comps, nets, bynet):
                               file=sys.stderr)
                 routed = None
                 break
-            grid.take(path)
+            grid.take(path, net)
             tree = tree + path
             routed.append(clean(path, grid))
+            pending.remove(cell)
         for i, j in reopened:
             grid.blocked[i][j] = 1
 
