@@ -9,6 +9,18 @@ import re, sys
 from collections import Counter
 from pathlib import Path
 
+# --- 0. strict s-expression parse, the way KiCad reads the file ------------
+try:
+    import sexpdata
+except ImportError:
+    print("sexpdata not installed - skipping the strict parse")
+    sexpdata = None
+
+if sexpdata is not None:
+    tree = sexpdata.loads(Path(
+        "hardware/sv16_board/sv16_board.kicad_sch").read_text())
+    print("strict s-expression parse: OK")
+
 txt = Path("hardware/sv16_board/sv16_board.kicad_sch").read_text()
 
 # ---- symbol bodies, from lib_symbols -------------------------------------
@@ -79,4 +91,6 @@ need = {p for p in set(ends) | set(interior)
 print("points that need a dot: %d   dots written: %d   missing: %d   extra: %d"
       % (len(need), len(junc), len(need - junc), len(junc - need)))
 
-sys.exit(1 if (bad or (need - junc)) else 0)
+problems = len(bad) + len(need - junc) + len(junc - need)
+print("PROBLEMS: %d" % problems)
+sys.exit(1 if problems else 0)
