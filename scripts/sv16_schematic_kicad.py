@@ -278,6 +278,11 @@ class Grid:
         self.used = [bytearray(self.ny) for _ in range(self.nx)]
         self.own = [bytearray(self.ny) for _ in range(self.nx)]
         self.owner = {}
+        # Which way the copper through each cell runs: 1 = across the sheet,
+        # 2 = up and down it, 3 = a corner.  Without this, two parallel wires
+        # side by side look like one thick wire running the other way, and a
+        # crossing that is perfectly legal gets refused.
+        self.orient = [bytearray(self.ny) for _ in range(self.nx)]
 
     def cell_of(self, x, y):
         return int(round(x / self.cell)), int(round(y / self.cell))
@@ -386,15 +391,9 @@ class Grid:
                 if self.blocked[si][sj]:
                     continue
                 if self.used[si][sj] and not self.own[si][sj]:
-                    # Which way does the wire already here run?  Crossing it is
-                    # fine; travelling along it would merge two nets.
-                    if ni == 0:                      # moving vertically
-                        along = (self._other(si, sj + 1)
-                                 or self._other(si, sj - 1))
-                    else:                            # moving horizontally
-                        along = (self._other(si + 1, sj)
-                                 or self._other(si - 1, sj))
-                    if along:
+                    # Crossing a wire is fine; travelling along one would
+                    # merge two nets.  1 = across, 2 = up and down.
+                    if self.orient[si][sj] & (1 if ni else 2):
                         continue
                     step = 1 + CROSS_COST
                 else:
@@ -408,10 +407,24 @@ class Grid:
         return None
 
     def take(self, path, who=""):
-        for i, j in path:
+        for k, (i, j) in enumerate(path):
             self.used[i][j] = 1
+            axis = 0
+            for a, b in ((path[k - 1] if k else None, None),
+                         (path[k + 1] if k + 1 < len(path) else None, None)):
+                if a is not None and a[1] != j:
+                    axis |= 2
+                if a is not None and a[0] != i:
+                    axis |= 1
+            if not axis:                     # a lone cell: say both, safely
+                axis = 3
+            self.orient[i][j] |= axis
             if DEBUG:
                 self.owner[(i, j)] = who
+
+    def untake(self, path):
+        for i, j in path:
+            self.used[i][j] = 0
 
 
 def clean(path, grid):
@@ -831,6 +844,37 @@ def build(B, comps, nets, bynet):
     def straight(a, b):
         return (abs(a[1] - b[1]) < 1e-6 and abs(a[0] - b[0]) > 1e-6)
 
+    # Empty margin around everything, used when a net has no way through.
+    bx0 = min(b[0] for b in boxes)
+    bx1 = max(b[1] for b in boxes)
+    by0 = min(b[2] for b in boxes)
+    by1 = max(b[3] for b in boxes)
+    m = 40.0
+    ring = [(bx0 - m, by0 - m), ((bx0 + bx1) / 2, by0 - m), (bx1 + m, by0 - m),
+            (bx1 + m, (by0 + by1) / 2), (bx1 + m, by1 + m),
+            ((bx0 + bx1) / 2, by1 + m), (bx0 - m, by1 + m),
+            (bx0 - m, (by0 + by1) / 2), (bx0 - m, (by0 + by1) / 2)]
+
+    def detour(tree, cell, net):
+        """Round the outside of the sheet, for nets with no way through."""
+        goal_xy = grid.point_of(*cell)
+        for wx, wy in ring:
+            w = grid.cell_of(wx, wy)
+            if not (0 <= w[0] < grid.nx and 0 <= w[1] < grid.ny):
+                continue
+            if grid.blocked[w[0]][w[1]]:
+                continue
+            first = grid.route(tree, w)
+            if first is None:
+                continue
+            grid.take(first, net + " (detour)")
+            second = grid.route([w], cell)
+            if second is None:
+                grid.untake(first)
+                continue
+            return first + second[1:]
+        return None
+
     # Widest nets first: they have the least freedom about where they go.
     for net, pins in sorted(bynet.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         if net in power:
@@ -862,10 +906,12 @@ def build(B, comps, nets, bynet):
                 # be able to see this wire to avoid running along it.
                 for i, j in run:
                     grid.used[i][j] = 1
+                    grid.orient[i][j] |= 1
                     if DEBUG:
                         grid.owner[(i, j)] = net + " (straight)"
                 for i, j in mine:
                     grid.used[i][j] = 1
+                    grid.orient[i][j] |= 1
                     if DEBUG:
                         grid.owner[(i, j)] = net + " (corridor)"
                 stats["wired"] += 2
@@ -895,6 +941,12 @@ def build(B, comps, nets, bynet):
                 if path is not None:
                     cell = cand
                     break
+            if path is None:
+                # No way through the middle of the sheet.  Go the long way
+                # round: out into the empty margin, along it, and back in.
+                # Ugly, but a long wire the reader can follow beats a label
+                # they have to hunt for.
+                path = detour(tree, cell, net)
             if path is None:
                 if DEBUG:
                     gi, gj = cell
