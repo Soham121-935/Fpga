@@ -7,6 +7,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_ram #(
     parameter int DEPTH      = 4096,        // 4K words (8 KB)
     parameter int ADDR_WIDTH = 12,          // 2^12 = 4096
@@ -54,3 +57,5 @@ module sv16_ram #(
     end
 
 endmodule : sv16_ram
+
+`default_nettype wire

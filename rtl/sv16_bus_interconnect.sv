@@ -38,6 +38,9 @@
 
 import sv16_pkg::*;
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_bus_interconnect (
     input  logic        clk,
     input  logic        rst_n,
@@ -268,3 +271,5 @@ module sv16_bus_interconnect (
     end
 
 endmodule : sv16_bus_interconnect
+
+`default_nettype wire

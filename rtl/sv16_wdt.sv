@@ -53,6 +53,9 @@
 
 import sv16_pkg::*;
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_wdt (
     input  logic        clk,
     input  logic        rst_n,      // hard reset only (external pin)
@@ -263,3 +266,5 @@ module sv16_wdt (
     end
 
 endmodule : sv16_wdt
+
+`default_nettype wire

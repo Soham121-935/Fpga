@@ -22,6 +22,9 @@
 
 import sv16_pkg::*;
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_irq_ctrl (
     input  logic       clk,
     input  logic       rst_n,
@@ -63,7 +66,7 @@ module sv16_irq_ctrl (
     always_comb begin
         prio_idx = 3'd0;
         for (int i = IRQ_SOURCES-1; i >= 0; i--) begin
-            if (pend_mask[i]) prio_idx = 3'(i);
+            if (pend_mask[i]) prio_idx = 3'(unsigned'(i));
         end
     end
 
@@ -99,3 +102,5 @@ module sv16_irq_ctrl (
     end
 
 endmodule : sv16_irq_ctrl
+
+`default_nettype wire

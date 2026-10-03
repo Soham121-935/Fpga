@@ -20,6 +20,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_pwm (
     input  logic        clk,
     input  logic        rst_n,
@@ -76,6 +79,7 @@ module sv16_pwm (
                     2'b00: period_reg <= (wdata == 16'd0) ? 16'd1 : wdata;
                     2'b01: duty_reg   <= wdata;
                     2'b10: ctrl_reg   <= wdata;
+                    2'b11: ;                            // reserved
                 endcase
             end
 
@@ -116,3 +120,5 @@ module sv16_pwm (
     end
 
 endmodule : sv16_pwm
+
+`default_nettype wire

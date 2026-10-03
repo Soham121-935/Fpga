@@ -11,6 +11,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_crc16 (
     input  logic        clk,
     input  logic        rst_n,
@@ -47,3 +50,5 @@ module sv16_crc16 (
     end
 
 endmodule : sv16_crc16
+
+`default_nettype wire

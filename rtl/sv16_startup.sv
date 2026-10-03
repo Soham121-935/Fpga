@@ -30,15 +30,21 @@
 
 import sv16_pkg::*;
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_startup #(
     // When the system clock comes from a PLL, reset must be held until it locks.
     // With the plain oscillator there is nothing to wait for, and leaving the
     // AND gate in would put fabric logic in front of the reset net for nothing.
     parameter bit GATE_ON_CLK_READY   = 1'b0,
-    parameter int BOOT_DELAY_CYCLES   = 32768,      // ~1.3 ms @25 MHz (tVSL)
-    parameter int SOFT_RST_CYCLES     = 16,
-    parameter int BOOT_TIMEOUT_CYCLES = 1 << 21,    // ~84 ms @25 MHz
-    parameter int RX_HOLD_CYCLES      = 4096
+    // Unsigned so they compare against the logic[31:0] counters without a
+    // signed/unsigned conversion: an int parameter compared to an unsigned
+    // counter silently changes meaning once it reaches 2^31.
+    parameter int unsigned BOOT_DELAY_CYCLES   = 32768,    // ~1.3 ms @25 MHz (tVSL)
+    parameter int unsigned SOFT_RST_CYCLES     = 16,
+    parameter int unsigned BOOT_TIMEOUT_CYCLES = 1 << 21,  // ~84 ms @25 MHz
+    parameter int unsigned RX_HOLD_CYCLES      = 4096
 )(
     input  logic        clk,            // system clock
     input  logic        ext_rst_n,      // raw external reset pin (active low)
@@ -85,10 +91,9 @@ module sv16_startup #(
     // because a flop has exactly one asynchronous reset (and Yosys rejects an
     // always block with two edge-sensitive reset events).
     logic hard_rst_n;
-    generate
-        if (GATE_ON_CLK_READY) assign hard_rst_n = ext_rst_n & clk_ready;
-        else                   assign hard_rst_n = ext_rst_n;
-    endgenerate
+    // A parameter selects the source, so synthesis folds this to a plain wire
+    // when GATE_ON_CLK_READY is 0 - no fabric logic in front of the reset net.
+    assign hard_rst_n = GATE_ON_CLK_READY ? (ext_rst_n & clk_ready) : ext_rst_n;
 
     always_ff @(posedge clk or negedge hard_rst_n) begin
         if (!hard_rst_n) begin
@@ -265,3 +270,5 @@ module sv16_startup #(
     end
 
 endmodule : sv16_startup
+
+`default_nettype wire

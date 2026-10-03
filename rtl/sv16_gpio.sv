@@ -14,6 +14,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_gpio (
     input  logic        clk,
     input  logic        rst_n,
@@ -87,3 +90,5 @@ module sv16_gpio (
     assign gpio_oen = dir_reg;
 
 endmodule : sv16_gpio
+
+`default_nettype wire

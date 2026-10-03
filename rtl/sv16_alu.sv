@@ -36,6 +36,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_alu (
     input  logic        clk,
     input  logic        rst_n,
@@ -61,6 +64,19 @@ module sv16_alu (
     logic [3:0]  shamt;
 
     assign shamt = b[3:0];
+
+    // ------------------------------------------------- Iterative divider
+    // Restoring division, one dividend bit per cycle. The invariant rem < divisor
+    // is maintained at the end of every cycle, so 16 bits are enough for the
+    // remainder and the 17-bit `shifted` value is only used for the compare.
+    logic [15:0] dend_r;         // dividend, shifted left one bit per step
+    logic [15:0] sor_r;          // divisor, latched (held stable for the whole run)
+    logic [15:0] rem_r;          // running remainder
+    logic [15:0] quo_r;          // quotient built MSB first
+    logic [4:0]  step_r;         // 0..16: bits processed so far
+    logic        div_by_zero_r;
+    logic        busy_r;
+    logic [16:0] shifted;
 
     always_comb begin
         // Defaults
@@ -183,19 +199,6 @@ module sv16_alu (
         end
     end
 
-    // ------------------------------------------------- Iterative divider
-    // Restoring division, one dividend bit per cycle. The invariant rem < divisor
-    // is maintained at the end of every cycle, so 16 bits are enough for the
-    // remainder and the 17-bit `shifted` value is only used for the compare.
-    logic [15:0] dend_r;         // dividend, shifted left one bit per step
-    logic [15:0] sor_r;          // divisor, latched (held stable for the whole run)
-    logic [15:0] rem_r;          // running remainder
-    logic [15:0] quo_r;          // quotient built MSB first
-    logic [4:0]  step_r;         // 0..16: bits processed so far
-    logic        div_by_zero_r;
-    logic        busy_r;
-    logic [16:0] shifted;
-
     assign shifted  = {rem_r, dend_r[15]};   // next bit shifted in
     assign div_busy = busy_r;
 
@@ -241,3 +244,5 @@ module sv16_alu (
     assign flag_n = result[15];
 
 endmodule : sv16_alu
+
+`default_nettype wire

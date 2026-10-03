@@ -77,6 +77,8 @@
 `default_nettype none
 import sv16_pkg::*;
 
+`timescale 1ns / 1ps
+
 module sv16_boot (
     input  logic        clk,
     input  logic        rst_n,
@@ -339,6 +341,13 @@ module sv16_boot (
         .crc_init(pld_crc_init), .crc_en(pcrc_en), .crc_data(f_data),
         .crc_out(pcrc_val)
     );
+
+    // -------------------------------------------------- slot combinational
+    // Declared here rather than next to the logic that drives them, because
+    // the FSM below reads them.
+    logic        cand0, cand1, sel_choice, slot_rb_ok;
+    logic [2:0]  sel_cls;
+    logic [2:0]  cls_eff [0:1];
 
     // ------------------------------------------------------------- the FSM
     always_ff @(posedge clk or negedge rst_n) begin
@@ -1114,11 +1123,6 @@ module sv16_boot (
         end
     end
 
-    // -------------------------------------------------- slot combinational
-    logic        cand0, cand1, sel_choice, slot_rb_ok;
-    logic [2:0]  sel_cls;
-    logic [2:0]  cls_eff [0:1];
-
     always_comb begin
         // a slot already abandoned in this attempt is out of the running
         cls_eff[0] = sel_bad[0] ? CLS_BAD : slot_cls[0];
@@ -1147,8 +1151,14 @@ module sv16_boot (
     always_comb begin
         rdata = 16'h0000;
         case (addr)
-            BOOT_CTRL:    rdata = {9'h000, slot_trial, !slots_en_r,
-                                   auto_r, verify_only, start_req, 1'b0};
+            // Read-back has to match the write decode (wdata[0] latches
+            // start_req) and sv16_hardware.h: [0] START, [2] VERIFY-ONLY,
+            // [3] AUTO, [4] NOSLOT.  [1] ABORT, [5] SLOT_CLR and [6] SLOT_CNF
+            // are write-only pulses and read as 0.  start_req used to land on
+            // bit 1 with bit 0 tied low, so polling BOOT_CTRL_START always
+            // saw 0.  SLOT_TRIAL belongs to BOOT_STAT[7], not here.
+            BOOT_CTRL:    rdata = {9'h000, 2'b00, !slots_en_r, auto_r,
+                                   verify_only, 1'b0, start_req};
             // ADR-019: [7] trial, [6] retry, [5] chosen slot
             BOOT_STAT:    rdata = {8'h00, slot_trial, slot_retry, sel_slot,
                                    stat_reg[4:1], busy};

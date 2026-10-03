@@ -40,6 +40,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_pll #(
     parameter int REF_MHZ   = 25,   // reference (board oscillator) frequency
     parameter int CLKI_DIV  = 1,    // pre-divider: fPFD = REF / CLKI_DIV
@@ -166,3 +169,5 @@ module sv16_pll #(
 `endif
 
 endmodule
+
+`default_nettype wire

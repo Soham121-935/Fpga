@@ -46,6 +46,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_control_unit (
     input  logic        clk,
     input  logic        rst_n,
@@ -602,3 +605,5 @@ module sv16_control_unit (
     assign bus_req = access_wanted && (!bus_issued || !bus_ack);
 
 endmodule : sv16_control_unit
+
+`default_nettype wire

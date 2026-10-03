@@ -20,6 +20,9 @@
 
 import sv16_pkg::*;
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_spi (
     input  logic        clk,
     input  logic        rst_n,
@@ -130,3 +133,5 @@ module sv16_spi (
     assign spi_irq = rx_ready && ctrl_reg[0];
 
 endmodule : sv16_spi
+
+`default_nettype wire

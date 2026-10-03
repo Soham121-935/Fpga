@@ -7,6 +7,11 @@
 //   Rev B: adds CTRL sub-opcodes (HALT/EI/DI/RETI), interrupt vector indices,
 //          the Rev B memory map (32 KB SRAM, 4 KB boot ROM, 16x MMIO blocks)
 
+`timescale 1ns / 1ps
+
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 package sv16_pkg;
 
     // ---------------------------------------------------------------- widths
@@ -362,3 +367,5 @@ package sv16_pkg;
     localparam logic [15:0] IRQ_DEFAULT_SP   = 16'h3FFE;
 
 endpackage : sv16_pkg
+
+`default_nettype wire

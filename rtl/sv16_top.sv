@@ -70,6 +70,9 @@
 
 import sv16_pkg::*;
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_top #(
     // 0 = oscillator, 1 = PLL.  Parameters rather than only macros so a
     // testbench can elaborate the PLL configuration directly.
@@ -467,6 +470,13 @@ module sv16_top #(
         .spi_cs_n(spi0_cs_n), .spi_irq(spi0_irq)
     );
 
+    // ------------------------------------------------- ADR-019 slot wires
+    // Declared above the flash controller, which drives them.
+    logic        slot_wr_req;
+    logic [23:0] slot_wr_addr;
+    logic [7:0]  slot_wr_data;
+    logic [1:0]  slot_wr_done;
+
     // ------------------------------------------------- Flash controller (NVM)
     sv16_flash_ctrl u_flash (
         .clk(clk), .rst_n(rst_n),
@@ -481,12 +491,6 @@ module sv16_top #(
         .flash_mosi(flash_mosi), .flash_miso(flash_miso),
         .flash_irq(flash_irq), .id_ok(flash_id_ok), .jedec_id(flash_jedec_id)
     );
-
-    // ------------------------------------------------- ADR-019 slot wires
-    logic        slot_wr_req;
-    logic [23:0] slot_wr_addr;
-    logic [7:0]  slot_wr_data;
-    logic [1:0]  slot_wr_done;
 
     // ---------------------------------------------------- Boot loader engine
     // The sequencer talks in pulses ("start a boot attempt", "this attempt
@@ -569,3 +573,5 @@ module sv16_top #(
     );
 
 endmodule : sv16_top
+
+`default_nettype wire

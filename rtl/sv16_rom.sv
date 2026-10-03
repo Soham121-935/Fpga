@@ -10,6 +10,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_rom #(
     parameter int          DEPTH     = 2048,
     parameter int          ADDR_WIDTH= 11,
@@ -40,3 +43,5 @@ module sv16_rom #(
     end
 
 endmodule : sv16_rom
+
+`default_nettype wire

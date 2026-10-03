@@ -37,6 +37,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_uart (
     input  logic        clk,
     input  logic        rst_n,
@@ -99,6 +102,9 @@ module sv16_uart (
                            RX_START = 2'd1,
                            RX_DATA  = 2'd2,
                            RX_STOP  = 2'd3;
+
+    // FIFO status flags, read throughout the module below.
+    logic rx_valid, tx_full, rx_full, rx_valid_w;
 
     assign rx_line   = ctrl_reg[5] ? uart_tx : uart_rx;  // loopback self-test
     assign rx_valid  = (rx_count != 3'd0);
@@ -217,6 +223,10 @@ module sv16_uart (
         end
     end
 
+    // Receiver hand-off into the RX FIFO.
+    logic       rx_push;
+    logic [7:0] rx_byte;
+
     // ---------------------------------------------------------- RX FIFO
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -248,8 +258,6 @@ module sv16_uart (
     end
 
     // -------------------------------------------------------- RX receiver
-    logic       rx_push;
-    logic [7:0] rx_byte;
 
     assign rx_push = (rx_state == RX_STOP) && (rx_timer >= baud_div_safe - 16'd1) && ctrl_reg[1];
     assign rx_byte = rx_shift;
@@ -344,8 +352,6 @@ module sv16_uart (
     end
 
     // ------------------------------------------------------ Register reads
-    logic rx_valid, tx_full, rx_full, rx_valid_w;
-
     // The DATA read pops the RX FIFO on the request cycle, but a master
     // samples bus_rdata one cycle later (in the acknowledge cycle).  Drive
     // the read data from a latch taken on the pop so the byte handed to the
@@ -356,6 +362,9 @@ module sv16_uart (
         else if (req && !we && (addr[2:0] == 3'd0) && rx_valid)
             rx_data_reg <= rx_fifo[rx_rd_ptr[1:0]];
     end
+
+    // Transmitter status, reported through the register read mux below.
+    logic tx_ready, tx_empty;
 
     always_comb begin
         case (addr[2:0])
@@ -369,7 +378,6 @@ module sv16_uart (
         endcase
     end
 
-    logic tx_ready, tx_empty;
     assign tx_ready = !tx_full;
     assign tx_empty = (tx_count == 3'd0) && !tx_busy;
 
@@ -378,3 +386,5 @@ module sv16_uart (
     assign uart_rx_irq = ctrl_reg[3] && rx_valid;
 
 endmodule : sv16_uart
+
+`default_nettype wire

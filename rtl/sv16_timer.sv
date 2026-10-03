@@ -17,6 +17,9 @@
 
 `timescale 1ns / 1ps
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_timer (
     input  logic        clk,
     input  logic        rst_n,
@@ -117,3 +120,5 @@ module sv16_timer (
     assign timer_irq = match_flag && ctrl_reg[2]; // match && IE
 
 endmodule : sv16_timer
+
+`default_nettype wire

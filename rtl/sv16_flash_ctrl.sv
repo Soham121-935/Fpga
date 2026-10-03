@@ -53,6 +53,9 @@
 
 import sv16_pkg::*;
 
+// No implicit wires: a typo in a signal name must be an error, not a
+// silently-created 1-bit net.
+`default_nettype none
 module sv16_flash_ctrl (
     input  logic        clk,
     input  logic        rst_n,
@@ -262,6 +265,11 @@ module sv16_flash_ctrl (
     assign dw_ok_now  = wr_active && (wr_bytes_left != 16'd0) &&
                         (page_wr_ptr != 9'd256) && !pgm_busy;
     assign dw_drop    = !wr_active || (wr_bytes_left == 16'd0);
+
+    // cq_valid_any is defined in BLK H; SystemVerilog requires it be
+    // declared before this read.
+    logic cq_valid_any;
+    assign cq_valid_any = cpu_req_pend;
 
     assign busy_any = busy_flag || eng_busy || pgm_busy || cq_valid_any ||
                       pq_valid || bq_valid;
@@ -887,9 +895,6 @@ module sv16_flash_ctrl (
 
     // ------------------------------------------------------ BLK H: control
     // Owns: ctrl_reg, addr_reg, len_reg, err_flag, busy_flag, wel_flag, cq_*
-    logic cq_valid_any;
-    assign cq_valid_any = cpu_req_pend;
-
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             ctrl_reg     <= 16'h0001;      // SCLK divider -> 6.25 MHz
@@ -1149,3 +1154,5 @@ module sv16_flash_ctrl (
     end
 
 endmodule : sv16_flash_ctrl
+
+`default_nettype wire
