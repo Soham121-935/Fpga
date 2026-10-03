@@ -527,6 +527,7 @@ def build(B, comps, nets, bynet, prefer=(), seed=0):
     # ---- the FPGA ------------------------------------------------------
     u1 = Part(u1_ref, comps[u1_ref], body_w=15.24)
     plan = {"L": [], "R": []}           # side -> [(periph_ref, [(pad, net, y)])]
+    claimed = set()                     # FPGA pads already lined up
     cursor = {"L": 0.0, "R": 0.0}
     for side in ("L", "R"):
         y = 0.0
@@ -537,7 +538,16 @@ def build(B, comps, nets, bynet, prefer=(), seed=0):
             start = y
             entries = []
             for net in group:                     # in U1 order = periph order
-                entries.append((u1_pad_of[net], net, y))
+                pad = u1_pad_of[net]
+                if pad in claimed:
+                    # Two connectors share this net - two JTAG headers
+                    # carrying the same four signals.  The FPGA pin can only
+                    # be lined up with one of them; the other keeps the net
+                    # and gets wired across to it.  Claiming it twice put the
+                    # same pin on the symbol twice, which KiCad rejects.
+                    continue
+                claimed.add(pad)
+                entries.append((pad, net, y))
                 y -= PIN_PITCH
             y = start - rows * PIN_PITCH - GROUP_GAP
             plan[side].append((ref, entries))
@@ -822,6 +832,15 @@ def build(B, comps, nets, bynet, prefer=(), seed=0):
         parts[ref] = part
 
     # ---- connect -------------------------------------------------------
+    from collections import Counter as _PadCounter
+    for ref, part in parts.items():
+        pads = [pad for pad, _y in part.left + part.right]
+        twice = sorted(k for k, v in _PadCounter(pads).items() if v > 1)
+        if twice:
+            raise SystemExit(
+                "%s lists pad(s) %s twice - KiCad will reject the sheet"
+                % (ref, ", ".join(twice)))
+
     spread = [part.extent() for part in parts.values()]
     reach = max(part.x + w for part, (w, _) in zip(parts.values(), spread))
     depth = max(part.y + h for part, (_, h) in zip(parts.values(), spread))
