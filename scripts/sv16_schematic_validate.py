@@ -69,6 +69,8 @@ def through_box(a, b, box, inset=0.2):
     return False
 
 bad = []
+problems = []
+sheet_uuid = txt.split('(uuid "', 1)[1].split('")', 1)[0]
 for pts in wires:
     for a, b in zip(pts, pts[1:]):
         for box in boxes:
@@ -91,6 +93,20 @@ need = {p for p in set(ends) | set(interior)
 print("points that need a dot: %d   dots written: %d   missing: %d   extra: %d"
       % (len(need), len(junc), len(need - junc), len(junc - need)))
 
-problems = len(bad) + len(need - junc) + len(junc - need)
-print("PROBLEMS: %d" % problems)
-sys.exit(1 if problems else 0)
+# --- 5. every symbol needs instance data, and the path must be the sheet's
+for m in re.finditer(r'^  \(symbol \(lib_id "[^"]+"\)(.*?)^  \)$',
+                     txt, re.S | re.M):
+    body = m.group(1)
+    if "(instances" not in body:
+        problems.append("symbol instance has no (instances ...) block")
+        continue
+    for path in re.findall(r'\(path "([^"]*)"', body):
+        if not path.startswith("/" + sheet_uuid):
+            problems.append("instance path %r does not start with the sheet uuid"
+                            % path)
+
+total = len(bad) + len(need - junc) + len(junc - need) + len(problems)
+for p in problems[:10]:
+    print("   ", p)
+print("PROBLEMS: %d" % total)
+sys.exit(1 if total else 0)

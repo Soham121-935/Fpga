@@ -77,9 +77,19 @@ import os
 import random
 DEBUG = bool(os.environ.get("SV16_DEBUG"))
 
+# The .kicad_pro the sheet belongs to.  KiCad keys its per-symbol
+# instance data by project name, and every symbol carries at least
+# one instance or the sheet will not open.
+PROJECT = "sv16_board"
+
 
 def uu(tag: str) -> str:
     return str(uuid.uuid5(NS, "sv16-schematic/" + tag))
+
+
+def pwr_ref(index: int) -> str:
+    """Power symbols are annotated separately: #PWR001, #PWR002, ..."""
+    return "#PWR%03d" % (index + 1)
 
 
 def ref_key(ref: str):
@@ -176,27 +186,33 @@ class Part:
 def symbol_lines(name, part, reference, value):
     """A (symbol ...) block for lib_symbols, from a Part's pin placement."""
     half_h = part.extent()[1]
+    # KiCad names the sub-symbols after the entry name alone: a symbol
+    # "SV16:S0" holds "S0_0_1" and "S0_1_1", never "SV16:S0_0_1".
+    short = name.split(":")[-1]
+    # Dozens of instances share one library symbol, so the definition must
+    # carry the generic prefix ("C", not "C1") the way a real library does.
+    generic = re.sub(r"\d+$", "", reference) or reference
     out = ['    (symbol "%s"' % name,
            '      (pin_names (offset 0.762) hide)',
            '      (exclude_from_sim no)',
            '      (in_bom yes) (on_board yes)',
            '      (property "Reference" "%s" (at 0 %s 0)'
-           ' (effects (font (size 1.27 1.27))))' % (esc(reference), f(half_h + 1.27)),
+           ' (effects (font (size 1.27 1.27))))' % (esc(generic), f(half_h + 1.27)),
            '      (property "Value" "%s" (at 0 %s 0)'
            ' (effects (font (size 1.27 1.27))))'
-           % (esc(value), f(-(half_h + 1.27))),
+           % (esc(generic), f(-(half_h + 1.27))),
            '      (property "Footprint" "" (at 0 0 0)'
            ' (effects (font (size 1.27 1.27)) hide))',
            '      (property "Datasheet" "~" (at 0 0 0)'
            ' (effects (font (size 1.27 1.27)) hide))',
-           '      (symbol "%s_0_1"' % name,
+           '      (symbol "%s_0_1"' % short,
            '        (rectangle (start %s %s) (end %s %s)'
            % (f(-part.body_w / 2), f(-half_h), f(part.body_w / 2), f(half_h)),
            '          (stroke (width 0.254) (type default) (color 0 0 0 0))',
            '          (fill (type background))',
            '        )',
            '      )',
-           '      (symbol "%s_1_1"' % name]
+           '      (symbol "%s_1_1"' % short]
     for number, y in part.left:
         out += ['        (pin passive line (at %s %s 0) (length %s)'
                 % (f(-(part.body_w / 2 + PIN_LEN)), f(y), f(PIN_LEN)),
@@ -241,6 +257,7 @@ def power_symbol_lines(name, net):
             '          (fill (type none))',
             '        )',
         ]
+    short = name.split(":")[-1]
     return ['    (symbol "%s"' % name,
             '      (pin_names (offset 0) hide)',
             '      (exclude_from_sim no)',
@@ -254,9 +271,9 @@ def power_symbol_lines(name, net):
             ' (effects (font (size 1.27 1.27)) hide))',
             '      (property "Datasheet" "~" (at 0 0 0)'
             ' (effects (font (size 1.27 1.27)) hide))',
-            '      (symbol "%s_0_1"' % name] + graphic + [
+            '      (symbol "%s_0_1"' % short] + graphic + [
             '      )',
-            '      (symbol "%s_1_1"' % name,
+            '      (symbol "%s_1_1"' % short,
             '        (pin power_in line (at 0 0 0) (length 0) (hide)',
             '          (name "%s" (effects (font (size 1.27 1.27))))' % esc(net),
             '          (number "1" (effects (font (size 1.27 1.27))))',
@@ -1172,6 +1189,13 @@ def emit(parts, wires, labels, branches, used, comps, bynet):
         for number, _ in part.left + part.right:
             out.append('    (pin "%s" (uuid "%s"))'
                        % (esc(str(number)), uu("pin/%s/%s" % (ref, number))))
+        out += ['    (instances',
+                '      (project "%s"' % PROJECT,
+                '        (path "/%s"' % uu("sheet"),
+                '          (reference "%s") (unit 1)' % esc(ref),
+                '        )',
+                '      )',
+                '    )']
         out.append('  )')
 
     # Make every branching point a corner of the run it branches off, or the
@@ -1224,8 +1248,8 @@ def emit(parts, wires, labels, branches, used, comps, bynet):
                     '    (in_bom yes) (on_board yes) (dnp no)'
                     ' (fields_autoplaced yes)',
                     '    (uuid "%s")' % uu("pwr/%d" % index),
-                    '    (property "Reference" "#PWR??" (at %s %s 0)'
-                    % (f(x), f(y)),
+                    '    (property "Reference" "%s" (at %s %s 0)'
+                    % (pwr_ref(index), f(x), f(y)),
                     '      (effects (font (size 1.27 1.27)) hide)',
                     '    )',
                     '    (property "Value" "%s" (at %s %s 0)'
@@ -1239,6 +1263,13 @@ def emit(parts, wires, labels, branches, used, comps, bynet):
                     '      (effects (font (size 1.27 1.27)) hide)',
                     '    )',
                     '    (pin "1" (uuid "%s"))' % uu("pwrpin/%d" % index),
+                    '    (instances',
+                    '      (project "%s"' % PROJECT,
+                    '        (path "/%s"' % uu("sheet"),
+                    '          (reference "%s") (unit 1)' % pwr_ref(index),
+                    '        )',
+                    '      )',
+                    '    )',
                     '  )']
         else:
             out += ['  (global_label "%s" (shape input) (at %s %s 0)'
