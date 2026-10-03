@@ -67,14 +67,14 @@ NET_ORDER = [
     # motor / expansion
     "pwm_out", "motor_dir1", "motor_dir2", "motor_fault_n",
     "spi0_sck", "spi0_cs_n", "spi0_mosi", "spi0_miso",
-    "led[0]", "led[1]", "led[2]", "led[3]",
+    "led0", "led1", "led2", "led3",
     "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7",
     "A8", "A9", "A10", "A11", "A12", "A13", "A14", "A15",
     "B0", "B1", "B2", "B3", "B4", "B5", "B6", "B7",
     "B8", "B9", "B10", "B11", "B12", "B13", "B14", "B15",
     "TP_3V3", "TP_2V5", "TP_1V1", "TP_GND", "TP_DONE", "TP_INITN",
     "D7_A", "D1_A", "D6_K", "J9_VIN", "J10_TX", "J10_RX", "U6_COMP",
-    "led[0]_k", "led[1]_k", "led[2]_k", "led[3]_k",
+    "led0_k", "led1_k", "led2_k", "led3_k",
 ]
 
 # ------------------------------------------------------------------ connections
@@ -119,7 +119,7 @@ connect("U1", 114, "spi0_sck"); connect("U1", 115, "spi0_cs_n")
 connect("U1", 116, "spi0_mosi"); connect("U1", 117, "spi0_miso")
 # LEDs (active low), GPIOA, GPIOB, motor
 for index, pin in enumerate((39, 40, 41, 44)):
-    connect("U1", pin, "led[%d]" % index)
+    connect("U1", pin, "led%d" % index)
 for index in range(8):
     connect("U1", 45 + index, "A%d" % index)
 for index in range(8):
@@ -168,7 +168,7 @@ connect("Q4", 1, "Q4_B"); connect("Q4", 2, "3V3"); connect("Q4", 3, "Q4_C")
 # --- LEDs and their resistors (D1 DONE, D2-5 GPIO, D6 INITN, D7 power)
 connect("D1", 1, "Q2_C"); connect("D1", 2, "D1_A")   # cathode to the driver, anode to R33
 for index in range(4):
-    connect("D%d" % (index + 2), 1, "led[%d]_k" % index)
+    connect("D%d" % (index + 2), 1, "led%d_k" % index)
     connect("D%d" % (index + 2), 2, "3V3")
 connect("D6", 1, "D6_K"); connect("D6", 2, "Q4_C")
 connect("D7", 1, "GND");  connect("D7", 2, "D7_A")
@@ -210,8 +210,8 @@ connect("R24", 1, "uart_tx"); connect("R24", 2, "J10_TX")
 connect("R25", 1, "DTR_F");   connect("R25", 2, "Q1_G")
 connect("R26", 1, "Q1_G");    connect("R26", 2, "GND")
 for index in range(4):
-    connect("R%d" % (27 + index), 1, "led[%d]" % index)
-    connect("R%d" % (27 + index), 2, "led[%d]_k" % index)
+    connect("R%d" % (27 + index), 1, "led%d" % index)
+    connect("R%d" % (27 + index), 2, "led%d_k" % index)
 connect("R31", 1, "INITN"); connect("R31", 2, "Q4_B")
 connect("R32", 1, "DONE");  connect("R32", 2, "Q2_B")
 connect("R33", 1, "3V3");   connect("R33", 2, "D1_A")

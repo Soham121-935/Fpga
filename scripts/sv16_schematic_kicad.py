@@ -114,6 +114,13 @@ def load():
         bynet[net].append((ref, str(pad)))
 
     problems = []
+    # KiCad reads name[N] as a bus vector, so a net called led[2]_k is not a
+    # name it can accept.  Catch it here rather than at the error dialogue.
+    import re as _re
+    for net in sorted(bynet):
+        if _re.search(r'[\[\]\s()"/\\:~]', net):
+            problems.append("net name %r has characters KiCad treats as bus "
+                            "notation or syntax" % net)
     for (ref, pad), net in sorted(nets.items()):
         if ref not in comps:
             problems.append("%s is connected but is not a component" % ref)
