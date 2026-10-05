@@ -92,6 +92,9 @@ EDGE = 0.30
 SCALE = 1.0
 MAX_WINDOW = max(BOARD_W, BOARD_H)  # mm; the grid coarsens instead of cropping
 CELL_BUDGET = 620.0               # cells across the widest window we will solve
+
+# Most passes one net gets to join its own islands.  See join_pieces.
+MAX_JOIN_PASSES = 10
 # The fan-out ring and the body outline are measured from where U1 actually
 # sits, not hard-coded: move the chip (or grow the board) and they follow.
 U1_RING_HALF = 13.9       # mm from the chip centre to the fan-out ring
@@ -736,7 +739,14 @@ def join_pieces(board, net, width, attempts, verbose=False, depth=0):
     """
     failed_pairs = set()
     ok = True
-    budget = 4 + 4 * len(net_pieces(board, net))
+    # Every pass costs up to six A* searches, and a net that has broken into
+    # ten pieces used to get 44 passes - a quarter of a thousand searches for
+    # one net, twenty minutes of the machine to itself.  The extra passes
+    # almost never pay off: if the first few cannot join a pair, the copper is
+    # genuinely in the way and the repair rounds, which rip up other nets,
+    # are far more likely to open a route.  Cap the passes and let repair do
+    # the work instead.
+    budget = min(4 + 4 * len(net_pieces(board, net)), MAX_JOIN_PASSES)
     while budget > 0:
         budget -= 1
         pieces = net_pieces(board, net)
