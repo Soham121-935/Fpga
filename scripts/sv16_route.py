@@ -448,30 +448,41 @@ def in_ring(board, x, y):
 
 
 # ------------------------------------------------------------------ fan-out
-def normals_for(shape, cx, cy):
-    if abs(cx - 52.0) > abs(cy - 52.0):
-        return (1.0, 0.0) if cx > 52.0 else (-1.0, 0.0), shape.w / 2.0
-    return (0.0, 1.0) if cy > 52.0 else (0.0, -1.0), shape.h / 2.0
+def normals_for(shape, cx, cy, centre):
+    """Outward unit normal for a pad on the TQFP, and how far the pad reaches.
+
+    `centre` is the middle of the chip.  It used to be hard-coded at (52, 52)
+    while U1 actually sits at (66.1, 66.1), which put every pad on the wrong
+    side: a west-side pad was classed as south, so its stub ran along +y down
+    the pad row and straight across four of its neighbours instead of straight
+    out to the west.  Every one of those crossings was a short.
+    """
+    mx, my = centre
+    if abs(cx - mx) > abs(cy - my):
+        return (1.0, 0.0) if cx > mx else (-1.0, 0.0), shape.w / 2.0
+    return (0.0, 1.0) if cy > my else (0.0, -1.0), shape.h / 2.0
 
 
-def side_of(cx, cy):
-    if abs(cx - 52.0) > abs(cy - 52.0):
-        return "E" if cx > 52.0 else "W"
-    return "S" if cy > 52.0 else "N"
+def side_of(cx, cy, centre):
+    mx, my = centre
+    if abs(cx - mx) > abs(cy - my):
+        return "E" if cx > mx else "W"
+    return "S" if cy > my else "N"
 
 
 def fanout_u1(board, verbose=True):
     sides = defaultdict(list)
+    centre = u1_centre(board)
     for shape, item in board.u1_pads:
         cx, cy = Board.center(item)
-        sides[side_of(cx, cy)].append((shape, item, cx, cy))
+        sides[side_of(cx, cy, centre)].append((shape, item, cx, cy))
     made = skipped = 0
     for side, pads in sides.items():
         for index, (shape, item, cx, cy) in enumerate(pads):
             if item.net is None:
                 skipped += 1
                 continue
-            (nx, ny), half = normals_for(shape, cx, cy)
+            (nx, ny), half = normals_for(shape, cx, cy, centre)
             if item.net in PLANE_NETS:
                 # Power and ground go inwards, to a via under the chip body.
                 # Outwards they land in the fence of 96 signal fan-out vias,
